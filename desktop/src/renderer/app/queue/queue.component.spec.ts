@@ -389,7 +389,8 @@ describe('QueueComponent', () => {
         expect(mockRouter.navigate).not.toHaveBeenCalled();
     });
 
-    it('warns when admin starts a consultation with no active doctor on file', async () => {        mockAuthService.getUser.mockReturnValue({ role: 'admin', id: 99 });
+    it('warns when admin starts a consultation with no active doctor on file', async () => {
+        mockAuthService.getUser.mockReturnValue({ role: 'admin', id: 99 });
         mockDataService.invoke.mockImplementation((endpoint: string) => {
             if (endpoint === 'getDoctors') return Promise.resolve([]);
             return Promise.resolve(null);

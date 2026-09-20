@@ -5,6 +5,11 @@
  * tests share one implementation with no I/O. Partial exports are honest:
  * lines that fail the NRCeS gate are omitted from MedicationRequest entries
  * and reported in `warnings` instead of being silently dropped or invented.
+ *
+ * Known limitation: bundle `fullUrl` values are document-relative
+ * (`Patient/1`, `Composition/record`). An offline desktop has no canonical
+ * base URL to absolutize them against; revisit with `urn:uuid` or absolute
+ * URLs when a share/upload endpoint defines the addressing scheme.
  */
 
 import type {
@@ -101,11 +106,12 @@ function escXml(value: string): string {
 
 // Normalizes stored dates to FHIR dateTime. SQLite CURRENT_TIMESTAMP rows
 // arrive as `YYYY-MM-DD HH:MM:SS` (UTC, no separator or zone), which is not
-// a valid FHIR instant; ISO inputs pass through untouched.
+// a valid FHIR instant; ISO inputs pass through `Date` untouched so their
+// instants (including non-UTC offsets) survive exactly.
 function toFhirDateTime(value?: string): string {
     const raw = String(value || '').trim();
     if (!raw) return new Date().toISOString();
-    const sqlite = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/.exec(raw);
+    const sqlite = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}(?::\d{2})?)/.exec(raw);
     if (sqlite) {
         const parsed = new Date(`${sqlite[1]}T${sqlite[2]}Z`);
         if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
@@ -171,6 +177,12 @@ function medicationRequest(
     if (supply) {
         request.dispenseRequest = { expectedSupplyDuration: supply };
     } else if (line.duration) {
+        // Unparseable durations (e.g. `3-4 days`, `until review`) still
+        // travel with the order as text so the duration is never lost.
+        const dosage = request.dosageInstruction?.[0];
+        if (dosage) {
+            dosage.text = [dosage.text, `for ${line.duration}`].filter(Boolean).join(' ');
+        }
         warnings.push(`Duration kept as text (no coded quantity): ${line.medicine} — ${line.duration}`);
     }
     if (!isExportableMedicationRequest(request)) {
@@ -198,14 +210,15 @@ function allergyResource(allergy: ExportAllergy, patientId: number | string): Al
 }
 
 function conditionResource(condition: ExportCondition, patientId: number | string): Condition {
+    // The UI's lifecycle matches FHIR condition-clinical one-to-one; pass
+    // recognized statuses through instead of collapsing them to `resolved`.
+    const valid = ['active', 'recurrence', 'relapse', 'inactive', 'remission', 'resolved'];
+    const status = valid.includes(condition.status || '') ? condition.status : undefined;
     return {
         resourceType: 'Condition',
-        clinicalStatus: {
-            coding: [{
-                system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
-                code: condition.status === 'active' ? 'active' : 'resolved'
-            }]
-        },
+        clinicalStatus: status
+            ? { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-clinical', code: status }] }
+            : undefined,
         code: condition.code ? { coding: [{ system: 'http://hl7.org/fhir/sid/icd-10', code: condition.code }], text: condition.name } : { text: condition.name },
         subject: ref('Patient', patientId),
         onsetDateTime: condition.onsetDate || undefined
@@ -237,6 +250,16 @@ function vitalObservations(vitals: ExportVitals | null | undefined, patientId: n
     return out;
 }
 
+function genderFor(value?: string): 'male' | 'female' | 'other' | 'unknown' {
+    // `Other` (known to be outside male/female) is distinct from `unknown`
+    // (not known); collapsing them loses an explicitly captured value.
+    const normalized = String(value || '').toLowerCase();
+    if (normalized.startsWith('f')) return 'female';
+    if (normalized.startsWith('m')) return 'male';
+    if (normalized.startsWith('o')) return 'other';
+    return 'unknown';
+}
+
 function patientResource(input: EncounterExportInput): Patient {
     const identifiers = [];
     if (input.patient.abhaAddress) {
@@ -247,8 +270,7 @@ function patientResource(input: EncounterExportInput): Patient {
         identifier: identifiers.length > 0 ? identifiers : undefined,
         name: [{ text: input.patient.name }],
         telecom: input.patient.mobile ? [{ system: 'phone', value: input.patient.mobile }] : undefined,
-        gender: (input.patient.gender || '').toLowerCase().startsWith('f') ? 'female'
-            : (input.patient.gender || '').toLowerCase().startsWith('m') ? 'male' : 'unknown',
+        gender: genderFor(input.patient.gender),
         birthDate: input.patient.dob || undefined,
         address: input.patient.address ? [{ text: input.patient.address }] : undefined
     };
@@ -416,8 +438,14 @@ function bundleFor(
     ];
 
     const composition = compositionResource(input, date, profile, sections);
+    // bdl-9: document bundles carry an identifier. Deterministic per
+    // encounter and profile so re-exports of the same record agree.
     const bundle: Bundle = {
         resourceType: 'Bundle',
+        identifier: {
+            system: 'https://nalamdesk.app/fhir/document',
+            value: `${profile}-${input.encounter.id}-${date}`
+        },
         type: 'document',
         timestamp: date,
         entry: [

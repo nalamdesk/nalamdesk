@@ -94,6 +94,7 @@ export interface BundleEntry {
 
 export interface Bundle extends Resource {
     resourceType: 'Bundle';
+    identifier?: Identifier;
     type: 'document' | 'collection' | string;
     timestamp?: string;
     entry: BundleEntry[];

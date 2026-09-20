@@ -188,6 +188,51 @@ describe('buildOpConsultRecord', () => {
         expect(request.dispenseRequest.expectedSupplyDuration).toMatchObject({ value: 3, unit: 'days' });
     });
 
+    it('keeps unparseable durations as text instead of losing them', () => {
+        const input = fixture();
+        input.prescriptions = [
+            { medicine: 'Amoxicillin 500mg', dosage: '500mg', route: 'Oral', frequency: '1-0-1', duration: 'until review' }
+        ];
+        const { bundle, warnings } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const request: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
+        expect(request.dispenseRequest).toBeUndefined();
+        expect(request.dosageInstruction[0].text).toContain('for until review');
+        expect(warnings.join(' ')).toContain('until review');
+    });
+
+    it('preserves nonterminal condition statuses', () => {
+        const input = fixture();
+        input.conditions = [{ name: 'Asthma', status: 'remission' }];
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const condition: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'Condition')?.resource;
+        expect(condition.clinicalStatus.coding[0].code).toBe('remission');
+    });
+
+    it('preserves timezone offsets instead of shifting them to UTC midnight math', () => {
+        const input = fixture();
+        input.encounter.date = '2026-09-20T10:00:00+05:30';
+        const { bundle } = buildOpConsultRecord(input);
+        const composition: any = bundle.entry[0].resource;
+        expect(composition.date).toBe('2026-09-20T04:30:00.000Z');
+    });
+
+    it('maps Other gender to other, not unknown', () => {
+        const input = fixture();
+        input.patient.gender = 'Other';
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const patient: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'Patient')?.resource;
+        expect(patient.gender).toBe('other');
+    });
+
+    it('identifies document bundles deterministically', () => {
+        const { bundle } = buildOpConsultRecord(fixture(), '2026-09-20T10:00:00.000Z');
+        expect(bundle.identifier?.system).toBeTruthy();
+        expect(bundle.identifier?.value).toContain('op-consult-7');
+    });
+
     it('builds coded IPS sections instead of the OPConsult layout', () => {
         const { bundle } = buildIpsDocument(fixture(), '2026-09-20T10:00:00.000Z');
         const composition: any = bundle.entry[0].resource;

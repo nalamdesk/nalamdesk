@@ -126,4 +126,53 @@ describe('AbdmSessionService', () => {
     it('uses the mock TTL constant consistently', () => {
         expect(ABDM_MOCK_TOKEN_TTL_MS).toBe(20 * 60 * 1000);
     });
+
+    it('returns the base URL with every session snapshot', async () => {
+        const svc = service();
+        const session = await svc.getSessionToken();
+        expect(session.baseUrl).toContain('dev.abdm.gov.in');
+    });
+
+    it('keeps concurrent flights on their own environments across a flip', async () => {
+        const seen: string[] = [];
+        const svc = service({
+            fetchFn: vi.fn().mockImplementation(async (url: string) => {
+                seen.push(String(url));
+                return { ok: true, json: async () => ({ accessToken: `tok-for-${url}`, expiresIn: 900 }) };
+            })
+        });
+        settings.abdm_mock = 0;
+        settings.abdm_gateway_env = 'sandbox';
+        settings.abdm_client_id = 'CID';
+        settings.abdm_client_secret_protected = Buffer.from('protected:s3cret', 'utf8').toString('base64');
+
+        const first = svc.getSessionToken();
+        settings.abdm_gateway_env = 'staging';
+        const second = svc.getSessionToken();
+        const [s1, s2] = await Promise.all([first, second]);
+
+        expect(s1.baseUrl).toContain('dev.abdm.gov.in');
+        expect(s2.baseUrl).toContain('staging.abdm.gov.in');
+        expect(s1.token).toContain('dev.abdm.gov.in');
+        expect(s2.token).toContain('staging.abdm.gov.in');
+    });
+
+    it('invalidate detaches in-flight work without hanging joiners', async () => {
+        let release!: (value: any) => void;
+        const svc = service({
+            fetchFn: vi.fn().mockImplementation(() => new Promise((resolve) => { release = resolve; }))
+        });
+        settings.abdm_mock = 0;
+        settings.abdm_client_id = 'CID';
+        settings.abdm_client_secret_protected = Buffer.from('protected:s3cret', 'utf8').toString('base64');
+
+        const pending = svc.getSessionToken();
+        svc.invalidate();
+        release({ ok: true, json: async () => ({ accessToken: 'late-token', expiresIn: 900 }) });
+        const settled = await pending;
+        expect(settled.token).toBe('late-token');
+
+        const fresh = await svc.getSessionToken();
+        expect(fresh.token).toBe('late-token');
+    });
 });

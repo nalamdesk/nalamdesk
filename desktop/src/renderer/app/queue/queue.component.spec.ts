@@ -430,4 +430,55 @@ describe('QueueComponent', () => {
         component.ngOnDestroy();
         expect(clearSpy).toHaveBeenCalledWith(12345);
     });
+
+    it('defines the standard grid columns', () => {
+        const headers = component.queueColumnDefs.map((c: any) => c.headerName);
+        expect(headers).toEqual(['Urgency / Triage', 'Patient Details', 'Check-in Time', 'Status', 'Actions']);
+    });
+
+    it('renders urgency badges from the same triage levels', () => {
+        const urgencyCol: any = component.queueColumnDefs[0];
+        const immediate = urgencyCol.cellRenderer({ data: { urgency: 'immediate' }, value: 'immediate' });
+        expect(immediate).toContain('badge-error');
+        const routine = urgencyCol.cellRenderer({ data: { urgency: 'routine' }, value: 'routine' });
+        expect(routine).toContain('badge-ghost');
+    });
+
+    it('dispatches grid actions to the queue workflows', () => {
+        const actionsCol: any = component.queueColumnDefs[4];
+        const item = { id: 1, patient_id: 11, status: 'waiting' };
+        const triageSpy = vi.spyOn(component, 'openTriageModal').mockImplementation(() => {});
+        const vitalsSpy = vi.spyOn(component, 'openVitals').mockImplementation(() => {});
+        const removeSpy = vi.spyOn(component, 'remove').mockResolvedValue(undefined);
+        const click = (action: string) => actionsCol.onCellClicked({
+            data: item,
+            event: { target: { closest: () => ({ getAttribute: () => action }) } }
+        });
+
+        click('triage');
+        expect(triageSpy).toHaveBeenCalledWith(item);
+        click('vitals');
+        expect(vitalsSpy).toHaveBeenCalledWith(item);
+        click('remove');
+        expect(removeSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('shows resume wording for live consultations in the actions cell', () => {
+        const actionsCol: any = component.queueColumnDefs[4];
+        const html = actionsCol.cellRenderer({ data: { id: 2, status: 'in-consult', active_encounter_id: 9 } });
+        expect(html).toContain('Resume Consult');
+        expect(html).not.toContain('Triage');
+    });
+
+    it('ranks urgency clinically rather than lexically', () => {
+        const urgencyCol: any = component.queueColumnDefs[0];
+        const levels = ['routine', 'urgent', 'immediate', 'priority'];
+        expect([...levels].sort((a, b) => urgencyCol.comparator(a, b)))
+            .toEqual(['routine', 'priority', 'urgent', 'immediate']);
+    });
+
+    it('exposes patient names for grid sort and filter', () => {
+        const patientCol: any = component.queueColumnDefs[1];
+        expect(patientCol.field).toBe('patient_name');
+    });
 });

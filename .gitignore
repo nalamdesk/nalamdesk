@@ -58,3 +58,9 @@ nalamdesk/
 desktop/nalamdesk/
 desktop/html/
 .codex-artifacts/
+
+# Local AI-harness skill installs (tooling, not project source)
+.agent/skills/
+.github/skills/
+.github/agents/
+.github/hooks/

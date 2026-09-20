@@ -1,6 +1,6 @@
 
 import { Component, HostListener, OnInit, OnDestroy, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { DataService } from '../services/api.service';
@@ -8,36 +8,31 @@ import { AuthService } from '../services/auth.service';
 import { VitalsFormComponent } from '../visits/vitals/vitals-form.component';
 import { newRequestId } from '../services/request-id';
 import { DialogService } from '../shared/services/dialog.service';
+import { SharedTableComponent } from '../shared/components/table/table.component';
+import { ColDef } from 'ag-grid-community';
 import { DoctorPickService } from '../shared/services/doctor-pick.service';
 
 @Component({
   selector: 'app-queue',
   standalone: true,
-  imports: [CommonModule, FormsModule, VitalsFormComponent],
+  imports: [CommonModule, FormsModule, VitalsFormComponent, SharedTableComponent],
   template: `
     <div class="h-full bg-gray-50 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
       <div class="w-full">
         <!-- Header -->
-        <div class="flex justify-between items-center mb-8">
-           <div class="flex items-center gap-4">
-             <button (click)="goBack()" class="btn btn-circle btn-ghost">
-               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-             </button>
-             <div>
-               <h1 class="text-2xl font-bold text-gray-800">Patient Queue</h1>
-               <p class="text-gray-600">Actionable clinical triage and consultations</p>
-             </div>
-           </div>
-           
-           <div class="stats shadow bg-white">
-             <div class="stat place-items-center">
-               <div class="stat-title">Waiting</div>
-               <div class="stat-value text-blue-600">{{ queue().length }}</div>
-             </div>
-           </div>
+        <div class="flex justify-between items-center mb-4">
+          <div class="flex items-center gap-4">
+            <button (click)="goBack()" class="btn btn-circle btn-ghost" aria-label="Back">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div>
+              <h1 class="text-2xl font-bold text-gray-800">Patient Queue</h1>
+              <p class="text-gray-600">Actionable clinical triage and consultations</p>
+            </div>
+          </div>
         </div>
 
-        <!-- Main Card (Flex child takes remaining height) -->
+        <!-- Standard AG Grid (shared-table, cf. Settings and Patient Chart) -->
         <!-- Scan & Share dock: incoming ABHA tokens awaiting 1-click check-in -->
         <div *ngIf="shareTokens.length > 0" class="mb-4 rounded-lg border border-blue-200 bg-blue-50/60 p-3">
           <div class="flex items-center justify-between mb-2">
@@ -55,125 +50,12 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
             </button>
           </div>
         </div>
-        <div class="card bg-white shadow-sm border border-gray-200 flex-1 overflow-hidden flex flex-col">
-          <div class="card-body p-0 flex-1 overflow-y-auto relative">
-            <div class="overflow-x-auto">
-              <table class="table table-lg">
-                <thead class="bg-base-200/50 text-base-content/70 sticky top-0 z-10 backdrop-blur-sm">
-                  <tr>
-                    <th class="min-w-[120px]">Urgency / Triage</th>
-                    <th class="min-w-[200px]">Patient Details</th>
-                    <th class="min-w-[140px]">Check-in Time</th>
-                    <th class="min-w-[120px]">Status</th>
-                    <th class="text-right min-w-[180px]">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr *ngFor="let item of queue()" 
-                      class="hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0 group">
-                    <td>
-                      <div class="flex flex-col gap-1">
-                        <div class="flex items-center gap-2">
-                          <span class="badge badge-sm font-bold uppercase tracking-wider"
-                                [ngClass]="{
-                                  'badge-error text-white animate-pulse': item.urgency === 'immediate',
-                                  'badge-warning': item.urgency === 'urgent',
-                                  'badge-info': item.urgency === 'priority',
-                                  'badge-ghost text-gray-700': item.urgency === 'routine' || !item.urgency
-                                }">
-                            {{ getItemUrgency(item) }}
-                          </span>
-                        </div>
-                        <span *ngIf="item.triage_notes" class="text-xs text-gray-500 italic max-w-[160px] truncate" [title]="item.triage_notes">
-                          {{ item.triage_notes }}
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="flex items-center gap-4">
-                        <div class="avatar placeholder">
-                          <div class="bg-neutral text-neutral-content rounded-full w-12">
-                            <span class="text-lg">{{ item.patient_name.charAt(0) }}</span>
-                          </div>
-                        </div>
-                        <div>
-                          <div class="font-bold text-lg flex items-center gap-2">
-                            {{ item.patient_name }}
-                          </div>
-                          <div class="text-sm opacity-60">{{ item.age }} years • {{ item.gender }}</div>
-                          <div *ngIf="item.has_abnormal_vitals" 
-                               class="badge badge-error badge-outline gap-1 text-xs cursor-help mt-1 font-semibold"
-                               [title]="item.vitals_alerts?.join('\n')">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                            Abnormal Vitals
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td class="font-mono text-sm opacity-70">
-                      <div class="flex flex-col">
-                        <span>{{ item.check_in_time | date:'shortTime' }}</span>
-                        <span class="text-xs text-secondary font-bold" *ngIf="item.status === 'waiting'">
-                           {{ getWaitTime(item.check_in_time) }} wait
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="badge badge-lg gap-2" [ngClass]="{
-                        'badge-primary': item.status === 'in-consult',
-                        'badge-ghost': item.status === 'waiting'
-                      }">
-                        <div class="w-2 h-2 rounded-full bg-current"></div>
-                        {{ item.status | titlecase }}
-                      </div>
-                    </td>
-                    <td class="text-right">
-                      <div class="join opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button *ngIf="item.status === 'waiting'" 
-                                (click)="openTriageModal(item)"
-                                class="btn btn-warning btn-outline btn-sm join-item">
-                          Triage
-                        </button>
-                        <button *ngIf="item.status === 'waiting'" 
-                                (click)="openVitals(item)"
-                                class="btn btn-secondary btn-sm join-item">
-                          Vitals
-                        </button>
-                        <button *ngIf="item.status === 'waiting'" 
-                                (click)="startConsult(item)"
-                                class="btn btn-primary btn-sm join-item">
-                          {{ item.active_encounter_id ? 'Resume Consult' : 'Start Consult' }}
-                        </button>
-                        <button *ngIf="item.status === 'in-consult'"
-                                (click)="startConsult(item)"
-                                class="btn btn-primary btn-sm join-item">
-                          Resume Consult
-                        </button>
-                        <button *ngIf="item.status === 'waiting'" (click)="remove(item.id)" class="btn btn-error btn-outline btn-sm join-item">
-                          Remove
-                        </button>
-                      </div>
-                      <!-- Mobile fallback or always visible action if hover isn't reliable -->
-                      <button (click)="startConsult(item)" class="btn btn-circle btn-sm btn-primary md:hidden" aria-label="Start consultation">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-                      </button>
-                    </td>
-                  </tr>
-                  
-                  <!-- Empty State -->
-                  <tr *ngIf="queue().length === 0">
-                    <td colspan="5" class="py-20 text-center">
-                       <div class="flex flex-col items-center gap-4 opacity-50">
-                         <svg xmlns="http://www.w3.org/2000/svg" class="w-24 h-24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
-                         <h3 class="text-xl font-bold">All Clear!</h3>
-                         <p>No patients currently in the queue.</p>
-                       </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+        <div class="h-[calc(100vh-15rem)] min-h-[320px]">
+          <app-shared-table [rowData]="queue()" [columnDefs]="queueColumnDefs" [pagination]="false" [pageSize]="50">
+            <div toolbar-left class="flex items-center gap-2">
+              <span class="text-xs text-gray-500">{{ queue().length }} in queue</span>
             </div>
-          </div>
+          </app-shared-table>
         </div>
       </div>
       
@@ -265,6 +147,99 @@ export class QueueComponent implements OnInit, OnDestroy {
   queue = signal<any[]>([]);
   refreshIntervalId: any;
   private readonly startRequestIds = new Map<number, string>();
+
+  private escHtml(value: unknown): string {
+    const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(value ?? '').replace(/[&<>"']/g, (c) => map[c]);
+  }
+
+  // Standard AG Grid columns (shared-table). Same clinical chrome as the
+  // previous hand table: urgency badges, patient identity with vitals alerts,
+  // check-in times, status, and per-row actions. All row buttons stay visible
+  // (no hover reveal) so touch and keyboard users get the same actions.
+  queueColumnDefs: ColDef[] = [
+    {
+      headerName: 'Urgency / Triage', flex: 1.2, minWidth: 150,
+      valueGetter: (params: any) => this.getItemUrgency(params.data),
+      // Clinical severity order, not lexical: immediate > urgent > priority > routine.
+      comparator: (a: any, b: any) => this.urgencyRank(a) - this.urgencyRank(b),
+      cellRenderer: (params: any) => {
+        const level = String(params.value || 'routine');
+        const badge = level === 'immediate' ? 'badge-error text-white animate-pulse'
+          : level === 'urgent' ? 'badge-warning'
+          : level === 'priority' ? 'badge-info' : 'badge-ghost text-gray-700';
+        const notes = params.data?.triage_notes
+          ? `<div class="text-xs text-gray-500 italic" title="${this.escHtml(params.data.triage_notes)}">${this.escHtml(params.data.triage_notes)}</div>`
+          : '';
+        return `<span class="badge badge-sm font-bold uppercase tracking-wider ${badge}">${this.escHtml(level)}</span>${notes}`;
+      }
+    },
+    {
+      headerName: 'Patient Details', field: 'patient_name', flex: 2, minWidth: 220,
+      cellRenderer: (params: any) => {
+        const item = params.data;
+        if (!item) return '';
+        const initial = this.escHtml(String(item.patient_name || '?').charAt(0).toUpperCase());
+        const alerts = (item.vitals_alerts || []).map((a: string) => this.escHtml(a)).join('\n');
+        const vitalsBadge = item.has_abnormal_vitals
+          ? `<div class="badge badge-error badge-outline gap-1 text-xs mt-1 font-semibold" title="${alerts}">Abnormal Vitals</div>`
+          : '';
+        return `<div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-neutral text-neutral-content flex items-center justify-center font-bold">` +
+              `${initial}</div>
+            <div>
+              <div class="font-bold text-gray-800">${this.escHtml(item.patient_name)}</div>
+              <div class="text-xs text-gray-500">${this.escHtml(item.age)} years • ${this.escHtml(item.gender)}</div>
+              ${vitalsBadge}
+            </div>
+          </div>`;
+      }
+    },
+    {
+      headerName: 'Check-in Time', flex: 1, minWidth: 140,
+      valueGetter: (params: any) => params.data?.check_in_time || '',
+      cellRenderer: (params: any) => {
+        const time = params.value ? new DatePipe('en-US').transform(params.value, 'shortTime') || '' : '';
+        const wait = params.data?.status === 'waiting' && params.value
+          ? `<div class="text-xs text-secondary font-bold">${this.escHtml(this.getWaitTime(params.value))} wait</div>`
+          : '';
+        return `<span class="font-mono text-sm text-gray-600">${this.escHtml(time)}</span>${wait}`;
+      }
+    },
+    {
+      headerName: 'Status', flex: 0.8, minWidth: 120,
+      valueGetter: (params: any) => params.data?.status || '',
+      cellRenderer: (params: any) => {
+        const status = String(params.value || '');
+        const label = status.charAt(0).toUpperCase() + status.slice(1);
+        const badge = status === 'in-consult' ? 'badge-primary' : 'badge-ghost';
+        return `<span class="badge badge-lg gap-2 ${badge}"><span class="w-2 h-2 rounded-full bg-current"></span>${this.escHtml(label)}</span>`;
+      }
+    },
+    {
+      headerName: 'Actions', flex: 1.6, minWidth: 280, sortable: false, filter: false,
+      cellRenderer: (params: any) => {
+        const item = params.data;
+        if (!item) return '';
+        const consultLabel = item.active_encounter_id ? 'Resume Consult' : 'Start Consult';
+        const waiting = `<button data-action="triage" class="btn btn-warning btn-outline btn-sm">Triage</button>
+          <button data-action="vitals" class="btn btn-secondary btn-sm">Vitals</button>
+          <button data-action="consult" class="btn btn-primary btn-sm">${consultLabel}</button>
+          <button data-action="remove" class="btn btn-error btn-outline btn-sm">Remove</button>`;
+        const inConsult = `<button data-action="consult" class="btn btn-primary btn-sm">Resume Consult</button>`;
+        return `<div class="flex flex-wrap gap-1">${item.status === 'in-consult' ? inConsult : waiting}</div>`;
+      },
+      onCellClicked: (params: any) => {
+        const action = (params.event?.target as HTMLElement)?.closest?.('[data-action]')?.getAttribute('data-action');
+        const item = params.data;
+        if (!action || !item) return;
+        if (action === 'triage') this.openTriageModal(item);
+        else if (action === 'vitals') this.openVitals(item);
+        else if (action === 'consult') this.startConsult(item);
+        else if (action === 'remove') this.remove(item.id);
+      }
+    }
+  ];
 
   constructor(
     private router: Router,
@@ -360,6 +335,15 @@ export class QueueComponent implements OnInit, OnDestroy {
     if (item?.priority === 3) return 'urgent';
     if (item?.priority === 2) return 'priority';
     return 'routine';
+  }
+
+  private urgencyRank(level: unknown): number {
+    switch (String(level || '').toLowerCase()) {
+      case 'immediate': return 4;
+      case 'urgent': return 3;
+      case 'priority': return 2;
+      default: return 1;
+    }
   }
 
   async refreshQueue() {

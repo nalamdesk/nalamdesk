@@ -58,6 +58,14 @@ export const OP_CONSULT_SECTIONS = [
 
 export type OpConsultSection = (typeof OP_CONSULT_SECTIONS)[number];
 
+/** IPS sections with the LOINC document-ontology codes consumers classify on. */
+export const IPS_SECTIONS = [
+    { title: 'Medication Summary', code: '10160-0' },
+    { title: 'Allergies and Intolerances', code: '48765-2' },
+    { title: 'Active Problems', code: '11450-4' },
+    { title: 'Results', code: '30954-2' }
+] as const;
+
 /**
  * Narrow check: does this MedicationRequest carry everything the export
  * gate requires? The serializer pre-screens the source line (dose, route,

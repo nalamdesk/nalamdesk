@@ -496,11 +496,12 @@ describe('PatientDetailsComponent', () => {
         expect(JSON.stringify(bundle)).toContain('MED-1');
     });
 
-    it('attributes historical visits to their own doctor, not the exporter', () => {
+    it('attributes historical visits to their frozen snapshot, not the exporter', () => {
         component.patient = { id: 1, name: 'Asha' };
         component.currentUser = { id: 99, name: 'Admin User' };
         component.selectedVisit = {
             id: 8, doctor_id: 10, doctor_name: 'Dr. Original',
+            doctor_license_snapshot: JSON.stringify({ name: 'Dr. Original', license_number: 'MED-OLD', specialty: 'Cardiology' }),
             date: '2026-09-18T10:00:00.000Z', diagnosis: 'Review',
             prescription: [{ medicine: 'Cetirizine', dosage: '10mg', route: 'Oral', frequency: '1-0-0', duration: '5 days' }]
         };
@@ -508,8 +509,7 @@ describe('PatientDetailsComponent', () => {
         component.conditions = [];
 
         const bundle = JSON.parse(component.buildHealthRecordJson().json);
-        const practitioner = bundle.entry.find((e: any) => e.resource?.resourceType === 'Practitioner').resource;
-        expect(practitioner.name[0].text).toBe('Dr. Original');
+        expect(JSON.stringify(bundle)).toContain('MED-OLD');
         expect(JSON.stringify(bundle)).not.toContain('Admin User');
         const request = bundle.entry.find((e: any) => e.resource?.resourceType === 'MedicationRequest').resource;
         expect(request.requester).toMatchObject({ reference: 'Practitioner/10' });
@@ -533,6 +533,21 @@ describe('PatientDetailsComponent', () => {
         expect(request.authoredOn).toBe('2026-09-10T09:00:00.000Z');
         const encounter = bundle.entry.find((e: any) => e.resource?.resourceType === 'Encounter').resource;
         expect(encounter.period.start).toBe('2026-09-10T09:00:00.000Z');
+    });
+
+    it('uses the configured clinic identity in the export', () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith',
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+
+        const bundle = JSON.parse(component.buildHealthRecordJson('City Care Clinic').json);
+        const organization = bundle.entry.find((e: any) => e.resource?.resourceType === 'Organization').resource;
+        expect(organization.name).toBe('City Care Clinic');
     });
 });
 

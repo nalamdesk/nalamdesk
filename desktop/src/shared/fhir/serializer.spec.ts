@@ -158,6 +158,48 @@ describe('buildOpConsultRecord', () => {
             .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
         expect(request.authoredOn).toBe(input.encounter.date);
     });
+
+    it('normalizes database timestamps to FHIR dateTime', () => {
+        const input = fixture();
+        input.encounter.date = '2026-09-18 10:00:00';
+        const { bundle } = buildOpConsultRecord(input);
+        const composition: any = bundle.entry[0].resource;
+        expect(composition.date).toBe('2026-09-18T10:00:00.000Z');
+        const encounter: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'Encounter')?.resource;
+        expect(encounter.period.start).toBe('2026-09-18T10:00:00.000Z');
+    });
+
+    it('escapes clinical text inside namespace-qualified narrative', () => {
+        const input = fixture();
+        input.encounter.symptoms = 'nausea & vomiting <severe>';
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const composition: any = bundle.entry[0].resource;
+        const complaints = composition.section.find((s: any) => s.title === 'Chief Complaints');
+        expect(complaints.text.div).toContain('xmlns="http://www.w3.org/1999/xhtml"');
+        expect(complaints.text.div).toContain('nausea &amp; vomiting &lt;severe&gt;');
+        expect(complaints.text.div).not.toContain('<severe>');
+    });
+
+    it('parses durations into real quantities', () => {
+        const { bundle } = buildOpConsultRecord(fixture(), '2026-09-20T10:00:00.000Z');
+        const request: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
+        expect(request.dispenseRequest.expectedSupplyDuration).toMatchObject({ value: 3, unit: 'days' });
+    });
+
+    it('builds coded IPS sections instead of the OPConsult layout', () => {
+        const { bundle } = buildIpsDocument(fixture(), '2026-09-20T10:00:00.000Z');
+        const composition: any = bundle.entry[0].resource;
+        const byTitle = new Map(composition.section.map((s: any) => [s.title, s]));
+        expect([...byTitle.keys()]).toEqual([
+            'Medication Summary', 'Allergies and Intolerances', 'Active Problems', 'Results'
+        ]);
+        expect(byTitle.get('Medication Summary').code.coding[0].code).toBe('10160-0');
+        expect(byTitle.get('Allergies and Intolerances').code.coding[0].code).toBe('48765-2');
+        const meds = byTitle.get('Medication Summary');
+        expect(meds.entry.every((e: any) => e.reference.startsWith('MedicationRequest/') || e.reference.startsWith('Patient/') || e.reference.startsWith('Practitioner/') || e.reference.startsWith('Encounter/'))).toBe(true);
+    });
 });
 
 describe('buildIpsDocument', () => {

@@ -1145,20 +1145,35 @@ export class PatientDetailsComponent implements OnInit {
         window.print();
     }
 
-    buildHealthRecordJson() {
+    // The visit's license snapshot is the durable authorship record: it holds
+    // the practitioner's identity exactly as it was when the encounter was
+    // signed, even if their account details changed afterwards.
+    private practitionerForExport(visit: any, user: any): { id: any; name: string; licenseNumber?: string; specialty?: string } {
+        try {
+            const snapshot = visit.doctor_license_snapshot ? JSON.parse(visit.doctor_license_snapshot) : null;
+            if (snapshot?.name) {
+                return {
+                    id: visit.doctor_id || user.id, name: snapshot.name,
+                    licenseNumber: snapshot.license_number, specialty: snapshot.specialty
+                };
+            }
+        } catch { /* fall through to the live record below */ }
+        const sameAuthor = !user.id || !visit.doctor_id || Number(user.id) === Number(visit.doctor_id);
+        if (sameAuthor) {
+            return {
+                id: visit.doctor_id || user.id, name: visit.doctor_name || user.name || 'Doctor',
+                licenseNumber: user.license_number, specialty: user.specialty
+            };
+        }
+        return { id: visit.doctor_id, name: visit.doctor_name || 'Doctor' };
+    }
+
+    buildHealthRecordJson(clinicName = 'NalamDesk Clinic') {
         const visit: any = this.selectedVisit || {};
         const patient: any = this.patient || {};
-        // Historical authorship: the record belongs to the visit's doctor,
-        // not whoever happens to be exporting it.
-        const user: any = this.currentUser || {};
-        const sameAuthor = !user.id || !visit.doctor_id || Number(user.id) === Number(visit.doctor_id);
-        const practitioner = sameAuthor ? {
-            id: visit.doctor_id || user.id, name: visit.doctor_name || user.name || 'Doctor',
-            licenseNumber: user.license_number, specialty: user.specialty
-        } : {
-            id: visit.doctor_id, name: visit.doctor_name || 'Doctor',
-            licenseNumber: undefined, specialty: undefined
-        };
+        // Historical authorship comes from the visit's own license snapshot,
+        // frozen at signing time — never from whoever is exporting today.
+        const practitioner = this.practitionerForExport(visit, this.currentUser || {});
         const units = visit.vitals?.units || {};
         const { bundle, warnings } = buildOpConsultRecord({
             patient: {
@@ -1167,7 +1182,7 @@ export class PatientDetailsComponent implements OnInit {
                 address: patient.address, abhaAddress: patient.abha_address
             },
             practitioner,
-            clinic: { name: 'NalamDesk Clinic' },
+            clinic: { name: clinicName },
             encounter: {
                 id: visit.id, date: visit.date, diagnosis: visit.diagnosis,
                 diagnosisType: visit.diagnosis_type, symptoms: visit.symptoms,
@@ -1199,7 +1214,9 @@ export class PatientDetailsComponent implements OnInit {
 
     async exportHealthRecord() {
         if (!this.selectedVisit) return;
-        const { json, warnings } = this.buildHealthRecordJson();
+        const settings = await this.dataService.invoke<any>('getPublicSettings').catch(() => null);
+        const clinicName = settings?.clinic_name || 'NalamDesk Clinic';
+        const { json, warnings } = this.buildHealthRecordJson(clinicName);
         if (warnings.length > 0) {
             await this.dialogService.open({
                 title: 'Exported with notes',

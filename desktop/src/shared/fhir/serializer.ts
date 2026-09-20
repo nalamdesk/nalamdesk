@@ -10,10 +10,10 @@
 import type {
     AllergyIntolerance, Bundle, Composition, Condition, Dosage, Encounter,
     MedicationRequest, Observation, Organization, Patient, Practitioner,
-    Resource
+    Quantity, Resource
 } from './r4';
 import {
-    ExportablePrescriptionLine, FREQUENCY_PATTERN, OP_CONSULT_SECTIONS,
+    ExportablePrescriptionLine, FREQUENCY_PATTERN, IPS_SECTIONS, OP_CONSULT_SECTIONS,
     isExportableMedicationRequest
 } from './nrces';
 
@@ -91,6 +91,44 @@ function ref(resource: string, id: number | string): { reference: string } {
     return { reference: `${resource}/${id}` };
 }
 
+function escXml(value: string): string {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+// Normalizes stored dates to FHIR dateTime. SQLite CURRENT_TIMESTAMP rows
+// arrive as `YYYY-MM-DD HH:MM:SS` (UTC, no separator or zone), which is not
+// a valid FHIR instant; ISO inputs pass through untouched.
+function toFhirDateTime(value?: string): string {
+    const raw = String(value || '').trim();
+    if (!raw) return new Date().toISOString();
+    const sqlite = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/.exec(raw);
+    if (sqlite) {
+        const parsed = new Date(`${sqlite[1]}T${sqlite[2]}Z`);
+        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+}
+
+// Parses UI durations like `3 days` into a real FHIR quantity. Unparseable
+// values return undefined so callers omit the field instead of emitting a
+// wrong number.
+function supplyDuration(duration?: string): Quantity | undefined {
+    const match = /^\s*(\d+(?:\.\d+)?)\s*([A-Za-z]*)\s*$/.exec(String(duration || ''));
+    if (!match) return undefined;
+    const unitMap: Record<string, string> = {
+        d: 'days', day: 'days', days: 'days',
+        w: 'weeks', week: 'weeks', weeks: 'weeks',
+        m: 'months', month: 'months', months: 'months'
+    };
+    const unit = unitMap[match[2].toLowerCase()] || match[2] || 'days';
+    return { value: Number(match[1]), unit };
+}
+
 function dosageFor(line: ExportPrescriptionLine): Dosage {
     const dosage: Dosage = {};
     const pattern = FREQUENCY_PATTERN[line.frequency || ''];
@@ -115,8 +153,7 @@ function medicationRequest(
     const missing = (['dosage', 'route', 'frequency', 'duration'] as const)
         .filter((field) => !String(line[field] || '').trim());
     if (missing.length > 0) {
-        warnings.push(
-            `Prescription line omitted from export (needs ${missing.join(', ')}): ${line.medicine}`);
+        warnings.push(`Prescription line omitted from export (needs ${missing.join(', ')}): ${line.medicine}`);
         return null;
     }
     const request: MedicationRequest = {
@@ -130,10 +167,16 @@ function medicationRequest(
         dosageInstruction: [dosageFor(line)]
     };
     if (line.instruction) request.note = [{ text: line.instruction }];
-    if (line.duration) {
-        request.dispenseRequest = { expectedSupplyDuration: { value: 1, unit: line.duration } };
+    const supply = supplyDuration(line.duration);
+    if (supply) {
+        request.dispenseRequest = { expectedSupplyDuration: supply };
+    } else if (line.duration) {
+        warnings.push(`Duration kept as text (no coded quantity): ${line.medicine} — ${line.duration}`);
     }
-    if (!isExportableMedicationRequest(request)) return null;
+    if (!isExportableMedicationRequest(request)) {
+        warnings.push(`Prescription line omitted from export (structural check failed): ${line.medicine}`);
+        return null;
+    }
     return request;
 }
 
@@ -242,18 +285,25 @@ function encounterResource(input: EncounterExportInput, date: string): Encounter
 }
 
 function textNarrative(lines: string[]): { status: string; div: string } {
-    const items = lines.filter((line) => line.trim());
+    const items = lines.map((line) => line.trim()).filter((line) => line);
     return {
         status: 'generated',
-        div: `<div>${items.map((line) => `<p>${line}</p>`).join('')}</div>`
+        div: `<div xmlns="http://www.w3.org/1999/xhtml">${items.map((line) => `<p>${escXml(line)}</p>`).join('')}</div>`
     };
+}
+
+interface SectionPlan {
+    title: string;
+    code?: { system: string; code: string; display: string };
+    refs: string[];
+    narrative: string[];
 }
 
 function compositionResource(
     input: EncounterExportInput,
     date: string,
     profile: 'op-consult' | 'ips',
-    sections: Array<{ title: string; refs: string[]; narrative: string[] }>
+    sections: SectionPlan[]
 ): Composition {
     return {
         resourceType: 'Composition',
@@ -270,6 +320,7 @@ function compositionResource(
             : `OP Consultation - ${input.patient.name}`,
         section: sections.map((section) => ({
             title: section.title,
+            code: section.code ? { coding: [section.code] } : undefined,
             entry: section.refs.map((r) => ({ reference: r })),
             text: textNarrative(section.narrative)
         }))
@@ -326,8 +377,24 @@ function bundleFor(
     }
 
     // Findings narrative: symptoms, diagnosis, and exam notes ride in their
-    // own sections so the record carries what the receipt showed.
-    const sections = [
+    // own sections so the record carries what the receipt showed. IPS uses
+    // its own coded sections rather than the OPConsult layout.
+    const loincSection = (code: string, display: string) => ({
+        system: 'http://loinc.org', code, display
+    });
+    const sections: SectionPlan[] = profile === 'ips'
+        ? [
+            { title: IPS_SECTIONS[0].title, code: loincSection(IPS_SECTIONS[0].code, IPS_SECTIONS[0].title), refs: [...coreRefs, ...prescriptionRefs], narrative: [] },
+            { title: IPS_SECTIONS[1].title, code: loincSection(IPS_SECTIONS[1].code, IPS_SECTIONS[1].title), refs: [...coreRefs, ...allergyRefs], narrative: [] },
+            {
+                title: IPS_SECTIONS[2].title, code: loincSection(IPS_SECTIONS[2].code, IPS_SECTIONS[2].title), refs: [...coreRefs, ...conditionRefs],
+                narrative: [
+                    ...(input.encounter.diagnosis ? [`Diagnosis: ${input.encounter.diagnosis}${input.encounter.diagnosisType ? ` (${input.encounter.diagnosisType})` : ''}`] : [])
+                ]
+            },
+            { title: IPS_SECTIONS[3].title, code: loincSection(IPS_SECTIONS[3].code, IPS_SECTIONS[3].title), refs: [...coreRefs, ...observationRefs], narrative: [] }
+        ]
+        : [
         {
             title: OP_CONSULT_SECTIONS[0],
             refs: [...coreRefs, ...conditionRefs, ...observationRefs],
@@ -363,14 +430,14 @@ function bundleFor(
 
 /** ABDM OPConsultRecord document bundle for one finished encounter. */
 export function buildOpConsultRecord(input: EncounterExportInput, date?: string): ExportResult {
-    const at = date || input.encounter.date || new Date().toISOString();
+    const at = toFhirDateTime(date || input.encounter.date);
     const { bundle, warnings } = bundleFor(input, at, 'op-consult');
     return { bundle, warnings };
 }
 
 /** HL7 IPS patient-summary document bundle for one finished encounter. */
 export function buildIpsDocument(input: EncounterExportInput, date?: string): ExportResult {
-    const at = date || input.encounter.date || new Date().toISOString();
+    const at = toFhirDateTime(date || input.encounter.date);
     const { bundle, warnings } = bundleFor(input, at, 'ips');
     return { bundle, warnings };
 }

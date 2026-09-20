@@ -89,6 +89,11 @@ The local Fastify server exposes an unauthenticated gateway callback:
 - `POST /abdm/v0.5/patients/profile/share` validates the profile shape and stores
   it as a numbered `abdm_share_tokens` row (daily sequence, 15-minute expiry).
   Nothing executes from the payload; the Queue dock picks it up on its 5s poll.
+- The callback is gateway-initiated and therefore unauthenticated: it accepts
+  a strict shape (name required, capped field lengths, 8 KB body cap) at
+  30 requests/minute per source IP, and intake still needs an explicit human
+  accept before any patient record is created. Treat tunnel URLs as sensitive
+  and rotate them if they leak.
 - The counter QR encodes `{ app: 'NalamDesk Scan & Share', v: 1, hipId, counterId }`
   (facility identity only, no patient data). Configure HIP/counter IDs under
   Settings → ABDM, download the QR image, and display the printout at reception.

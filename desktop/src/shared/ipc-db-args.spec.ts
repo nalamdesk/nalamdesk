@@ -26,4 +26,9 @@ describe('resolveDbMethodArgs addToQueue', () => {
         expect(resolveDbMethodArgs('addToQueue', [{ patientId: 5, priority: 1 }], 99))
             .toEqual([5, 1, 99]);
     });
+
+    it('unpacks share-token acknowledgement with the acting user', () => {
+        expect(resolveDbMethodArgs('abdmAcceptShareToken', [{ tokenId: 7 }], 99))
+            .toEqual([{ tokenId: 7 }, 99]);
+    });
 });

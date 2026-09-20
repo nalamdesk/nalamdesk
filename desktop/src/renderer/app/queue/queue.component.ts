@@ -359,7 +359,7 @@ export class QueueComponent implements OnInit, OnDestroy {
     const alreadyQueued = (this.queue() || []).some((q: any) =>
       Number(q.patient_id) === Number(patient.id) && q.status !== 'completed');
     if (alreadyQueued) {
-      await this.dataService.invoke('abdmAcceptShareToken', { tokenId: token.id });
+      // The caller acknowledges exactly once after this returns.
       await this.refreshShareTokens();
       return;
     }

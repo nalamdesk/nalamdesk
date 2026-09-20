@@ -227,4 +227,21 @@ describe('ABDM Scan & Share callback', () => {
         expect(response.statusCode).toBe(400);
         expect(response.json().error).toContain('patient name');
     });
+
+    it('rate-limits share floods with 429', async () => {
+        for (let i = 0; i < 30; i += 1) {
+            const response = await server.inject({
+                method: 'POST',
+                url: '/abdm/v0.5/patients/profile/share',
+                payload: { name: `Patient ${i}` }
+            });
+            expect(response.statusCode).toBe(202);
+        }
+        const throttled = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/patients/profile/share',
+            payload: { name: 'Patient overflow' }
+        });
+        expect(throttled.statusCode).toBe(429);
+    });
 });

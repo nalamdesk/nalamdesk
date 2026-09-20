@@ -423,7 +423,23 @@ export class DatabaseService {
         if (!value) return null;
         return this.db.prepare(
             'SELECT * FROM patients WHERE abha_address IS NOT NULL AND LOWER(abha_address) = LOWER(?) LIMIT 1'
-        ).get(value);
+        ).get(value) ?? null;
+    }
+
+    // LAN-facing aliases: browser sessions call these names through
+    // /api/ipc; they delegate to the canonical operations above.
+    abdmGetShareTokens() {
+        return this.getPendingShareTokens();
+    }
+
+    findPatientByAbha(payload: any) {
+        const args = payload || {};
+        return this.findPatientByAbhaAddress(args.abhaAddress);
+    }
+
+    abdmAcceptShareToken(payload: any, actingUserId?: number) {
+        const args = payload || {};
+        return this.acceptShareToken(args.tokenId ?? args.id, actingUserId);
     }
 
     // Scan & Share intake: stores a gateway profile-share callback as a
@@ -432,6 +448,13 @@ export class DatabaseService {
     receiveAbhaShare(payload: any, actingUserId?: number) {
         const name = String(payload?.name || payload?.patientName || '').trim();
         if (!name) throw new Error('Shared profile must include a patient name.');
+        if (name.length > 200) throw new Error('Shared profile name is too long.');
+        const abhaAddress = payload?.abhaAddress ? String(payload.abhaAddress).trim() : null;
+        if (abhaAddress && (abhaAddress.length > 100 || !/^[\w.-]+@[A-Za-z]{2,}$/.test(abhaAddress))) {
+            throw new Error('Shared profile health ID looks invalid.');
+        }
+        const mobile = payload?.mobile ? String(payload.mobile).trim() : null;
+        if (mobile && mobile.length > 20) throw new Error('Shared profile mobile number is too long.');
         const record = this.db.transaction(() => {
             const today = (this.db.prepare(`SELECT date('now', 'localtime') AS today`).get() as any).today;
             const maxNo = (this.db.prepare(
@@ -490,6 +513,7 @@ export class DatabaseService {
             emergency_contact_name: null, emergency_contact_mobile: null,
             street: null, city: null, state: null, zip_code: null,
             insurance_provider: null, policy_number: null,
+            abha_address: null, abha_name: null,
             address: '', age: 0, gender: 'Unknown', mobile: '', name: ''
         };
 
@@ -513,7 +537,8 @@ export class DatabaseService {
             state = @state,
             zip_code = @zip_code,
             insurance_provider = @insurance_provider,
-            policy_number = @policy_number
+            policy_number = @policy_number,
+            abha_address = @abha_address, abha_name = @abha_name
         WHERE id = @id
             `).run(patient);
         } else {
@@ -524,12 +549,14 @@ export class DatabaseService {
         INSERT INTO patients(
             uuid, name, mobile, age, gender, address, 
             dob, blood_group, email, emergency_contact_name, emergency_contact_mobile,
-            street, city, state, zip_code, insurance_provider, policy_number
+            street, city, state, zip_code, insurance_provider, policy_number,
+            abha_address, abha_name
         )
         VALUES(
             @uuid, @name, @mobile, @age, @gender, @address,
             @dob, @blood_group, @email, @emergency_contact_name, @emergency_contact_mobile,
-            @street, @city, @state, @zip_code, @insurance_provider, @policy_number
+            @street, @city, @state, @zip_code, @insurance_provider, @policy_number,
+            @abha_address, @abha_name
         )
             `).run(patient);
         }

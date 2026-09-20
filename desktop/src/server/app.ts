@@ -36,6 +36,7 @@ const ALLOWED_IPC_METHODS = [
     'getConditions', 'saveCondition', 'deleteCondition',
     'getMedications', 'saveMedication', 'deleteMedication',
     'getPatientSafetyContext',
+    'abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -48,6 +49,22 @@ const ALLOWED_IPC_METHODS = [
 export class ApiServer {
     private fastify: FastifyInstance;
     private dbService: DatabaseService;
+    // Sliding-window hit timestamps per source IP for the public callback.
+    private shareCallbackHits = new Map<string, number[]>();
+
+    // Rejects floods on the unauthenticated share route. Tune conservatively:
+    // a reception counter scans at human pace; bursts above this are abuse.
+    private shareCallbackAllowed(ip: string, limit = 30, windowMs = 60_000): boolean {
+        const now = Date.now();
+        const hits = (this.shareCallbackHits.get(ip) || []).filter((t) => now - t < windowMs);
+        if (hits.length >= limit) {
+            this.shareCallbackHits.set(ip, hits);
+            return false;
+        }
+        hits.push(now);
+        this.shareCallbackHits.set(ip, hits);
+        return true;
+    }
     private staticPath: string;
     private _started = false;
     private oauthResolver: ((code: string) => void) | null = null;
@@ -137,16 +154,23 @@ export class ApiServer {
         // ABDM Scan & Share profile callback (gateway-initiated, unauthenticated
         // by design: the gateway cannot hold clinic credentials). The payload
         // is strictly validated and stored as a numbered queue token; nothing
-        // executes from it. Documented tunnel setup is required for sandbox
-        // callbacks to reach this port (see DEVELOPER_GUIDE).
-        this.fastify.post('/abdm/v0.5/patients/profile/share', async (request: any, reply: any) => {
-            try {
-                const token = this.dbService.receiveAbhaShare(request.body);
-                return reply.code(202).send({ status: 'queued', tokenNo: (token as any)?.token_no });
-            } catch (e: any) {
-                return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid share payload.' });
-            }
-        });
+        // executes from it. Rate-limited per source IP with a small body cap,
+        // and documented tunnel setup is required for sandbox callbacks to
+        // reach this port (see DEVELOPER_GUIDE). Intake still needs an
+        // explicit human accept before any patient record is created.
+        this.fastify.post('/abdm/v0.5/patients/profile/share',
+            { bodyLimit: 8192 },
+            async (request: any, reply: any) => {
+                if (!this.shareCallbackAllowed(request.ip || 'unknown')) {
+                    return reply.code(429).send({ error: 'Too many share requests. Slow down and retry.' });
+                }
+                try {
+                    const token = this.dbService.receiveAbhaShare(request.body);
+                    return reply.code(202).send({ status: 'queued', tokenNo: (token as any)?.token_no });
+                } catch (e: any) {
+                    return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid share payload.' });
+                }
+            });
 
         // Protected Routes
         this.fastify.register(async (instance) => {

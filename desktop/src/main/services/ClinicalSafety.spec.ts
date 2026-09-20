@@ -622,5 +622,24 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(() => service.acceptShareToken(token.id, 20)).toThrow('already handled');
             expect(service.findPatientByAbhaAddress('  ')).toBeNull();
         });
+
+        it('persists health ID links through patient save', () => {
+            const created: any = service.savePatient({
+                name: 'Sita', mobile: '9876500001', age: 30, gender: 'Female',
+                abha_address: 'sita@sbx', abha_name: 'Sita Devi'
+            });
+            const id = Number(created.lastInsertRowid);
+            expect(service.findPatientByAbhaAddress('SITA@sbx')?.id).toBe(id);
+
+            service.savePatient({ id, name: 'Sita', abha_address: null, abha_name: null });
+            expect(service.findPatientByAbhaAddress('sita@sbx')).toBeNull();
+        });
+
+        it('rejects oversized or malformed share payloads', () => {
+            expect(() => service.receiveAbhaShare({ name: 'x'.repeat(201) }, 20))
+                .toThrow('too long');
+            expect(() => service.receiveAbhaShare({ name: 'Ramesh', abhaAddress: 'not-an-id' }, 20))
+                .toThrow('looks invalid');
+        });
     });
 });

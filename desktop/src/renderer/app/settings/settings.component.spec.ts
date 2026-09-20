@@ -337,4 +337,19 @@ describe('SettingsComponent Validation', () => {
         expect(mockData.invoke).toHaveBeenCalledWith('abdmSimulateShare');
         expect(component.abdmSimResult).toContain('Token #7');
     });
+
+    it('sends the mock gateway choice with the config', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmConfig.gateway_env = 'staging';
+        component.abdmConfig.client_id = 'CID';
+        component.abdmConfig.mock = false;
+
+        await component.saveAbdmConfig();
+
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({
+            gateway_env: 'staging',
+            client_id: 'CID',
+            mock: false
+        }));
+    });
 });

@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 15 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(15);
+        it('should have 16 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(16);
         });
     });
 
@@ -397,6 +397,34 @@ describe('Database Migrations', () => {
             expect(() => {
                 MIGRATIONS.forEach(migration => migration.up(mockDb));
             }).not.toThrow();
+        });
+    });
+
+    describe('Migration v16 (share-token LAN grants)', () => {
+        it('grants share methods to desk roles, reads only for nurses', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sql: string) => {
+                if (sql.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 16)!.up(mockDb);
+
+            for (const role of ['doctor', 'receptionist', 'admin']) {
+                const perms = JSON.parse(writes[role]);
+                expect(perms).toEqual(expect.arrayContaining(
+                    ['abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken']));
+            }
+            const nurse = JSON.parse(writes['nurse']);
+            expect(nurse).toEqual(expect.arrayContaining(['abdmGetShareTokens', 'findPatientByAbha']));
+            expect(nurse).not.toContain('abdmAcceptShareToken');
         });
     });
 });

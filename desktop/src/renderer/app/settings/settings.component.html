@@ -194,6 +194,11 @@
                     <button type="button" (click)="saveAbdmConfig()" [disabled]="abdmBusy" class="btn btn-primary px-6">Save Changes</button>
                     <span *ngIf="abdmSaved" class="text-green-600 text-sm font-medium animate-pulse">✓ Saved successfully!</span>
                 </div>
+                <label class="mt-4 flex items-start gap-2 text-sm text-gray-600 cursor-pointer">
+                    <input type="checkbox" [(ngModel)]="abdmConfig.mock" (change)="saveAbdmConfig()"
+                           class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4 mt-0.5">
+                    <span>Use mock gateway (testing). Turn off to talk to the real gateway once the ID and secret are saved.</span>
+                </label>
             </div>
 
             <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mb-6">

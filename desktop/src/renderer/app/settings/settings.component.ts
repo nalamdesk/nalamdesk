@@ -402,7 +402,8 @@ export class SettingsComponent implements OnInit {
         gateway_env: this.abdmConfig.gateway_env,
         client_id: this.abdmConfig.client_id,
         hip_id: this.abdmConfig.hip_id || '',
-        counter_id: this.abdmConfig.counter_id || ''
+        counter_id: this.abdmConfig.counter_id || '',
+        mock: this.abdmConfig.mock !== false
       });
       this.ngZone.run(() => {
         this.abdmSaved = true;

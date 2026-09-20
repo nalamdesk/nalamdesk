@@ -215,6 +215,26 @@ describe('QueueComponent', () => {
         expect(mockDataService.invoke).not.toHaveBeenCalledWith('abdmAcceptShareToken', expect.anything());
     });
 
+    it('acknowledges an already-queued token exactly once', async () => {
+        const token = { id: 7, token_no: 19, patient_name: 'Queued', abha_address: 'queued@sbx' };
+        component.queue.set([{ id: 11, patient_id: 31, status: 'waiting' }]);
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'findPatientByAbha') {
+                return Promise.resolve({ id: 31, name: 'Queued', mobile: '9876500001', age: 40, gender: 'Male' });
+            }
+            if (endpoint === 'abdmAcceptShareToken') return Promise.resolve({ status: 'accepted' });
+            if (endpoint === 'abdmGetShareTokens') return Promise.resolve([]);
+            return Promise.resolve(null);
+        });
+        vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+        await component.acceptShareToken(token);
+
+        const acks = mockDataService.invoke.mock.calls.filter((call: any[]) => call[0] === 'abdmAcceptShareToken');
+        expect(acks).toHaveLength(1);
+        expect(mockDialogService.open).not.toHaveBeenCalled();
+    });
+
     it('ignores Space while typing but accepts the oldest token when idle', async () => {
         component.shareTokens = [{ id: 6, token_no: 18, patient_name: 'Ramesh' }];
         const acceptSpy = vi.spyOn(component, 'acceptShareToken').mockResolvedValue(undefined);

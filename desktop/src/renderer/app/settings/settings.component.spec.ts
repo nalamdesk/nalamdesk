@@ -365,4 +365,21 @@ describe('SettingsComponent Validation', () => {
             hpr_id: 'HPR-2'
         }));
     });
+
+    it('loads and acknowledges inbox callbacks', async () => {
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmGetInbox') {
+                return Promise.resolve([{ id: 3, kind: 'consent-request', created_at: '2026-09-20 10:00:00' }]);
+            }
+            if (method === 'abdmAckInbox') return Promise.resolve({ status: 'handled' });
+            return Promise.resolve(null);
+        });
+
+        await component.loadInbox();
+        expect(component.inboxItems).toHaveLength(1);
+
+        await component.ackInbox(3);
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmAckInbox', { id: 3 });
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmGetInbox');
+    });
 });

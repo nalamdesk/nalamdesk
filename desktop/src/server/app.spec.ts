@@ -229,8 +229,7 @@ describe('ABDM Scan & Share callback', () => {
     });
 
     it('rate-limits share floods with 429', async () => {
-        for (let i = 0; i < 30; i += 1) {
-            const response = await server.inject({
+        for (let i = 0; i < 30; i += 1) {            const response = await server.inject({
                 method: 'POST',
                 url: '/abdm/v0.5/patients/profile/share',
                 payload: { name: `Patient ${i}` }
@@ -243,6 +242,48 @@ describe('ABDM Scan & Share callback', () => {
             payload: { name: 'Patient overflow' }
         });
         expect(throttled.statusCode).toBe(429);
+    });
+});
+
+describe('ABDM callback inbox route', () => {
+    let server: ApiServer;
+    let db: any;
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            receiveInboxCallback: vi.fn().mockReturnValue({ id: 5, status: 'pending' })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    it('queues a valid callback with 202', async () => {
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            payload: { requestId: 'r-1' }
+        });
+        expect(response.statusCode).toBe(202);
+        expect(response.json()).toMatchObject({ status: 'queued', id: 5 });
+        expect(db.receiveInboxCallback).toHaveBeenCalledWith(
+            'consent-request', expect.objectContaining({ requestId: 'r-1' }));
+    });
+
+    it('rejects invalid callbacks with 400', async () => {
+        db.receiveInboxCallback.mockImplementation(() => {
+            throw new Error('Callback kind is required.');
+        });
+        const badKind = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/%20',
+            payload: {}
+        });
+        expect(badKind.statusCode).toBe(400);
     });
 });
 

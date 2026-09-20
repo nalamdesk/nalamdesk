@@ -275,6 +275,22 @@
                 <button type="button" class="btn btn-outline btn-sm" [disabled]="abdmBusy" (click)="simulateShare()">Simulate Incoming Scan</button>
                 <p *ngIf="abdmSimResult" class="mt-3 text-sm text-gray-600">{{ abdmSimResult }}</p>
             </div>
+
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mt-6">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-lg font-medium text-gray-800">Pending Callbacks</h3>
+                    <button type="button" class="btn btn-ghost btn-sm" [disabled]="abdmBusy" (click)="loadInbox()">Refresh</button>
+                </div>
+                <p class="text-sm text-gray-500 mb-4">Gateway notifications waiting for review. Acknowledging only marks them handled — nothing is applied automatically.</p>
+                <div *ngIf="inboxItems.length === 0" class="text-sm text-gray-400 italic">No pending callbacks.</div>
+                <div *ngFor="let item of inboxItems" class="flex items-center justify-between gap-3 py-2 border-t border-gray-100">
+                    <div class="min-w-0">
+                        <span class="text-sm font-medium text-gray-800">{{ item.kind }}</span>
+                        <span class="block text-xs text-gray-400 truncate">{{ item.created_at }}</span>
+                    </div>
+                    <button type="button" class="btn btn-outline btn-sm shrink-0" [disabled]="abdmBusy" (click)="ackInbox(item.id)">Acknowledge</button>
+                </div>
+            </div>
         </div>
 
         <!-- 2. USERS TAB -->

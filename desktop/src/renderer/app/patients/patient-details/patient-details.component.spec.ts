@@ -570,5 +570,21 @@ describe('PatientDetailsComponent', () => {
         expect(practitioner.identifier).toEqual(
             expect.arrayContaining([expect.objectContaining({ value: 'HPR-2' })]));
     });
+
+    it('identifies the exported encounter with its care context reference', () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith', care_context_ref: 'OP-2026-0042',
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+
+        const bundle = JSON.parse(component.buildHealthRecordJson().json);
+        const encounter = bundle.entry.find((e: any) => e.resource?.resourceType === 'Encounter').resource;
+        expect(encounter.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'OP-2026-0042' })]));
+    });
 });
 

@@ -1190,7 +1190,8 @@ export class PatientDetailsComponent implements OnInit {
             encounter: {
                 id: visit.id, date: visit.date, diagnosis: visit.diagnosis,
                 diagnosisType: visit.diagnosis_type, symptoms: visit.symptoms,
-                examinationNotes: visit.examination_notes
+                examinationNotes: visit.examination_notes,
+                careContextRef: visit.care_context_ref || null
             },
             prescriptions: (visit.prescription || []).map((item: any) => ({
                 medicine: item.medicine, dosage: item.dosage, route: item.route,

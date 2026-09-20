@@ -60,6 +60,7 @@ export class SettingsComponent implements OnInit {
   abdmSaved = false;
   qrDataUrl: string | null = null;
   abdmSimResult: string | null = null;
+  inboxItems: any[] = [];
 
   // Cloud
   cloudEnabled = false;
@@ -276,6 +277,7 @@ export class SettingsComponent implements OnInit {
     }
     if (tab === 'abdm') {
       this.loadAbdmConfig();
+      this.loadInbox();
     }
   }
 
@@ -475,6 +477,23 @@ export class SettingsComponent implements OnInit {
         this.abdmSimResult = e instanceof Error ? e.message : 'Demo scan failed.';
       });
     } finally { this.abdmBusy = false; }
+  }
+
+  async loadInbox() {
+    try {
+      const items = await this.dataService.invoke<any[]>('abdmGetInbox').catch(() => []);
+      this.ngZone.run(() => { this.inboxItems = items || []; });
+    } catch (e) { console.error(e); }
+  }
+
+  async ackInbox(id: number) {
+    if (this.abdmBusy) return;
+    this.abdmBusy = true;
+    try {
+      await this.dataService.invoke('abdmAckInbox', { id });
+      await this.loadInbox();
+    } catch (e) { console.error(e); }
+    finally { this.abdmBusy = false; }
   }
 
   async loadUsers() {

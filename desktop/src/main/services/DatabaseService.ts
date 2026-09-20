@@ -471,6 +471,19 @@ export class DatabaseService {
         return this.acceptShareToken(args.tokenId ?? args.id, actingUserId);
     }
 
+    // Care context references (`OP-YYYY-NNNN`) durably link an encounter to
+    // its ABDM care context. Numbers restart each calendar year; assignment
+    // happens inside the encounter transactions below, so concurrent begins
+    // can never share a number.
+    private nextCareContextRef(): string {
+        const year = new Date().getFullYear();
+        const row = this.db.prepare(
+            `SELECT COALESCE(MAX(CAST(SUBSTR(care_context_ref, 9) AS INTEGER)), 0) AS maxNo
+             FROM visits WHERE care_context_ref LIKE ?`
+        ).get(`OP-${year}-%`) as any;
+        return `OP-${year}-${String(Number(row?.maxNo || 0) + 1).padStart(4, '0')}`;
+    }
+
     // Scan & Share intake: stores a gateway profile-share callback as a
     // numbered queue token. Numbers restart daily; tokens expire after
     // 15 minutes so a stale scan never blocks the dock.
@@ -541,6 +554,43 @@ export class DatabaseService {
             return this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?').get(token.id);
         });
         return accept.immediate();
+    }
+
+    // ABDM callback inbox: gateway notifications (consent events, data-share
+    // notices, link confirmations) land here for explicit human handling.
+    // Kinds are free-form today; M3 consent work will enumerate them.
+    receiveInboxCallback(kind: string, payload: any, actingUserId?: number) {
+        const cleanKind = String(kind || '').trim().slice(0, 64);
+        if (!cleanKind) throw new Error('Callback kind is required.');
+        const body = JSON.stringify(payload ?? null);
+        if (body.length > 8192) throw new Error('Callback payload is too large.');
+        const result = this.db.prepare(
+            `INSERT INTO abdm_inbox (kind, payload) VALUES (?, ?)`
+        ).run(cleanKind, body);
+        const row = this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?')
+            .get(Number(result.lastInsertRowid));
+        this.logAudit('INSERT', 'abdm_inbox', Number(result.lastInsertRowid),
+            actingUserId, `ABDM callback (${cleanKind}) queued`);
+        return row;
+    }
+
+    getPendingInbox() {
+        return this.db.prepare(`SELECT * FROM abdm_inbox
+            WHERE status = 'pending' ORDER BY id ASC`).all();
+    }
+
+    ackInbox(id: number, actingUserId?: number) {
+        const ack = this.db.transaction(() => {
+            const row = this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?').get(Number(id)) as any;
+            if (!row || row.status !== 'pending') {
+                throw new Error('Callback was already handled.');
+            }
+            this.db.prepare(`UPDATE abdm_inbox SET status = 'handled' WHERE id = ?`).run(row.id);
+            this.logAudit('UPDATE', 'abdm_inbox', row.id, actingUserId,
+                `Acknowledged ABDM callback (${row.kind})`);
+            return this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?').get(row.id);
+        });
+        return ack.immediate();
     }
 
     // Atomic Scan & Share check-in: claim the token, match or create the
@@ -867,9 +917,10 @@ export class DatabaseService {
                     diagnosis, prescription_json, amount_paid,
                     symptoms, examination_notes, diagnosis_type, status,
                     started_at, updated_at, queue_entry_id, start_request_id,
-                    start_operation, start_actor_id
-                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'begin', ?)
-            `).run(patientId, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId);
+                    start_operation, start_actor_id, care_context_ref
+                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'begin', ?, ?)
+            `).run(patientId, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId,
+                this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'begin', Number(result.lastInsertRowid), patientId, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
             this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started encounter for queue entry ${queue.id}`);
@@ -1038,9 +1089,10 @@ export class DatabaseService {
                     diagnosis, prescription_json, amount_paid,
                     symptoms, examination_notes, diagnosis_type, status,
                     started_at, updated_at, queue_entry_id, start_request_id,
-                    start_operation, start_actor_id
-                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'next', ?)
-            `).run(queue.patient_id, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId);
+                    start_operation, start_actor_id, care_context_ref
+                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'next', ?, ?)
+            `).run(queue.patient_id, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId,
+                this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'next', Number(result.lastInsertRowid), queue.patient_id, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
             this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started next encounter for queue entry ${queue.id}`);

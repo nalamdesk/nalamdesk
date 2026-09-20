@@ -12608,6 +12608,10 @@ html:has(.drawer-toggle:checked) {
   min-width: 70px;
 }
 
+.min-w-0 {
+  min-width: 0px;
+}
+
 .max-w-2xl {
   max-width: 42rem;
 }

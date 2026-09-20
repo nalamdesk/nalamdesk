@@ -78,6 +78,7 @@ export interface EncounterExportInput {
         diagnosisType?: string;
         symptoms?: string;
         examinationNotes?: string;
+        careContextRef?: string | null;
     };
     prescriptions?: ExportPrescriptionLine[];
     allergies?: ExportAllergy[];
@@ -310,6 +311,9 @@ function organizationResource(input: EncounterExportInput): Organization {
 function encounterResource(input: EncounterExportInput, date: string): Encounter {
     return {
         resourceType: 'Encounter',
+        identifier: input.encounter.careContextRef
+            ? [{ system: 'https://nalamdesk.app/fhir/care-context', value: input.encounter.careContextRef }]
+            : undefined,
         status: 'finished',
         subject: ref('Patient', input.patient.id),
         participant: [{ individual: ref('Practitioner', input.practitioner.id) }],

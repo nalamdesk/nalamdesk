@@ -64,6 +64,10 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [payload['tokenId'] ?? payload['id'], actingUserId];
         }
+        case 'abdmAckInbox': {
+            const payload = payloadObject(args[0]);
+            return [payload['id'], actingUserId];
+        }
         case 'saveVitals':
             return [args[0], actingUserId];
         default:

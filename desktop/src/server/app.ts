@@ -46,7 +46,7 @@ const ALLOWED_IPC_METHODS = [
     'getMedications', 'saveMedication', 'deleteMedication',
     'getPatientSafetyContext',
     'abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken',
-    'abdmAcceptShareTokenAndCheckIn',
+    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox',
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha',
@@ -278,6 +278,24 @@ export class ApiServer {
                     return reply.code(202).send({ status: 'queued', tokenNo: (token as any)?.token_no });
                 } catch (e: any) {
                     return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid share payload.' });
+                }
+            });
+
+        // Generic ABDM callback inbox (consent events, data-share notices).
+        // Same posture as the share route: validated, rate-limited, and
+        // stored for explicit human handling — never auto-applied.
+        this.fastify.post('/abdm/v0.5/callbacks/:kind',
+            { bodyLimit: 8192 },
+            async (request: any, reply: any) => {
+                if (!this.shareCallbackAllowed(`${request.ip || 'unknown'}:inbox`)) {
+                    return reply.code(429).send({ error: 'Too many callbacks. Slow down and retry.' });
+                }
+                try {
+                    const row = this.dbService.receiveInboxCallback(
+                        (request.params as any)?.kind, request.body);
+                    return reply.code(202).send({ status: 'queued', id: (row as any)?.id });
+                } catch (e: any) {
+                    return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid callback.' });
                 }
             });
 

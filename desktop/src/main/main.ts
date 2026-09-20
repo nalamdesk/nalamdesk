@@ -938,6 +938,18 @@ handleDb('db:abdmGetShareTokens', () => {
     if (!user) throw new Error('Unauthorized');
     return databaseService.getPendingShareTokens();
 });
+handleDb('db:abdmGetInbox', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return databaseService.getPendingInbox();
+});
+handleDb('db:abdmAckInbox', (_, payload) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const args = payload || {};
+    return databaseService.ackInbox(args.id, user.id);
+});
 handleDb('db:abdmAcceptShareToken', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());
     const args = payload || {};

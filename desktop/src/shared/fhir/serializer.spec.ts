@@ -255,6 +255,16 @@ describe('buildOpConsultRecord', () => {
         expect(organization.identifier).toBeUndefined();
     });
 
+    it('identifies the encounter with its care context reference', () => {
+        const input = fixture();
+        (input.encounter as any).careContextRef = 'OP-2026-0042';
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const encounter: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'Encounter')?.resource;
+        expect(encounter.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'OP-2026-0042' })]));
+    });
+
     it('builds coded IPS sections instead of the OPConsult layout', () => {
         const { bundle } = buildIpsDocument(fixture(), '2026-09-20T10:00:00.000Z');
         const composition: any = bundle.entry[0].resource;

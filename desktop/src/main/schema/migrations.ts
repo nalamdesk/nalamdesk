@@ -898,5 +898,52 @@ export const MIGRATIONS = [
                 try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
             });
         }
+    },
+    {
+        version: 20,
+        up: (db: any) => {
+            console.log('Running Migration v20 (care context linking and callback inbox)...');
+            try { db.exec(`ALTER TABLE visits ADD COLUMN care_context_ref TEXT`); } catch (e) { }
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_inbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    payload TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_visits_care_context_ref
+                ON visits(care_context_ref) WHERE care_context_ref IS NOT NULL;
+            `);
+            db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_abdm_inbox_status
+                ON abdm_inbox(status, created_at);
+            `);
+        }
+    },
+    {
+        version: 21,
+        up: (db: any) => {
+            console.log('Running Migration v21 (inbox LAN grants)...');
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmGetInbox', 'abdmAckInbox'],
+                receptionist: ['abdmGetInbox', 'abdmAckInbox'],
+                admin: ['abdmGetInbox', 'abdmAckInbox'],
+                nurse: ['abdmGetInbox']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

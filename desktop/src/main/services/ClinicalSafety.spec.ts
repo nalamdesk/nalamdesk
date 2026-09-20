@@ -645,8 +645,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 .toThrow('looks invalid');
         });
 
-        it('migration v17 reconciles duplicate links keeping the earliest record', async () => {
-            const { MIGRATIONS } = await import('../schema/migrations');
+        it('migration v17 reconciles duplicate links keeping the earliest record', async () => {            const { MIGRATIONS } = await import('../schema/migrations');
             const v17 = MIGRATIONS.find((m: any) => m.version === 17);
             expect(v17).toBeTruthy();
 
@@ -700,6 +699,36 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(db.prepare(`SELECT count(*) AS n FROM patients WHERE name = 'Sita'`).get().n).toBe(1);
             expect(db.prepare(`SELECT count(*) AS n FROM patient_queue WHERE patient_id = ?`)
                 .get(first.patientId).n).toBe(1);
+        });
+
+        it('assigns yearly care context references to encounters', () => {
+            const year = new Date().getFullYear();
+            const q1 = queuePatient(1);
+            const enc1 = service.beginConsultation(
+                { patientId: 1, queueEntryId: Number(q1.lastInsertRowid), startRequestId: 'cc-1' }, 10);
+            expect(enc1.care_context_ref).toBe(`OP-${year}-0001`);
+
+            service.completeConsultation({ encounterId: enc1.id, visit: { diagnosis: 'Done' } }, 10);
+            const q2 = queuePatient(2);
+            const enc2 = service.beginConsultation(
+                { patientId: 2, queueEntryId: Number(q2.lastInsertRowid), startRequestId: 'cc-2' }, 10);
+            expect(enc2.care_context_ref).toBe(`OP-${year}-0002`);
+        });
+
+        it('queues gateway callbacks and acknowledges them once', () => {
+            const row: any = service.receiveInboxCallback('consent-request', { requestId: 'r-1' }, 20);
+            expect(row.status).toBe('pending');
+
+            expect(() => service.receiveInboxCallback('  ', {}, 20)).toThrow('kind is required');
+            expect(() => service.receiveInboxCallback('x', 'y'.repeat(9000), 20)).toThrow('too large');
+
+            const pending = service.getPendingInbox() as any[];
+            expect(pending.map((r) => r.id)).toContain(row.id);
+
+            const acked: any = service.ackInbox(row.id, 20);
+            expect(acked.status).toBe('handled');
+            expect(() => service.ackInbox(row.id, 20)).toThrow('already handled');
+            expect((service.getPendingInbox() as any[]).map((r) => r.id)).not.toContain(row.id);
         });
     });
 });

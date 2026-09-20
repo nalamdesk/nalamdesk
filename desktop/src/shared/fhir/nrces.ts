@@ -40,10 +40,10 @@ export type PrescriptionLineStatus = 'draft' | 'active' | 'completed' | 'cancell
 /** A prescription line that satisfies the export gate. */
 export interface ExportablePrescriptionLine {
     medicine: string;
-    dosage?: string;
-    route?: string;
+    dosage: string;
+    route: string;
     frequency: string;
-    duration?: string;
+    duration: string;
     instruction?: string;
 }
 
@@ -60,12 +60,15 @@ export type OpConsultSection = (typeof OP_CONSULT_SECTIONS)[number];
 
 /**
  * Narrow check: does this MedicationRequest carry everything the export
- * gate requires? Used by the Phase-2 serializer before emitting a record.
+ * gate requires? The serializer pre-screens the source line (dose, route,
+ * frequency, duration); this predicate guards the structural contract —
+ * subject, requester, date, medication, and at least one dosage instruction.
  */
 export function isExportableMedicationRequest(request: MedicationRequest): boolean {
     if (!request.subject?.reference) return false;
     if (!request.requester?.reference) return false;
     if (!request.authoredOn) return false;
     if (!request.medicationCodeableConcept?.text && !request.medicationReference?.reference) return false;
+    if (!request.dosageInstruction || request.dosageInstruction.length === 0) return false;
     return true;
 }

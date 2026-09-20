@@ -85,7 +85,7 @@ describe('NRCeS prescription profile', () => {
         ]);
     });
 
-    it('gates export on subject, requester, authored date, and medication', () => {
+    it('gates export on subject, requester, authored date, medication, and dosage', () => {
         const base: MedicationRequest = {
             resourceType: 'MedicationRequest',
             status: 'active',
@@ -93,7 +93,8 @@ describe('NRCeS prescription profile', () => {
             subject: { reference: 'Patient/1' },
             requester: { reference: 'Practitioner/10' },
             authoredOn: '2026-09-20',
-            medicationCodeableConcept: { text: 'Metformin 500mg' }
+            medicationCodeableConcept: { text: 'Metformin 500mg' },
+            dosageInstruction: [{ text: '1-0-1' }]
         };
         expect(isExportableMedicationRequest(base)).toBe(true);
         expect(isExportableMedicationRequest({ ...base, subject: {} })).toBe(false);
@@ -102,5 +103,6 @@ describe('NRCeS prescription profile', () => {
         expect(isExportableMedicationRequest({
             ...base, medicationCodeableConcept: undefined
         })).toBe(false);
+        expect(isExportableMedicationRequest({ ...base, dosageInstruction: [] })).toBe(false);
     });
 });

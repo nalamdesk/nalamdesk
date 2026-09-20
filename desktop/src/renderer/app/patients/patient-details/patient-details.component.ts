@@ -1148,7 +1148,17 @@ export class PatientDetailsComponent implements OnInit {
     buildHealthRecordJson() {
         const visit: any = this.selectedVisit || {};
         const patient: any = this.patient || {};
+        // Historical authorship: the record belongs to the visit's doctor,
+        // not whoever happens to be exporting it.
         const user: any = this.currentUser || {};
+        const sameAuthor = !user.id || !visit.doctor_id || Number(user.id) === Number(visit.doctor_id);
+        const practitioner = sameAuthor ? {
+            id: visit.doctor_id || user.id, name: visit.doctor_name || user.name || 'Doctor',
+            licenseNumber: user.license_number, specialty: user.specialty
+        } : {
+            id: visit.doctor_id, name: visit.doctor_name || 'Doctor',
+            licenseNumber: undefined, specialty: undefined
+        };
         const units = visit.vitals?.units || {};
         const { bundle, warnings } = buildOpConsultRecord({
             patient: {
@@ -1156,10 +1166,7 @@ export class PatientDetailsComponent implements OnInit {
                 age: patient.age, gender: patient.gender, dob: patient.dob,
                 address: patient.address, abhaAddress: patient.abha_address
             },
-            practitioner: {
-                id: user.id, name: user.name || 'Doctor',
-                licenseNumber: user.license_number, specialty: user.specialty
-            },
+            practitioner,
             clinic: { name: 'NalamDesk Clinic' },
             encounter: {
                 id: visit.id, date: visit.date, diagnosis: visit.diagnosis,
@@ -1183,7 +1190,8 @@ export class PatientDetailsComponent implements OnInit {
                 systolic_bp: visit.vitals.systolic_bp, diastolic_bp: visit.vitals.diastolic_bp,
                 pulse: visit.vitals.pulse, temperature: visit.vitals.temperature,
                 temperatureUnits: units.temperature, spo2: visit.vitals.spo2,
-                weight: visit.vitals.weight, weightUnits: units.weight
+                weight: visit.vitals.weight, weightUnits: units.weight,
+                height: visit.vitals.height
             } : null
         });
         return { json: JSON.stringify(bundle, null, 2), warnings };

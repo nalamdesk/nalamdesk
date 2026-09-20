@@ -13,7 +13,8 @@ import type {
     Resource
 } from './r4';
 import {
-    FREQUENCY_PATTERN, OP_CONSULT_SECTIONS, isExportableMedicationRequest
+    ExportablePrescriptionLine, FREQUENCY_PATTERN, OP_CONSULT_SECTIONS,
+    isExportableMedicationRequest
 } from './nrces';
 
 export interface ExportPrescriptionLine {
@@ -108,8 +109,16 @@ function dosageFor(line: ExportPrescriptionLine): Dosage {
 function medicationRequest(
     line: ExportPrescriptionLine,
     input: EncounterExportInput,
-    date: string
+    date: string,
+    warnings: string[]
 ): MedicationRequest | null {
+    const missing = (['dosage', 'route', 'frequency', 'duration'] as const)
+        .filter((field) => !String(line[field] || '').trim());
+    if (missing.length > 0) {
+        warnings.push(
+            `Prescription line omitted from export (needs ${missing.join(', ')}): ${line.medicine}`);
+        return null;
+    }
     const request: MedicationRequest = {
         resourceType: 'MedicationRequest',
         status: 'active',
@@ -131,6 +140,9 @@ function medicationRequest(
 function allergyResource(allergy: ExportAllergy, patientId: number | string): AllergyIntolerance {
     const criticality = allergy.criticality === 'high' ? 'high'
         : allergy.criticality === 'unable-to-assess' ? 'unable-to-assess' : 'low';
+    const severity = allergy.severity === 'mild' || allergy.severity === 'moderate' || allergy.severity === 'severe'
+        ? allergy.severity
+        : allergy.severity === 'life-threatening' ? 'severe' : undefined;
     return {
         resourceType: 'AllergyIntolerance',
         clinicalStatus: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical', code: 'active' }] },
@@ -138,7 +150,7 @@ function allergyResource(allergy: ExportAllergy, patientId: number | string): Al
         criticality,
         code: { text: allergy.substance },
         patient: ref('Patient', patientId),
-        reaction: allergy.reaction ? [{ manifestation: [{ text: allergy.reaction }] }] : undefined
+        reaction: allergy.reaction ? [{ manifestation: [{ text: allergy.reaction }], severity }] : undefined
     };
 }
 
@@ -229,11 +241,19 @@ function encounterResource(input: EncounterExportInput, date: string): Encounter
     };
 }
 
+function textNarrative(lines: string[]): { status: string; div: string } {
+    const items = lines.filter((line) => line.trim());
+    return {
+        status: 'generated',
+        div: `<div>${items.map((line) => `<p>${line}</p>`).join('')}</div>`
+    };
+}
+
 function compositionResource(
     input: EncounterExportInput,
     date: string,
     profile: 'op-consult' | 'ips',
-    entryRefs: string[]
+    sections: Array<{ title: string; refs: string[]; narrative: string[] }>
 ): Composition {
     return {
         resourceType: 'Composition',
@@ -248,7 +268,11 @@ function compositionResource(
         title: profile === 'ips'
             ? `Patient Summary - ${input.patient.name}`
             : `OP Consultation - ${input.patient.name}`,
-        section: OP_CONSULT_SECTIONS.map((title) => ({ title, entry: entryRefs.map((r) => ({ reference: r })) }))
+        section: sections.map((section) => ({
+            title: section.title,
+            entry: section.refs.map((r) => ({ reference: r })),
+            text: textNarrative(section.narrative)
+        }))
     };
 }
 
@@ -258,72 +282,80 @@ function bundleFor(
     profile: 'op-consult' | 'ips'
 ): { bundle: Bundle; warnings: string[] } {
     const warnings: string[] = [];
-    const resources: Resource[] = [];
+    // Entries are built as (resource, fullUrl) pairs so references can never
+    // drift apart; the Composition sections below each take their own slice.
+    const entries: Array<{ fullUrl: string; resource: Resource }> = [];
     const push = (resource: Resource, localId: string): string => {
-        resources.push(resource);
-        return `${resource.resourceType}/${localId}`;
+        const fullUrl = `${resource.resourceType}/${localId}`;
+        entries.push({ fullUrl, resource });
+        return fullUrl;
     };
 
     const patientRef = push(patientResource(input), String(input.patient.id));
     const practitionerRef = push(practitionerResource(input), String(input.practitioner.id));
     push(organizationResource(input), 'clinic');
-    const encounterRef = push(encounterResource(input, date), String(input.encounter.id));
-    void patientRef;
-    void practitionerRef;
-    void encounterRef;
+    const encounterRefFull = push(encounterResource(input, date), String(input.encounter.id));
+    const coreRefs = [patientRef, practitionerRef, encounterRefFull];
 
-    const entryRefs: string[] = [
-        `Patient/${input.patient.id}`,
-        `Practitioner/${input.practitioner.id}`,
-        `Encounter/${input.encounter.id}`
-    ];
-
+    const conditionRefs: string[] = [];
     for (const condition of input.conditions || []) {
         if (!condition.name?.trim()) continue;
-        const refId = `condition-${entryRefs.length}`;
-        resources.push({ ...conditionResource(condition, input.patient.id) });
-        entryRefs.push(`Condition/${refId}`);
+        conditionRefs.push(push(conditionResource(condition, input.patient.id), `condition-${entries.length}`));
     }
 
+    const allergyRefs: string[] = [];
     for (const allergy of input.allergies || []) {
         if (!allergy.substance?.trim() || allergy.status === 'inactive') continue;
-        const refId = `allergy-${entryRefs.length}`;
-        resources.push({ ...allergyResource(allergy, input.patient.id) });
-        entryRefs.push(`AllergyIntolerance/${refId}`);
+        allergyRefs.push(push(allergyResource(allergy, input.patient.id), `allergy-${entries.length}`));
     }
 
+    const observationRefs: string[] = [];
     for (const observation of vitalObservations(input.vitals, input.patient.id)) {
-        const refId = `observation-${entryRefs.length}`;
-        resources.push({ ...observation });
-        entryRefs.push(`Observation/${refId}`);
+        observationRefs.push(push(observation, `observation-${entries.length}`));
     }
 
+    const prescriptionRefs: string[] = [];
     for (const line of input.prescriptions || []) {
         if (!line.medicine?.trim()) continue;
-        const built = medicationRequest(line, input, date);
-        if (!built) {
-            warnings.push(`Prescription line omitted from export (incomplete): ${line.medicine}`);
-            continue;
-        }
+        const built = medicationRequest(line, input, date, warnings);
+        if (!built) continue;
         if (!FREQUENCY_PATTERN[line.frequency || ''] && line.frequency) {
             warnings.push(`Frequency kept as free text (no coded mapping): ${line.medicine} — ${line.frequency}`);
         }
-        const refId = `medicationrequest-${entryRefs.length}`;
-        resources.push({ ...built });
-        entryRefs.push(`MedicationRequest/${refId}`);
+        prescriptionRefs.push(push(built, `medicationrequest-${entries.length}`));
     }
 
-    const composition = compositionResource(input, date, profile, entryRefs);
+    // Findings narrative: symptoms, diagnosis, and exam notes ride in their
+    // own sections so the record carries what the receipt showed.
+    const sections = [
+        {
+            title: OP_CONSULT_SECTIONS[0],
+            refs: [...coreRefs, ...conditionRefs, ...observationRefs],
+            narrative: [
+                ...(input.encounter.symptoms ? [`Complaints: ${input.encounter.symptoms}`] : []),
+                ...(input.encounter.examinationNotes ? [`Examination: ${input.encounter.examinationNotes}`] : [])
+            ]
+        },
+        { title: OP_CONSULT_SECTIONS[1], refs: [...coreRefs, ...observationRefs], narrative: [] },
+        {
+            title: OP_CONSULT_SECTIONS[2],
+            refs: [...coreRefs, ...conditionRefs],
+            narrative: [
+                ...(input.encounter.diagnosis ? [`Diagnosis: ${input.encounter.diagnosis}${input.encounter.diagnosisType ? ` (${input.encounter.diagnosisType})` : ''}`] : [])
+            ]
+        },
+        { title: OP_CONSULT_SECTIONS[3], refs: [...coreRefs, ...prescriptionRefs], narrative: [] },
+        { title: OP_CONSULT_SECTIONS[4], refs: [...coreRefs, ...allergyRefs], narrative: [] }
+    ];
+
+    const composition = compositionResource(input, date, profile, sections);
     const bundle: Bundle = {
         resourceType: 'Bundle',
         type: 'document',
         timestamp: date,
         entry: [
             { fullUrl: 'Composition/record', resource: composition },
-            ...resources.map((resource, index) => ({
-                fullUrl: entryRefs[index],
-                resource
-            }))
+            ...entries
         ]
     };
     return { bundle, warnings };
@@ -331,14 +363,14 @@ function bundleFor(
 
 /** ABDM OPConsultRecord document bundle for one finished encounter. */
 export function buildOpConsultRecord(input: EncounterExportInput, date?: string): ExportResult {
-    const at = date || new Date().toISOString();
+    const at = date || input.encounter.date || new Date().toISOString();
     const { bundle, warnings } = bundleFor(input, at, 'op-consult');
     return { bundle, warnings };
 }
 
 /** HL7 IPS patient-summary document bundle for one finished encounter. */
 export function buildIpsDocument(input: EncounterExportInput, date?: string): ExportResult {
-    const at = date || new Date().toISOString();
+    const at = date || input.encounter.date || new Date().toISOString();
     const { bundle, warnings } = bundleFor(input, at, 'ips');
     return { bundle, warnings };
 }

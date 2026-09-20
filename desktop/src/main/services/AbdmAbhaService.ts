@@ -55,13 +55,15 @@ export class AbdmAbhaService {
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
 
-    // One session snapshot per operation: resolving it once guarantees the
-    // mock/live decision and the outgoing request can never disagree, even
-    // if the configuration flips mid-flight.
-    private async resolveSession(): Promise<{ token: string; mock: boolean }> {
+    // One operation snapshot per call: token, mock flag, and gateway URL are
+    // resolved together so a configuration flip mid-flight can never mix one
+    // environment's credentials with another's endpoint.
+    private async resolveSnapshot(): Promise<{ token: string; mock: boolean; baseUrl: string }> {
         const getSession = this.deps.getSessionToken;
-        if (!getSession) return { token: `mock-abdm-token-${this.nowMs()}`, mock: true };
-        return getSession();
+        const session = getSession
+            ? await getSession()
+            : { token: `mock-abdm-token-${this.nowMs()}`, mock: true };
+        return { ...session, baseUrl: this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '' };
     }
 
     /** Drops the cached gateway certificate (call when gateway config changes). */
@@ -73,17 +75,16 @@ export class AbdmAbhaService {
         path: string,
         body: unknown,
         method = 'POST',
-        session?: { token: string; mock: boolean }
+        snapshot?: { token: string; mock: boolean; baseUrl: string }
     ): Promise<{ json: any; mock: boolean }> {
-        const active = session ?? await this.resolveSession();
+        const active = snapshot ?? await this.resolveSnapshot();
         if (active.mock) {
             return { json: this.mockRespond(path, body), mock: true };
         }
-        const base = this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '';
         const fetchFn = this.deps.fetchFn || fetch;
         let response: any;
         try {
-            response = await fetchFn(`${base}${path}`, {
+            response = await fetchFn(`${active.baseUrl}${path}`, {
                 method,
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${active.token}` },
                 body: method === 'GET' ? undefined : JSON.stringify(body || {})
@@ -102,19 +103,18 @@ export class AbdmAbhaService {
     // environment switch never reuses the previous environment's key. Mock
     // sessions never reach this path.
     private async getGatewayPublicKey(
-        session: { token: string; mock: boolean }
+        snapshot: { token: string; mock: boolean; baseUrl: string }
     ): Promise<string> {
-        const baseUrl = this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '';
         const cached = this.certCache;
-        if (cached && cached.baseUrl === baseUrl && this.nowMs() - cached.fetchedAt < CERT_CACHE_TTL_MS) {
+        if (cached && cached.baseUrl === snapshot.baseUrl && this.nowMs() - cached.fetchedAt < CERT_CACHE_TTL_MS) {
             return cached.pem;
         }
-        const { json } = await this.authorized(PATHS.authCert, null, 'GET', session);
+        const { json } = await this.authorized(PATHS.authCert, null, 'GET', snapshot);
         const pem = String(json?.publicKey || json?.public_key || json?.cert || '').trim();
         if (!pem.includes('BEGIN PUBLIC KEY')) {
             throw new Error('ABDM gateway did not return a usable public key.');
         }
-        this.certCache = { pem, baseUrl, fetchedAt: this.nowMs() };
+        this.certCache = { pem, baseUrl: snapshot.baseUrl, fetchedAt: this.nowMs() };
         return pem;
     }
 
@@ -132,11 +132,11 @@ export class AbdmAbhaService {
         // Live identifiers travel RSA-encrypted; mock traffic stays plaintext.
         // The session is resolved once so the decision and the request agree.
         const field = via === 'mobile' ? 'mobile' : 'aadhaar';
-        const session = await this.resolveSession();
-        const value = session.mock
+        const snapshot = await this.resolveSnapshot();
+        const value = snapshot.mock
             ? identifier
-            : AbdmSessionService.encryptWithPublicKey(identifier, await this.getGatewayPublicKey(session));
-        const { json, mock } = await this.authorized(path, { [field]: value }, 'POST', session);
+            : AbdmSessionService.encryptWithPublicKey(identifier, await this.getGatewayPublicKey(snapshot));
+        const { json, mock } = await this.authorized(path, { [field]: value }, 'POST', snapshot);
         const txnId = String(json?.txnId || json?.txn_id || '');
         if (!txnId) throw new Error('ABDM enrollment did not return a transaction.');
         return mock ? { txnId, mock, hint: MOCK_OTP_HINT } : { txnId, mock };

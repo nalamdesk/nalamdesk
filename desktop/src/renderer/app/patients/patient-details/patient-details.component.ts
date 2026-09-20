@@ -9,6 +9,7 @@ import { DialogService } from '../../shared/services/dialog.service';
 import { DatePickerComponent } from '../../shared/components/date-picker/date-picker.component';
 import { SharedTableComponent } from '../../shared/components/table/table.component';
 import { AbhaModalComponent } from '../abha-modal.component';
+import { buildOpConsultRecord } from '../../../../shared/fhir/serializer';
 import { ColDef } from 'ag-grid-community';
 import { newRequestId } from '../../services/request-id';
 
@@ -552,6 +553,9 @@ import { newRequestId } from '../../services/request-id';
             <div class="bg-gray-50 border-t px-6 py-4 flex justify-between items-center font-sans">
                 <button (click)="closeModal()" class="text-gray-600 hover:text-gray-800 font-medium">Close</button>
                 <div class="flex gap-3">
+                    <button (click)="exportHealthRecord()" class="px-4 py-2 bg-white border border-gray-300 rounded font-medium hover:bg-gray-100 transition">
+                        Export Record
+                    </button>
 
                     <button (click)="printVisit()" class="px-4 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-md transition">
                         Print Record
@@ -1139,6 +1143,71 @@ export class PatientDetailsComponent implements OnInit {
     printVisit() {
         // Placeholder for printing logic
         window.print();
+    }
+
+    buildHealthRecordJson() {
+        const visit: any = this.selectedVisit || {};
+        const patient: any = this.patient || {};
+        const user: any = this.currentUser || {};
+        const units = visit.vitals?.units || {};
+        const { bundle, warnings } = buildOpConsultRecord({
+            patient: {
+                id: patient.id, name: patient.name, mobile: patient.mobile,
+                age: patient.age, gender: patient.gender, dob: patient.dob,
+                address: patient.address, abhaAddress: patient.abha_address
+            },
+            practitioner: {
+                id: user.id, name: user.name || 'Doctor',
+                licenseNumber: user.license_number, specialty: user.specialty
+            },
+            clinic: { name: 'NalamDesk Clinic' },
+            encounter: {
+                id: visit.id, date: visit.date, diagnosis: visit.diagnosis,
+                diagnosisType: visit.diagnosis_type, symptoms: visit.symptoms,
+                examinationNotes: visit.examination_notes
+            },
+            prescriptions: (visit.prescription || []).map((item: any) => ({
+                medicine: item.medicine, dosage: item.dosage, route: item.route,
+                frequency: item.frequency, duration: item.duration,
+                instruction: item.instruction || item.instructions
+            })),
+            allergies: (this.allergies || []).map((a: any) => ({
+                substance: a.substance, criticality: a.criticality,
+                severity: a.severity, reaction: a.reaction, status: a.status
+            })),
+            conditions: (this.conditions || []).map((c: any) => ({
+                name: c.condition_name, code: c.code,
+                status: c.clinical_status, onsetDate: c.onset_date
+            })),
+            vitals: visit.vitals ? {
+                systolic_bp: visit.vitals.systolic_bp, diastolic_bp: visit.vitals.diastolic_bp,
+                pulse: visit.vitals.pulse, temperature: visit.vitals.temperature,
+                temperatureUnits: units.temperature, spo2: visit.vitals.spo2,
+                weight: visit.vitals.weight, weightUnits: units.weight
+            } : null
+        });
+        return { json: JSON.stringify(bundle, null, 2), warnings };
+    }
+
+    async exportHealthRecord() {
+        if (!this.selectedVisit) return;
+        const { json, warnings } = this.buildHealthRecordJson();
+        if (warnings.length > 0) {
+            await this.dialogService.open({
+                title: 'Exported with notes',
+                message: warnings.join('\n'),
+                type: 'info'
+            });
+        }
+        if (typeof URL.createObjectURL === 'function') {
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = `health-record-${this.selectedVisit.id || 'visit'}.json`;
+            anchor.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
     }
 
     async deleteVisit(visitId: number) {

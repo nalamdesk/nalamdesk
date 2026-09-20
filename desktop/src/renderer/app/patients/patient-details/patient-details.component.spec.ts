@@ -472,5 +472,26 @@ describe('PatientDetailsComponent', () => {
             message: 'Failed to save medication record.'
         }));
     });
+
+    it('builds an exportable health record from the receipt state', () => {
+        component.patient = { id: 1, name: 'Asha', mobile: '9876543210', age: 34, gender: 'Female' };
+        component.currentUser = { id: 10, name: 'Dr. Smith', license_number: 'MED-1' };
+        component.selectedVisit = {
+            id: 7,
+            date: '2026-09-20T10:00:00.000Z',
+            diagnosis: 'Pharyngitis',
+            prescription: [{ medicine: 'Amoxicillin 500mg', frequency: '1-0-1' }]
+        };
+        component.allergies = [];
+        component.conditions = [];
+
+        const { json, warnings } = component.buildHealthRecordJson();
+        const bundle = JSON.parse(json);
+        expect(bundle.resourceType).toBe('Bundle');
+        expect(warnings).toHaveLength(0);
+        const composition = bundle.entry[0].resource;
+        expect(composition.title).toContain('OP Consultation');
+        expect(JSON.stringify(bundle)).toContain('MED-1');
+    });
 });
 

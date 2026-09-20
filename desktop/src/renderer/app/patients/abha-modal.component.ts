@@ -55,7 +55,7 @@ type AbhaStep = 'lookup' | 'enroll' | 'otp' | 'card';
           <!-- Step 1: look up an existing address -->
           <div *ngIf="step === 'lookup'">
             <label class="block text-sm font-medium text-gray-700 mb-1">Health ID address</label>
-            <input [(ngModel)]="address" placeholder="name@abdm"
+            <input [ngModel]="address" (ngModelChange)="onAddressInput($event)" placeholder="name@abdm"
                 class="w-full border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono">
             <div class="mt-3 flex gap-2">
               <button (click)="lookup()" [disabled]="busy || !address.trim()" class="btn btn-primary btn-sm flex-1">
@@ -146,6 +146,7 @@ export class AbhaModalComponent {
     error = '';
     mockHint = '';
     address = '';
+    verifiedAddress = '';
     foundName = '';
     lookupMiss = false;
     via: 'aadhaar' | 'mobile' = 'mobile';
@@ -163,10 +164,12 @@ export class AbhaModalComponent {
         this.error = '';
         this.lookupMiss = false;
         this.foundName = '';
+        this.verifiedAddress = '';
         try {
             const result = await this.dataService.invoke<any>('abdmAbhaLookup', { abhaAddress: this.address.trim() });
             if (result?.exists) {
                 this.foundName = result.name || '';
+                this.verifiedAddress = this.address.trim();
                 this.noteMock(result);
             } else {
                 this.lookupMiss = true;
@@ -175,6 +178,17 @@ export class AbhaModalComponent {
             this.error = e instanceof Error ? e.message : 'Verification failed.';
         } finally {
             this.busy = false;
+        }
+    }
+
+    onAddressInput(next: string): void {
+        this.address = next;
+        // Any edit after verification voids it: the Link button must never
+        // persist an address that was not the one just verified.
+        if (next.trim() !== this.verifiedAddress) {
+            this.verifiedAddress = '';
+            this.foundName = '';
+            this.lookupMiss = false;
         }
     }
 
@@ -241,7 +255,9 @@ export class AbhaModalComponent {
 
     async link(name: string): Promise<void> {
         if (this.busy || !this.patientId) return;
-        const abhaAddress = this.step === 'card' && this.card ? this.card.abhaAddress : this.address.trim();
+        const abhaAddress = this.step === 'card' && this.card
+            ? this.card.abhaAddress
+            : this.verifiedAddress;
         if (!abhaAddress) return;
         this.busy = true;
         this.error = '';

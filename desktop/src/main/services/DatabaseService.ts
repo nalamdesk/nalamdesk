@@ -412,6 +412,14 @@ export class DatabaseService {
             throw new Error('Health ID looks invalid. Use the format name@abdm.');
         }
         const name = link?.abhaName == null ? null : String(link.abhaName).trim() || null;
+        if (address !== null) {
+            const clash = this.db.prepare(
+                'SELECT id FROM patients WHERE abha_address IS NOT NULL AND LOWER(abha_address) = LOWER(?) AND id != ? LIMIT 1'
+            ).get(address, id) as any;
+            if (clash) {
+                throw new Error('This health ID is already linked to another patient record.');
+            }
+        }
         this.db.prepare('UPDATE patients SET abha_address = ?, abha_name = ? WHERE id = ?').run(address, name, id);
         this.logAudit('ABHA_LINK', 'patients', id, actingUserId,
             address ? `Linked health ID ${address}` : 'Removed health ID link');
@@ -498,6 +506,14 @@ export class DatabaseService {
             if (!token || token.status !== 'pending') {
                 throw new Error('Token was already handled or has expired.');
             }
+            // The listing sweep may not have run since expiry: enforce the
+            // deadline inside the acceptance transaction itself.
+            const expired = this.db.prepare(`SELECT 1 FROM abdm_share_tokens
+                WHERE id = ? AND expires_at <= CURRENT_TIMESTAMP`).get(token.id) as any;
+            if (expired) {
+                this.db.prepare(`UPDATE abdm_share_tokens SET status = 'expired' WHERE id = ?`).run(token.id);
+                throw new Error('Token has expired. Ask the patient to scan again.');
+            }
             this.db.prepare(`UPDATE abdm_share_tokens SET status = 'accepted' WHERE id = ?`).run(token.id);
             this.logAudit('UPDATE', 'abdm_share_tokens', token.id, actingUserId,
                 `Accepted Scan & Share token #${token.token_no} for ${token.patient_name}`);
@@ -520,6 +536,17 @@ export class DatabaseService {
         const patient = { ...defaults, ...patientData };
 
         if (patient.id) {
+            // Health ID links live outside demographic edits: an edit form
+            // that omits them must not silently unlink the patient. Clearing
+            // goes only through linkAbhaAddress.
+            if (patient.abha_address == null || patient.abha_address === '') {
+                const stored = this.db.prepare(
+                    'SELECT abha_address, abha_name FROM patients WHERE id = ?').get(patient.id) as any;
+                patient.abha_address = stored?.abha_address ?? null;
+                if (patient.abha_name == null || patient.abha_name === '') {
+                    patient.abha_name = stored?.abha_name ?? null;
+                }
+            }
             return this.db.prepare(`
         UPDATE patients SET
             name = @name,

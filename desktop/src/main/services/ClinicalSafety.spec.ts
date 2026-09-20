@@ -631,7 +631,10 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             const id = Number(created.lastInsertRowid);
             expect(service.findPatientByAbhaAddress('SITA@sbx')?.id).toBe(id);
 
-            service.savePatient({ id, name: 'Sita', abha_address: null, abha_name: null });
+            service.savePatient({ id, name: 'Sita Rao' });
+            expect(service.findPatientByAbhaAddress('SITA@sbx')?.id).toBe(id);
+
+            service.linkAbhaAddress(id, { abhaAddress: null, abhaName: null }, 10);
             expect(service.findPatientByAbhaAddress('sita@sbx')).toBeNull();
         });
 

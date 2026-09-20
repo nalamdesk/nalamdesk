@@ -807,5 +807,49 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 17,
+        up: (db: any) => {
+            console.log('Running Migration v17 (ABHA uniqueness & LAN grants)...');
+            // One health ID belongs to exactly one patient (case-insensitive);
+            // unlinked rows are unaffected by the partial index.
+            try {
+                db.exec(`
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_abha_unique
+                    ON patients(LOWER(abha_address)) WHERE abha_address IS NOT NULL;
+                `);
+            } catch (e) { }
+            // Browser (LAN) sessions reach ABDM flows through /api/ipc, which
+            // enforces DB role permissions.
+            const grants: Record<string, string[]> = {
+                doctor: [
+                    'abdmGetConfig', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
+                    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha'
+                ],
+                receptionist: [
+                    'abdmGetConfig', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
+                    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha'
+                ],
+                admin: [
+                    'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret',
+                    'abdmTestConnectivity', 'abdmSimulateShare',
+                    'abdmAbhaLookup', 'abdmAbhaRequestOtp', 'abdmAbhaConfirmOtp',
+                    'abdmAbhaCard', 'abdmLinkAbha'
+                ],
+                nurse: ['abdmGetConfig', 'abdmAbhaLookup', 'abdmAbhaCard']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

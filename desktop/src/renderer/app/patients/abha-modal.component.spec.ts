@@ -91,7 +91,27 @@ describe('AbhaModalComponent', () => {
         expect(component.linkedDone).toBe(true);
     });
 
-    it('closes untouched without any backend calls', async () => {        const closed: any[] = [];
+    it('refuses to link an address edited after verification', async () => {
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmAbhaLookup') return Promise.resolve({ exists: true, name: 'Asha', mock: true });
+            return Promise.resolve(null);
+        });
+        const linked: any[] = [];
+        component.linked.subscribe((v) => linked.push(v));
+
+        component.onAddressInput('asha@sbx');
+        await component.lookup();
+        expect(component.foundName).toBe('Asha');
+
+        component.onAddressInput('someone.else@sbx');
+        expect(component.foundName).toBe('');
+        await component.link('Someone Else');
+        expect(linked).toHaveLength(0);
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('abdmLinkAbha', expect.anything());
+    });
+
+    it('closes untouched without any backend calls', async () => {
+        const closed: any[] = [];
         component.close.subscribe(() => closed.push(true));
         component.close.emit();
         expect(closed).toHaveLength(1);

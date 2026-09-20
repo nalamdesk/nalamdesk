@@ -245,3 +245,81 @@ describe('ABDM Scan & Share callback', () => {
         expect(throttled.statusCode).toBe(429);
     });
 });
+
+describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
+    let server: ApiServer;
+    let db: any;
+    let savedSettings: any[];
+
+    beforeEach(() => {
+        savedSettings = [];
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            getPermissions: vi.fn().mockImplementation((role: string) => role === 'receptionist'
+                ? ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig']
+                : []),
+            getSettings: vi.fn().mockReturnValue({}),
+            saveSettings: vi.fn().mockImplementation((patch: any) => {
+                savedSettings.push(patch);
+                return { changes: 1 };
+            }),
+            saveAbdmSecretProtected: vi.fn(),
+            linkAbhaAddress: vi.fn().mockReturnValue({ id: 7 })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    function postIpc(method: string, args: unknown[], role = 'admin') {
+        return server.inject({
+            method: 'POST',
+            url: `/api/ipc/${method}`,
+            headers: {
+                authorization: authHeader({ id: 7, role }),
+                'content-type': 'application/json'
+            },
+            payload: args
+        });
+    }
+
+    it('serves ABDM config and lookup over LAN in mock mode', async () => {
+        const config = await postIpc('abdmGetConfig', []);
+        expect(config.statusCode).toBe(200);
+        expect(config.json()).toMatchObject({ mock: true });
+
+        const lookup = await postIpc('abdmAbhaLookup', [{ abhaAddress: 'demo@sbx' }]);
+        expect(lookup.statusCode).toBe(200);
+        expect(lookup.json().mock).toBe(true);
+    });
+
+    it('saves ABDM config over LAN for admins', async () => {
+        const response = await postIpc('abdmSaveConfig', [{
+            gateway_env: 'staging', client_id: 'CID', mock: false
+        }]);
+        expect(response.statusCode).toBe(200);
+        expect(savedSettings[0]).toMatchObject({
+            abdm_gateway_env: 'staging', abdm_client_id: 'CID', abdm_mock: 0
+        });
+    });
+
+    it('forbids ABDM config writes for non-admin LAN roles', async () => {
+        const response = await postIpc('abdmSaveConfig', [{ gateway_env: 'staging' }], 'doctor');
+        expect(response.statusCode).toBe(403);
+    });
+
+    it('links health IDs over LAN for desk roles', async () => {
+        const response = await postIpc('abdmLinkAbha', [
+            { patientId: 7, abhaAddress: 'asha@sbx', abhaName: 'Asha' }
+        ], 'receptionist');
+        expect(response.statusCode).toBe(200);
+        expect(db.linkAbhaAddress).toHaveBeenCalledWith(
+            7,
+            expect.objectContaining({ abhaAddress: 'asha@sbx' }),
+            expect.anything()
+        );
+    });
+});

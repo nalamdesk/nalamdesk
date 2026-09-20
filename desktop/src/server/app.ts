@@ -10,6 +10,9 @@ import * as http from 'node:http';
 import { loadDevelopmentEnv } from '../shared/load-env';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { hashUrlForPathname } from '../shared/hash-app-path';
+import { AbdmSessionService } from '../main/services/AbdmSessionService';
+import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
+import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
 
 loadDevelopmentEnv();
 dotenv.config();
@@ -19,6 +22,12 @@ if (process.env['NODE_ENV'] === 'production' && !process.env['JWT_SECRET']) {
     process.exit(1);
 }
 const JWT_SECRET = process.env['JWT_SECRET'] || crypto.randomBytes(64).toString('hex');
+
+const ABDM_SERVICE_METHODS = new Set([
+    'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
+    'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
+    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha'
+]);
 
 const ALLOWED_IPC_METHODS = [
     'getQueue', 'addToQueue', 'reassessQueueTriage', 'getQueueTriageHistory', 'updateQueueStatus', 'updateQueueStatusByPatientId', 'removeFromQueue',
@@ -37,6 +46,9 @@ const ALLOWED_IPC_METHODS = [
     'getMedications', 'saveMedication', 'deleteMedication',
     'getPatientSafetyContext',
     'abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken',
+    'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
+    'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
+    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -47,6 +59,90 @@ const ALLOWED_IPC_METHODS = [
 ];
 
 export class ApiServer {
+    private abdmSessionSvc: AbdmSessionService | null = null;
+    private abdmAbhaSvc: AbdmAbhaService | null = null;
+
+    // ABDM services are built lazily: unit tests that never touch ABDM flows
+    // never pay for (or need) keychain access.
+    private abdmServices() {
+        if (!this.abdmSessionSvc || !this.abdmAbhaSvc) {
+            const db = this.dbService as any;
+            const session = new AbdmSessionService({
+                getSettings: () => db.getSettings(),
+                saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
+                saveSecretProtected: (value: string) => db.saveAbdmSecretProtected(value),
+                keyStore: new ElectronSafeStorageDeviceKeyStore()
+            });
+            this.abdmSessionSvc = session;
+            this.abdmAbhaSvc = new AbdmAbhaService({
+                getSessionToken: () => session.getSessionToken(),
+                gatewayBaseUrl: () => session.gatewayBaseUrl()
+            });
+        }
+        return { session: this.abdmSessionSvc, abha: this.abdmAbhaSvc };
+    }
+
+    private async invokeAbdmMethod(method: string, args: unknown[], user: any): Promise<unknown> {
+        const { session, abha } = this.abdmServices();
+        const payload = ((args || [])[0] || {}) as Record<string, any>;
+        const db = this.dbService as any;
+        switch (method) {
+            case 'abdmGetConfig': {
+                const settings = db.getSettings() || {};
+                return {
+                    gateway_env: session.gatewayEnv(),
+                    client_id: session.hasClientId() ? settings.abdm_client_id || '' : '',
+                    has_secret: session.hasStoredSecret(),
+                    mock: session.isMockMode(),
+                    hip_id: settings.abdm_hip_id || '',
+                    counter_id: settings.abdm_counter_id || ''
+                };
+            }
+            case 'abdmSaveConfig': {
+                const patch: Record<string, unknown> = {};
+                if (typeof payload['gateway_env'] === 'string'
+                    && ['sandbox', 'staging'].includes(payload['gateway_env'])) {
+                    patch['abdm_gateway_env'] = payload['gateway_env'];
+                }
+                if (typeof payload['client_id'] === 'string') patch['abdm_client_id'] = String(payload['client_id']).trim();
+                if (typeof payload['hip_id'] === 'string') patch['abdm_hip_id'] = String(payload['hip_id']).trim();
+                if (typeof payload['counter_id'] === 'string') patch['abdm_counter_id'] = String(payload['counter_id']).trim();
+                if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
+                const result = db.saveSettings(patch);
+                session.invalidate();
+                return result;
+            }
+            case 'abdmSetSecret':
+                return session.saveClientSecret(String(payload['secret'] || ''));
+            case 'abdmTestConnectivity':
+                return session.testConnectivity();
+            case 'abdmSimulateShare': {
+                if (!session.isMockMode()) {
+                    throw new Error('Demo scans are only available while the mock gateway is active.');
+                }
+                const demo = Math.floor(1000 + Math.random() * 9000);
+                return db.receiveAbhaShare({
+                    name: 'Demo Patient', age: 34, gender: 'Female', mobile: '9876500000',
+                    abhaAddress: `demo.patient${demo}@sbx`, abhaName: 'Demo Patient'
+                }, user?.id);
+            }
+            case 'abdmAbhaLookup':
+                return abha.lookupAddress(payload['abhaAddress']);
+            case 'abdmAbhaRequestOtp':
+                return abha.requestEnrollmentOtp({ via: payload['via'], identifier: payload['identifier'] });
+            case 'abdmAbhaConfirmOtp':
+                return abha.confirmEnrollmentOtp(payload['txnId'], payload['otp']);
+            case 'abdmAbhaCard':
+                return abha.getCard(payload['abhaAddress']);
+            case 'abdmLinkAbha':
+                return db.linkAbhaAddress(payload['patientId'], {
+                    abhaAddress: payload['abhaAddress'] ?? null,
+                    abhaName: payload['abhaName'] ?? null
+                }, user?.id);
+            default:
+                throw new Error(`Method not implemented: ${method}`);
+        }
+    }
     private fastify: FastifyInstance;
     private dbService: DatabaseService;
     // Sliding-window hit timestamps per source IP for the public callback.
@@ -439,7 +535,16 @@ export class ApiServer {
 
             const dbAny = this.dbService as any;
 
-            // 3. Execution using Allowlist — same arg unpacking as Electron IPC
+            // 3. Execution: ABDM service methods first, then DatabaseService.
+            // Same arg unpacking contract as Electron IPC.
+            if (ABDM_SERVICE_METHODS.has(method)) {
+                try {
+                    return await this.invokeAbdmMethod(method, args, user);
+                } catch (e: any) {
+                    console.error(`[IPC Error] method: ${method}`, e);
+                    return reply.code(500).send({ error: 'Internal server error' });
+                }
+            }
             if (typeof dbAny[method] === 'function') {
                 try {
                     const result = await invokeDbMethod(dbAny, method, args, user.id);

@@ -27,6 +27,7 @@ describe('AbdmSessionService', () => {
     function service(overrides: any = {}) {
         return new AbdmSessionService({
             getSettings: () => settings,
+            getSecretProtected: () => settings.abdm_client_secret_protected || null,
             saveSettingsPatch: (patch) => { savedPatches.push(patch); Object.assign(settings, patch); },
             saveSecretProtected: (value) => { savedSecrets.push(value); settings.abdm_client_secret_protected = value; },
             keyStore: fakeKeyStore(),

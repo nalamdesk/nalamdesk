@@ -15,6 +15,7 @@ const PROACTIVE_REFRESH_MS = 2 * 60 * 1000;
 
 export interface AbdmSessionDeps {
     getSettings?: () => any;
+    getSecretProtected?: () => string | null;
     saveSettingsPatch?: (patch: Record<string, unknown>) => void;
     saveSecretProtected?: (protectedValue: string) => void;
     keyStore?: DeviceKeyStore;
@@ -72,6 +73,11 @@ export class AbdmSessionService {
     }
 
     hasStoredSecret(): boolean {
+        try {
+            if (this.deps.getSecretProtected) return !!this.deps.getSecretProtected();
+        } catch {
+            return false;
+        }
         return !!this.settings.abdm_client_secret_protected;
     }
 
@@ -96,7 +102,9 @@ export class AbdmSessionService {
     }
 
     private readClientSecret(): string {
-        const protectedValue = this.settings.abdm_client_secret_protected;
+        // No fallback to generic settings: the blob must only arrive through
+        // the dedicated accessor, never a settings read.
+        const protectedValue = this.deps.getSecretProtected ? this.deps.getSecretProtected() : null;
         if (!protectedValue) throw new Error('ABDM client secret is not configured.');
         const keyStore = this.deps.keyStore;
         if (!keyStore) throw new Error('Secret storage is not available on this device.');

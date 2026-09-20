@@ -139,6 +139,7 @@ const securityService = new SecurityService(new ElectronSafeStorageDeviceKeyStor
 const databaseService = new DatabaseService();
 const abdmSessionService = new AbdmSessionService({
     getSettings: () => databaseService.getSettings(),
+    getSecretProtected: () => databaseService.getAbdmSecretProtected(),
     saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
     saveSecretProtected: (value) => databaseService.saveAbdmSecretProtected(value),
     keyStore: new ElectronSafeStorageDeviceKeyStore()
@@ -931,6 +932,11 @@ handleDb('db:abdmAcceptShareToken', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());
     const args = payload || {};
     return databaseService.acceptShareToken(args.tokenId ?? args.id, user.id);
+});
+handleDb('db:abdmAcceptShareTokenAndCheckIn', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return databaseService.acceptShareTokenAndCheckIn(args.tokenId ?? args.id, user.id);
 });
 handleDb('db:findPatientByAbha', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());

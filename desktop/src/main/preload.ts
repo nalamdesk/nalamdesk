@@ -104,6 +104,7 @@ contextBridge.exposeInMainWorld('electron', {
         findPatientByAbha: (input: any) => ipcRenderer.invoke('db:findPatientByAbha', input),
         abdmGetShareTokens: () => ipcRenderer.invoke('db:abdmGetShareTokens'),
         abdmAcceptShareToken: (input: any) => ipcRenderer.invoke('db:abdmAcceptShareToken', input),
+        abdmAcceptShareTokenAndCheckIn: (input: any) => ipcRenderer.invoke('db:abdmAcceptShareTokenAndCheckIn', input),
         abdmSimulateShare: () => ipcRenderer.invoke('db:abdmSimulateShare')
     },
     drive: {

@@ -589,5 +589,117 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             const doctor = JSON.parse((db.prepare(`SELECT permissions FROM roles WHERE name = 'doctor'`).get() as any).permissions);
             expect(doctor).toContain('saveAllergy');
         });
+
+        it('numbers Scan & Share tokens daily and expires them', () => {
+            const first: any = service.receiveAbhaShare({ name: 'Ramesh', abhaAddress: 'ramesh@sbx' }, 20);
+            const second: any = service.receiveAbhaShare({ name: 'Sita', abhaAddress: 'sita@sbx' }, 20);
+            expect(second.token_no).toBe(first.token_no + 1);
+            expect(first.status).toBe('pending');
+
+            expect(() => service.receiveAbhaShare({ abhaAddress: 'nobody@sbx' }, 20))
+                .toThrow('patient name');
+
+            // Backdate the first token past expiry: it sweeps to expired.
+            db.prepare(`UPDATE abdm_share_tokens SET expires_at = datetime('now', '-1 minute') WHERE id = ?`)
+                .run(first.id);
+            const pending = service.getPendingShareTokens() as any[];
+            expect(pending.map((t) => t.id)).not.toContain(first.id);
+            expect(pending.map((t) => t.id)).toContain(second.id);
+            expect(db.prepare(`SELECT status FROM abdm_share_tokens WHERE id = ?`).get(first.id).status)
+                .toBe('expired');
+        });
+
+        it('accepts a token once and links patients by health ID', () => {
+            const token: any = service.receiveAbhaShare({ name: 'Ramesh', abhaAddress: 'ramesh@sbx' }, 20);
+            db.prepare(`INSERT INTO patients (uuid, name, mobile, age, gender, abha_address)
+                VALUES ('p-abha', 'Ramesh Kumar', '9876543210', 42, 'Male', 'RAMESH@sbx')`).run();
+
+            const found = service.findPatientByAbhaAddress('ramesh@sbx');
+            expect(found?.name).toBe('Ramesh Kumar');
+
+            const accepted: any = service.acceptShareToken(token.id, 20);
+            expect(accepted.status).toBe('accepted');
+            expect(() => service.acceptShareToken(token.id, 20)).toThrow('already handled');
+            expect(service.findPatientByAbhaAddress('  ')).toBeNull();
+        });
+
+        it('persists health ID links through patient save', () => {
+            const created: any = service.savePatient({
+                name: 'Sita', mobile: '9876500001', age: 30, gender: 'Female',
+                abha_address: 'sita@sbx', abha_name: 'Sita Devi'
+            });
+            const id = Number(created.lastInsertRowid);
+            expect(service.findPatientByAbhaAddress('SITA@sbx')?.id).toBe(id);
+
+            service.savePatient({ id, name: 'Sita Rao' });
+            expect(service.findPatientByAbhaAddress('SITA@sbx')?.id).toBe(id);
+
+            service.linkAbhaAddress(id, { abhaAddress: null, abhaName: null }, 10);
+            expect(service.findPatientByAbhaAddress('sita@sbx')).toBeNull();
+        });
+
+        it('rejects oversized or malformed share payloads', () => {
+            expect(() => service.receiveAbhaShare({ name: 'x'.repeat(201) }, 20))
+                .toThrow('too long');
+            expect(() => service.receiveAbhaShare({ name: 'Ramesh', abhaAddress: 'not-an-id' }, 20))
+                .toThrow('looks invalid');
+        });
+
+        it('migration v17 reconciles duplicate links keeping the earliest record', async () => {
+            const { MIGRATIONS } = await import('../schema/migrations');
+            const v17 = MIGRATIONS.find((m: any) => m.version === 17);
+            expect(v17).toBeTruthy();
+
+            db.prepare(`DROP INDEX IF EXISTS idx_patients_abha_unique`).run();
+            db.prepare(`INSERT INTO patients (uuid, name, abha_address) VALUES ('p-d1', 'Old', 'dup@sbx')`).run();
+            db.prepare(`INSERT INTO patients (uuid, name, abha_address) VALUES ('p-d2', 'New', 'DUP@sbx')`).run();
+            v17.up(db);
+
+            const rows = db.prepare(`SELECT id, abha_address FROM patients WHERE name IN ('Old', 'New') ORDER BY id`).all() as any[];
+            expect(rows[0].abha_address).toBe('dup@sbx');
+            expect(rows[1].abha_address).toBeNull();
+            expect(() => service.linkAbhaAddress(rows[1].id, { abhaAddress: 'dup@sbx' }, 10))
+                .toThrow('already linked');
+        });
+
+        it('checks in a token atomically: claim, match-or-create, and queue together', () => {
+            db.prepare(`INSERT INTO patients (uuid, name, mobile, age, gender, abha_address)
+                VALUES ('p-atomic', 'Ramesh Kumar', '9876543210', 42, 'Male', 'ramesh@sbx')`).run();
+            const token: any = service.receiveAbhaShare({ name: 'Ramesh', abhaAddress: 'ramesh@sbx' }, 20);
+
+            const result: any = service.acceptShareTokenAndCheckIn(token.id, 20);
+
+            expect(result.outcome).toBe('checked-in');
+            expect(db.prepare(`SELECT status FROM abdm_share_tokens WHERE id = ?`).get(token.id).status)
+                .toBe('accepted');
+            expect(db.prepare(`SELECT status FROM patient_queue WHERE patient_id =
+                (SELECT id FROM patients WHERE abha_address = 'ramesh@sbx')`).get().status)
+                .toBe('waiting');
+        });
+
+        it('leaves the token pending when demographics are incomplete', () => {
+            const token: any = service.receiveAbhaShare({ name: 'NoMobile' }, 20);
+
+            const result: any = service.acceptShareTokenAndCheckIn(token.id, 20);
+
+            expect(result.outcome).toBe('incomplete');
+            expect(result.patientId).toBeGreaterThan(0);
+            expect(db.prepare(`SELECT status FROM abdm_share_tokens WHERE id = ?`).get(token.id).status)
+                .toBe('pending');
+            expect(db.prepare(`SELECT count(*) AS n FROM patient_queue WHERE patient_id = ?`)
+                .get(result.patientId).n).toBe(0);
+        });
+
+        it('rejects a second accept without duplicating patients or queue rows', () => {
+            const token: any = service.receiveAbhaShare(
+                { name: 'Sita', mobile: '9876500001', age: 30, gender: 'Female' }, 20);
+            const first: any = service.acceptShareTokenAndCheckIn(token.id, 20);
+            expect(first.outcome).toBe('checked-in');
+
+            expect(() => service.acceptShareTokenAndCheckIn(token.id, 20)).toThrow('already handled');
+            expect(db.prepare(`SELECT count(*) AS n FROM patients WHERE name = 'Sita'`).get().n).toBe(1);
+            expect(db.prepare(`SELECT count(*) AS n FROM patient_queue WHERE patient_id = ?`)
+                .get(first.patientId).n).toBe(1);
+        });
     });
 });

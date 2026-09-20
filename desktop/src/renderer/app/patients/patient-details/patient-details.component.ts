@@ -8,13 +8,14 @@ import { AuthService } from '../../services/auth.service';
 import { DialogService } from '../../shared/services/dialog.service';
 import { DatePickerComponent } from '../../shared/components/date-picker/date-picker.component';
 import { SharedTableComponent } from '../../shared/components/table/table.component';
+import { AbhaModalComponent } from '../abha-modal.component';
 import { ColDef } from 'ag-grid-community';
 import { newRequestId } from '../../services/request-id';
 
 @Component({
     selector: 'app-patient-details',
     standalone: true,
-    imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent],
+    imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, AbhaModalComponent],
     styles: [`
         @media print {
             /* Hide everything by default */
@@ -23,23 +24,23 @@ import { newRequestId } from '../../services/request-id';
                 display: none !important;
             }
 
-            /* Show ONLY the modal content */
-            .fixed.inset-0 {
+            /* Show ONLY the receipt modal content */
+            .print-scope-receipt {
                 position: static !important;
                 background: white !important;
                 display: block !important;
             }
-            .fixed.inset-0 > div {
+            .print-scope-receipt > div {
                 box-shadow: none !important;
                 max-width: 100% !important;
                 max-height: none !important;
                 border-radius: 0 !important;
             }
-            
+
             /* Hide modal close button & actions */
-            .fixed.inset-0 button, 
-            .fixed.inset-0 .border-t { 
-                display: none !important; 
+            .print-scope-receipt button,
+            .print-scope-receipt .border-t {
+                display: none !important;
             }
 
             /* Ensure body is visible and formatted */
@@ -91,6 +92,12 @@ import { newRequestId } from '../../services/request-id';
                 <div class="space-y-3 pt-4 border-t border-gray-100">
                     <div class="flex items-center gap-3 text-sm text-gray-600">
                         {{ patient?.mobile }}
+                    </div>
+                    <div class="flex items-center justify-between gap-3 text-sm" *ngIf="currentUser?.role !== 'nurse'">
+                        <span class="text-gray-600 truncate">{{ patient?.abha_address || 'No health ID linked' }}</span>
+                        <button class="text-blue-600 hover:underline font-medium text-xs shrink-0" (click)="showAbhaModal = true">
+                            {{ patient?.abha_address ? 'Manage' : 'Link Health ID' }}
+                        </button>
                     </div>
                     <div class="flex items-center gap-3 text-sm text-gray-600">
                         {{ patient?.address || 'No address' }}
@@ -453,7 +460,7 @@ import { newRequestId } from '../../services/request-id';
       </div>
 
       <!-- Visit Detail Modal (Receipt View) -->
-      <div *ngIf="showVisitModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" (click)="closeModal()">
+      <div *ngIf="showVisitModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print-scope-receipt" (click)="closeModal()">
         <div class="bg-white rounded-lg shadow-lg w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]" (click)="$event.stopPropagation()">
             <!-- Modal Header -->
             <div class="bg-gray-50 border-b px-6 py-4 flex justify-between items-center">
@@ -693,6 +700,13 @@ import { newRequestId } from '../../services/request-id';
               </form>
           </div>
       </div>
+
+      <!-- Health ID (ABHA) modal: strictly voluntary, opened only from the profile card -->
+      <app-abha-modal *ngIf="showAbhaModal"
+          [patientId]="patientId" [patientName]="patient?.name"
+          (close)="showAbhaModal = false"
+          (linked)="onAbhaLinked($event)">
+      </app-abha-modal>
     </div>
   `
 })
@@ -713,6 +727,13 @@ export class PatientDetailsComponent implements OnInit {
     // Modal State
     showVisitModal = false;
     selectedVisit: any = null;
+    showAbhaModal = false;
+
+    onAbhaLinked(link: { abhaAddress: string; abhaName: string }): void {
+        if (this.patient) {
+            this.patient = { ...this.patient, abha_address: link.abhaAddress, abha_name: link.abhaName };
+        }
+    }
 
     // Edit Patient Modal
     showEditModal = false;

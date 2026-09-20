@@ -275,4 +275,81 @@ describe('SettingsComponent Validation', () => {
         await component.checkForUpdates();
         expect(updates.check).toHaveBeenCalledWith('manual');
     });
+
+    it('loads the ABDM config into the tab state', async () => {
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmGetConfig') return Promise.resolve({
+                gateway_env: 'staging', client_id: 'CID-1', has_secret: true, mock: false
+            });
+            return Promise.resolve(null);
+        });
+
+        await component.loadAbdmConfig();
+
+        expect(component.abdmConfig).toMatchObject({
+            gateway_env: 'staging', client_id: 'CID-1', has_secret: true, mock: false
+        });
+    });
+
+    it('saves the secret without ever displaying it, then reloads config', async () => {
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmSetSecret') return Promise.resolve({ stored: true });
+            if (method === 'abdmGetConfig') return Promise.resolve({
+                gateway_env: 'sandbox', client_id: '', has_secret: true, mock: true
+            });
+            return Promise.resolve(null);
+        });
+        component.abdmSecret = 'super-secret';
+
+        await component.saveAbdmSecret();
+
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmSetSecret', { secret: 'super-secret' });
+        expect(component.abdmSecret).toBe('');
+        expect(component.abdmConfig.has_secret).toBe(true);
+    });
+
+    it('stores the connectivity test result for display', async () => {
+        mockData.invoke.mockResolvedValue({ ok: true, mode: 'mock', detail: 'Mock gateway active.' });
+
+        await component.testAbdm();
+
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmTestConnectivity');
+        expect(component.abdmTest).toMatchObject({ ok: true, mode: 'mock' });
+    });
+
+    it('generates a scannable counter QR once facility identity exists', async () => {
+        component.abdmConfig.hip_id = '';
+        component.abdmConfig.counter_id = '';
+        await component.generateQr();
+        expect(component.qrDataUrl).toBeNull();
+
+        component.abdmConfig.hip_id = 'HIP-1';
+        component.abdmConfig.counter_id = 'Counter-1';
+        await component.generateQr();
+        expect(component.qrDataUrl?.startsWith('data:image/png')).toBe(true);
+    });
+
+    it('reports demo scan queueing for the receptionist to pick up', async () => {
+        mockData.invoke.mockResolvedValue({ id: 2, token_no: 7 });
+
+        await component.simulateShare();
+
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmSimulateShare');
+        expect(component.abdmSimResult).toContain('Token #7');
+    });
+
+    it('sends the mock gateway choice with the config', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmConfig.gateway_env = 'staging';
+        component.abdmConfig.client_id = 'CID';
+        component.abdmConfig.mock = false;
+
+        await component.saveAbdmConfig();
+
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({
+            gateway_env: 'staging',
+            client_id: 'CID',
+            mock: false
+        }));
+    });
 });

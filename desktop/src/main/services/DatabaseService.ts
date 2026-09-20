@@ -287,7 +287,27 @@ export class DatabaseService {
 
     // ... existing methods ...
     getSettings() {
-        return this.db.prepare('SELECT * FROM settings LIMIT 1').get();
+        // Explicit column list: the keychain-protected ABDM secret blob must
+        // never ride along on generic settings reads. Use the dedicated
+        // getAbdmSecretProtected accessor from the main process only.
+        return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, license_key,
+            drive_tokens, cloud_clinic_id, cloud_api_key, cloud_enabled,
+            drive_client_id, drive_client_secret, local_backup_path,
+            backup_schedule, cloud_backup_schedule,
+            abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id
+            FROM settings LIMIT 1`).get();
+    }
+
+    // Main-process-only accessor for the keychain-protected ABDM secret blob.
+    // Never exposed through generic settings responses, IPC getters, or LAN.
+    getAbdmSecretProtected(): string | null {
+        try {
+            const row = this.db.prepare(
+                'SELECT abdm_client_secret_protected AS value FROM settings LIMIT 1').get() as any;
+            return row?.value ?? null;
+        } catch {
+            return null;
+        }
     }
 
     // ... (existing code)
@@ -332,7 +352,9 @@ export class DatabaseService {
         const ALLOWED_COLUMNS = [
             'clinic_name', 'doctor_name', 'logo_path', 'license_key',
             'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
-            'drive_client_id', 'drive_client_secret', 'local_backup_path'
+            'drive_client_id', 'drive_client_secret', 'local_backup_path',
+            'abdm_gateway_env', 'abdm_client_id', 'abdm_mock',
+            'abdm_hip_id', 'abdm_counter_id'
         ];
 
         // Filter incoming settings to only allowed columns
@@ -360,8 +382,18 @@ export class DatabaseService {
         }
     }
 
-    getDashboardStats() {
-        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients').get().count;
+    // Dedicated writer for the keychain-protected ABDM client secret. Kept out    // of the generic settings whitelist (and reads) by design: the plaintext
+    // secret never crosses the generic settings path in either direction.
+    saveAbdmSecretProtected(protectedValue: string) {
+        const existing = this.getSettings();
+        if (existing) {
+            this.db.prepare('UPDATE settings SET abdm_client_secret_protected = ?').run(protectedValue);
+        } else {
+            this.db.prepare('INSERT INTO settings(abdm_client_secret_protected) VALUES(?)').run(protectedValue);
+        }
+    }
+
+    getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients').get().count;
         // Today's visits: date >= start of day
         const today = new Date().toISOString().split('T')[0];
         const todayVisits = this.db.prepare("SELECT count(*) as count FROM visits WHERE date(date) = ? AND status = 'finished'").get(today).count;
@@ -390,6 +422,182 @@ export class DatabaseService {
         return this.db.prepare('SELECT * FROM patients WHERE id = ?').get(id);
     }
 
+    // Links (or unlinks with nulls) a verified ABHA address to a patient.
+    // Address shape is validated here so every writer shares one rule.
+    linkAbhaAddress(patientId: number, link: { abhaAddress?: string | null; abhaName?: string | null }, actingUserId?: number) {
+        const id = Number(patientId);
+        if (!Number.isInteger(id) || id <= 0) throw new Error('Valid patient id is required.');
+        const address = link?.abhaAddress == null ? null : String(link.abhaAddress).trim();
+        if (address !== null && !/^[\w.-]+@[A-Za-z]{2,}$/.test(address)) {
+            throw new Error('Health ID looks invalid. Use the format name@abdm.');
+        }
+        const name = link?.abhaName == null ? null : String(link.abhaName).trim() || null;
+        if (address !== null) {
+            const clash = this.db.prepare(
+                'SELECT id FROM patients WHERE abha_address IS NOT NULL AND LOWER(abha_address) = LOWER(?) AND id != ? LIMIT 1'
+            ).get(address, id) as any;
+            if (clash) {
+                throw new Error('This health ID is already linked to another patient record.');
+            }
+        }
+        this.db.prepare('UPDATE patients SET abha_address = ?, abha_name = ? WHERE id = ?').run(address, name, id);
+        this.logAudit('ABHA_LINK', 'patients', id, actingUserId,
+            address ? `Linked health ID ${address}` : 'Removed health ID link');
+        return this.getPatientById(id);
+    }
+
+    findPatientByAbhaAddress(address: string) {
+        const value = String(address || '').trim();
+        if (!value) return null;
+        return this.db.prepare(
+            'SELECT * FROM patients WHERE abha_address IS NOT NULL AND LOWER(abha_address) = LOWER(?) LIMIT 1'
+        ).get(value) ?? null;
+    }
+
+    // LAN-facing aliases: browser sessions call these names through
+    // /api/ipc; they delegate to the canonical operations above.
+    abdmGetShareTokens() {
+        return this.getPendingShareTokens();
+    }
+
+    findPatientByAbha(payload: any) {
+        const args = payload || {};
+        return this.findPatientByAbhaAddress(args.abhaAddress);
+    }
+
+    abdmAcceptShareToken(payload: any, actingUserId?: number) {
+        const args = payload || {};
+        return this.acceptShareToken(args.tokenId ?? args.id, actingUserId);
+    }
+
+    // Scan & Share intake: stores a gateway profile-share callback as a
+    // numbered queue token. Numbers restart daily; tokens expire after
+    // 15 minutes so a stale scan never blocks the dock.
+    receiveAbhaShare(payload: any, actingUserId?: number) {
+        const name = String(payload?.name || payload?.patientName || '').trim();
+        if (!name) throw new Error('Shared profile must include a patient name.');
+        if (name.length > 200) throw new Error('Shared profile name is too long.');
+        const abhaAddress = payload?.abhaAddress ? String(payload.abhaAddress).trim() : null;
+        if (abhaAddress && (abhaAddress.length > 100 || !/^[\w.-]+@[A-Za-z]{2,}$/.test(abhaAddress))) {
+            throw new Error('Shared profile health ID looks invalid.');
+        }
+        const mobile = payload?.mobile ? String(payload.mobile).trim() : null;
+        if (mobile && mobile.length > 20) throw new Error('Shared profile mobile number is too long.');
+        const record = this.db.transaction(() => {
+            const today = (this.db.prepare(`SELECT date('now', 'localtime') AS today`).get() as any).today;
+            const maxNo = (this.db.prepare(
+                'SELECT COALESCE(MAX(token_no), 0) AS maxNo FROM abdm_share_tokens WHERE token_date = ?'
+            ).get(today) as any).maxNo;
+            const result = this.db.prepare(`
+                INSERT INTO abdm_share_tokens (
+                    token_no, token_date, patient_name, age, gender, mobile,
+                    abha_address, abha_name, raw_payload, status, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now', '+15 minutes'))
+            `).run(
+                Number(maxNo) + 1,
+                today,
+                name,
+                payload?.age != null ? Number(payload.age) : null,
+                payload?.gender ? String(payload.gender) : null,
+                payload?.mobile ? String(payload.mobile) : null,
+                payload?.abhaAddress ? String(payload.abhaAddress) : null,
+                payload?.abhaName ? String(payload.abhaName) : null,
+                JSON.stringify(payload || {})
+            );
+            const row = this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?')
+                .get(Number(result.lastInsertRowid));
+            this.logAudit('INSERT', 'abdm_share_tokens', Number(result.lastInsertRowid),
+                actingUserId, `Scan & Share token #${Number(maxNo) + 1} for ${name}`);
+            return row;
+        });
+        return record.immediate();
+    }
+
+    getPendingShareTokens() {
+        this.db.prepare(`UPDATE abdm_share_tokens SET status = 'expired'
+            WHERE status = 'pending' AND expires_at <= CURRENT_TIMESTAMP`).run();
+        return this.db.prepare(`SELECT * FROM abdm_share_tokens
+            WHERE status = 'pending' ORDER BY id ASC`).all();
+    }
+
+    acceptShareToken(id: number, actingUserId?: number) {
+        const accept = this.db.transaction(() => {
+            const token = this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?').get(Number(id)) as any;
+            if (!token || token.status !== 'pending') {
+                throw new Error('Token was already handled or has expired.');
+            }
+            // The listing sweep may not have run since expiry: enforce the
+            // deadline inside the acceptance transaction itself.
+            const expired = this.db.prepare(`SELECT 1 FROM abdm_share_tokens
+                WHERE id = ? AND expires_at <= CURRENT_TIMESTAMP`).get(token.id) as any;
+            if (expired) {
+                this.db.prepare(`UPDATE abdm_share_tokens SET status = 'expired' WHERE id = ?`).run(token.id);
+                throw new Error('Token has expired. Ask the patient to scan again.');
+            }
+            this.db.prepare(`UPDATE abdm_share_tokens SET status = 'accepted' WHERE id = ?`).run(token.id);
+            this.logAudit('UPDATE', 'abdm_share_tokens', token.id, actingUserId,
+                `Accepted Scan & Share token #${token.token_no} for ${token.patient_name}`);
+            return this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?').get(token.id);
+        });
+        return accept.immediate();
+    }
+
+    // Atomic Scan & Share check-in: claim the token, match or create the
+    // patient, and insert the queue entry in one transaction. Anything that
+    // fails rolls everything back, so reception never sees "failed" for a
+    // patient that was actually queued, and concurrent accepts cannot create
+    // duplicate patients. Incomplete demographics leave the token pending and
+    // report the patient id for explicit handling in the chart.
+    acceptShareTokenAndCheckIn(tokenId: number, actingUserId?: number) {
+        const accept = this.db.transaction(() => {
+            const token = this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?').get(Number(tokenId)) as any;
+            if (!token || token.status !== 'pending') {
+                throw new Error('Token was already handled or has expired.');
+            }
+            const expired = this.db.prepare(`SELECT 1 FROM abdm_share_tokens
+                WHERE id = ? AND expires_at <= CURRENT_TIMESTAMP`).get(token.id) as any;
+            if (expired) {
+                this.db.prepare(`UPDATE abdm_share_tokens SET status = 'expired' WHERE id = ?`).run(token.id);
+                throw new Error('Token has expired. Ask the patient to scan again.');
+            }
+            let patient = token.abha_address ? this.findPatientByAbhaAddress(token.abha_address) : null;
+            if (!patient) {
+                const created = this.savePatient({
+                    name: token.patient_name,
+                    mobile: token.mobile || '',
+                    age: token.age ?? null,
+                    gender: token.gender || '',
+                    abha_address: token.abha_address || null,
+                    abha_name: token.abha_name || null
+                });
+                patient = { id: Number((created as any)?.lastInsertRowid ?? (created as any)?.id) };
+                if (!patient.id) throw new Error('Could not create the patient record.');
+                patient = this.getPatientById(patient.id);
+            }
+            const complete = !!String(patient.name || '').trim()
+                && !!String(patient.mobile || '').trim()
+                && !!String(patient.gender || '').trim()
+                && ((patient.age != null && Number(patient.age) !== 0) || !!patient.dob);
+            if (!complete) {
+                return { outcome: 'incomplete', patientId: patient.id, tokenId: token.id };
+            }
+            const alreadyQueued = this.db.prepare(
+                `SELECT id FROM patient_queue WHERE patient_id = ? AND status != 'completed'`
+            ).get(patient.id) as any;
+            if (!alreadyQueued) {
+                this.addToQueue(patient.id, 1, actingUserId);
+            }
+            this.db.prepare(`UPDATE abdm_share_tokens SET status = 'accepted' WHERE id = ?`).run(token.id);
+            this.logAudit('UPDATE', 'abdm_share_tokens', token.id, actingUserId,
+                `Accepted Scan & Share token #${token.token_no} for ${token.patient_name}`);
+            const entry = this.db.prepare(
+                `SELECT id FROM patient_queue WHERE patient_id = ? AND status != 'completed' ORDER BY id DESC LIMIT 1`
+            ).get(patient.id) as any;
+            return { outcome: 'checked-in', patientId: patient.id, queueEntryId: entry?.id ?? null, tokenId: token.id };
+        });
+        return accept.immediate();
+    }
+
     savePatient(patientData: any) {
         // Ensure all fields exist for named parameters
         const defaults = {
@@ -397,12 +605,24 @@ export class DatabaseService {
             emergency_contact_name: null, emergency_contact_mobile: null,
             street: null, city: null, state: null, zip_code: null,
             insurance_provider: null, policy_number: null,
+            abha_address: null, abha_name: null,
             address: '', age: 0, gender: 'Unknown', mobile: '', name: ''
         };
 
         const patient = { ...defaults, ...patientData };
 
         if (patient.id) {
+            // Health ID links live outside demographic edits: an edit form
+            // that omits them must not silently unlink the patient. Clearing
+            // goes only through linkAbhaAddress.
+            if (patient.abha_address == null || patient.abha_address === '') {
+                const stored = this.db.prepare(
+                    'SELECT abha_address, abha_name FROM patients WHERE id = ?').get(patient.id) as any;
+                patient.abha_address = stored?.abha_address ?? null;
+                if (patient.abha_name == null || patient.abha_name === '') {
+                    patient.abha_name = stored?.abha_name ?? null;
+                }
+            }
             return this.db.prepare(`
         UPDATE patients SET
             name = @name,
@@ -420,7 +640,8 @@ export class DatabaseService {
             state = @state,
             zip_code = @zip_code,
             insurance_provider = @insurance_provider,
-            policy_number = @policy_number
+            policy_number = @policy_number,
+            abha_address = @abha_address, abha_name = @abha_name
         WHERE id = @id
             `).run(patient);
         } else {
@@ -431,12 +652,14 @@ export class DatabaseService {
         INSERT INTO patients(
             uuid, name, mobile, age, gender, address, 
             dob, blood_group, email, emergency_contact_name, emergency_contact_mobile,
-            street, city, state, zip_code, insurance_provider, policy_number
+            street, city, state, zip_code, insurance_provider, policy_number,
+            abha_address, abha_name
         )
         VALUES(
             @uuid, @name, @mobile, @age, @gender, @address,
             @dob, @blood_group, @email, @emergency_contact_name, @emergency_contact_mobile,
-            @street, @city, @state, @zip_code, @insurance_provider, @policy_number
+            @street, @city, @state, @zip_code, @insurance_provider, @policy_number,
+            @abha_address, @abha_name
         )
             `).run(patient);
         }

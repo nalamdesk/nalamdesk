@@ -75,6 +75,12 @@
                     class="w-full text-left px-3 py-2 rounded-md transition-colors font-medium flex items-center gap-3 border-l-4">
                     <span>Catalogs</span>
                 </button>
+
+                <button (click)="switchTab('abdm')"
+                    [class]="activeTab === 'abdm' ? 'bg-blue-50 text-blue-700 border-blue-500' : 'text-gray-600 hover:bg-gray-50 border-transparent'"
+                    class="w-full text-left px-3 py-2 rounded-md transition-colors font-medium flex items-center gap-3 border-l-4">
+                    <span>ABDM</span>
+                </button>
             </ng-container>
         </nav>
 
@@ -123,14 +129,14 @@
             <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mt-6" *ngIf="isElectron">
                 <div class="flex items-center justify-between mb-4">
                     <div>
-                        <h3 class="text-lg font-medium text-purple-700">Online Booking</h3>
+                        <h3 class="text-lg font-medium text-blue-700">Online Booking</h3>
                         <p class="text-sm text-gray-500">Enable public appointment booking on nalamdesk.com</p>
                     </div>
                     <input type="checkbox" class="toggle toggle-primary" [checked]="cloudEnabled"
                         (change)="toggleCloud($event)" />
                 </div>
                 <div *ngIf="cloudClinicId"
-                    class="bg-purple-50 p-3 rounded border border-purple-100 text-purple-800 text-sm">
+                    class="bg-blue-50 p-3 rounded border border-blue-100 text-blue-800 text-sm">
                     <strong>Status:</strong> Active &bull; <strong>Clinic ID:</strong> {{ cloudClinicId }}
                 </div>
             </div>
@@ -138,6 +144,116 @@
 
         <div *ngIf="activeTab === 'catalogs'" class="h-full overflow-hidden">
             <app-catalog-settings></app-catalog-settings>
+        </div>
+
+        <!-- ABDM TAB -->
+        <div *ngIf="activeTab === 'abdm'" class="h-full overflow-y-auto p-4 md:p-8">
+            <h2 class="text-2xl font-bold text-gray-800 mb-6">ABDM Gateway</h2>
+
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
+                <h3 class="text-lg font-medium text-gray-800 mb-2">Facility Identity</h3>
+                <p class="text-sm text-gray-500 mb-4">Printed on the counter QR patients scan. Names stay plain and local.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Facility ID (HIP ID)</label>
+                        <input [(ngModel)]="abdmConfig.hip_id" name="abdm_hip_id" placeholder="e.g. HIP-CLINIC-001"
+                            class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Counter ID</label>
+                        <input [(ngModel)]="abdmConfig.counter_id" name="abdm_counter_id" placeholder="e.g. Counter-1"
+                            class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
+                    </div>
+                </div>
+                <div class="mt-6 flex items-center gap-4">
+                    <button type="button" (click)="saveAbdmConfig()" [disabled]="abdmBusy" class="btn btn-primary px-6">Save Changes</button>
+                    <span *ngIf="abdmSaved" class="text-green-600 text-sm font-medium animate-pulse">✓ Saved successfully!</span>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
+                <div *ngIf="abdmConfig.mock" class="mb-4 p-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm">
+                    Mock gateway is active — no ABDM credentials are configured yet. Health IDs and bookings keep working offline.
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Gateway</label>
+                        <select [(ngModel)]="abdmConfig.gateway_env" (change)="saveAbdmConfig()"
+                            class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 bg-white">
+                            <option value="sandbox">Sandbox (testing)</option>
+                            <option value="staging">Staging</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
+                        <input [(ngModel)]="abdmConfig.client_id" name="abdm_client_id" placeholder="Issued by the ABDM portal"
+                            class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
+                    </div>
+                </div>
+                <div class="mt-6 flex items-center gap-4">
+                    <button type="button" (click)="saveAbdmConfig()" [disabled]="abdmBusy" class="btn btn-primary px-6">Save Changes</button>
+                    <span *ngIf="abdmSaved" class="text-green-600 text-sm font-medium animate-pulse">✓ Saved successfully!</span>
+                </div>
+                <label class="mt-4 flex items-start gap-2 text-sm text-gray-600 cursor-pointer">
+                    <input type="checkbox" [(ngModel)]="abdmConfig.mock" (change)="saveAbdmConfig()"
+                           class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4 mt-0.5">
+                    <span>Use mock gateway (testing). Turn off to talk to the real gateway once the ID and secret are saved.</span>
+                </label>
+            </div>
+
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
+                <h3 class="text-lg font-medium text-gray-800 mb-2">Client Secret</h3>
+                <p class="text-sm text-gray-500 mb-4">
+                    Stored only in this device's secure key storage. It is never displayed again.
+                    <span *ngIf="abdmConfig.has_secret" class="font-medium text-green-700">A secret is saved.</span>
+                    <span *ngIf="!abdmConfig.has_secret" class="font-medium text-amber-700">No secret saved yet.</span>
+                </p>
+                <div class="flex flex-col md:flex-row gap-3">
+                    <input [(ngModel)]="abdmSecret" type="password" autocomplete="new-password" placeholder="Paste new secret to replace"
+                        class="flex-1 border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
+                    <button type="button" (click)="saveAbdmSecret()" [disabled]="abdmBusy || !abdmSecret" class="btn btn-outline w-full md:w-auto">Save Secret</button>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200">
+                <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    <div>
+                        <h3 class="text-lg font-medium text-gray-800">Connection Test</h3>
+                        <p class="text-sm text-gray-500">Checks a gateway session without touching patient data.</p>
+                    </div>
+                    <button type="button" class="btn btn-outline btn-sm" [disabled]="abdmBusy" (click)="testAbdm()">Test ABDM Connectivity</button>
+                </div>
+                <div *ngIf="abdmTest" class="mt-4 p-3 rounded-lg border text-sm"
+                     [ngClass]="abdmTest.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-700'">
+                    <span class="font-bold">{{ abdmTest.mode === 'mock' ? 'Mock: ' : '' }}{{ abdmTest.ok ? 'Connected' : 'Failed' }}</span>
+                    <span> — {{ abdmTest.detail }}</span>
+                    <span *ngIf="abdmTest.latencyMs != null" class="text-xs">({{ abdmTest.latencyMs }} ms)</span>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mt-6">
+                <h3 class="text-lg font-medium text-gray-800 mb-2">Counter QR Slip</h3>
+                <p class="text-sm text-gray-500 mb-4">Patients scan this at reception. Download the image to print and display it.</p>
+                <div class="flex flex-col md:flex-row items-start gap-6">
+                    <img *ngIf="qrDataUrl" [src]="qrDataUrl" alt="Counter QR code"
+                         class="w-44 h-44 rounded-lg border border-gray-200 bg-white p-2">
+                    <div *ngIf="!qrDataUrl" class="w-44 h-44 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-center text-xs text-gray-400 p-4">
+                        Save a Facility ID and Counter ID above to generate the slip.
+                    </div>
+                    <div class="flex flex-col gap-3">
+                        <a *ngIf="qrDataUrl" [href]="qrDataUrl" download="nalamdesk-counter-qr.png"
+                           class="btn btn-outline btn-sm">Download QR Image</a>
+                        <p class="text-xs text-gray-400 max-w-xs">Encodes the facility and counter identity only — no patient data.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mt-6">
+                <h3 class="text-lg font-medium text-gray-800 mb-2">Demo Scan</h3>
+                <p class="text-sm text-gray-500 mb-4">Queues a demo profile share exactly as a gateway callback would. Available only while the mock gateway is active.</p>
+                <button type="button" class="btn btn-outline btn-sm" [disabled]="abdmBusy" (click)="simulateShare()">Simulate Incoming Scan</button>
+                <p *ngIf="abdmSimResult" class="mt-3 text-sm text-gray-600">{{ abdmSimResult }}</p>
+            </div>
         </div>
 
         <!-- 2. USERS TAB -->

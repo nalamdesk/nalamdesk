@@ -34,7 +34,9 @@ import { ColDef } from 'ag-grid-community';
             placeholder="Search by name or mobile..." 
             class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
-          <span class="absolute left-3 top-2.5 text-gray-400">🔍</span>
+          <span class="absolute left-3 top-2.5 text-gray-400">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
+          </span>
         </div>
 
         <!-- AG Grid Data Table -->
@@ -68,16 +70,16 @@ import { ColDef } from 'ag-grid-community';
             <!-- Fixed Header -->
             <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
                 <h2 class="text-xl font-bold text-gray-800">{{ isEditMode ? 'Edit Patient Details' : 'New Patient Registration' }}</h2>
-                <button (click)="showModal = false" class="text-gray-400 hover:text-gray-600">✕</button>
+                <button (click)="showModal = false" class="text-gray-500 hover:text-gray-600" aria-label="Close"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg></button>
             </div>
 
             <!-- Scrollable Body -->
             <div class="flex-1 overflow-y-auto p-6">
-                <form [formGroup]="patientForm" id="patientForm" (ngSubmit)="savePatient()">
+                <form [formGroup]="patientForm" id="patientForm" (ngSubmit)="savePatient(!isEditMode)">
                     
-                    <!-- 1. Personal Info -->
+                    <!-- Essential details: everything a walk-in needs, always visible -->
                     <div class="mb-6">
-                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">📍 Personal Information</h3>
+                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">Essential details</h3>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             
                             <!-- Name -->
@@ -134,9 +136,25 @@ import { ColDef } from 'ag-grid-community';
                                     <p *ngIf="isFieldInvalid('gender')" class="text-xs text-red-500 mt-1">Required</p>
                                 </div>
 
-                                <!-- Blood Group -->
-                                <div class="w-full md:w-1/6">
-                                    <label class="block text-sm font-medium text-gray-700">Blood</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Additional details: collapsed for rapid intake -->
+                    <div class="mb-2">
+                        <button type="button" (click)="showAdditional = !showAdditional"
+                                class="w-full flex items-center justify-between py-2 text-sm font-bold text-gray-700 border-b mb-3"
+                                [attr.aria-expanded]="showAdditional">
+                            <span>Additional details <span class="font-normal text-gray-400">(contact, address, blood group)</span></span>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"
+                                 class="w-4 h-4 text-gray-500 transition-transform" [class.rotate-180]="showAdditional">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                            </svg>
+                        </button>
+                        <div *ngIf="showAdditional">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                <div class="col-span-1">
+                                    <label class="block text-sm font-medium text-gray-700">Blood Group</label>
                                     <select formControlName="blood_group" class="w-full border p-2 rounded">
                                         <option value="">-</option>
                                         <option value="A+">A+</option> <option value="A-">A-</option>
@@ -145,26 +163,21 @@ import { ColDef } from 'ag-grid-community';
                                         <option value="AB+">AB+</option> <option value="AB-">AB-</option>
                                     </select>
                                 </div>
+                                <div class="col-span-1">
+                                    <label class="block text-sm font-medium text-gray-700">Email (Optional)</label>
+                                    <input type="email" formControlName="email" placeholder="patient@example.com" class="w-full border p-2 rounded">
+                                    <p *ngIf="isFieldInvalid('email')" class="text-xs text-red-500 mt-1">Invalid email format.</p>
+                                </div>
                             </div>
 
-                            <div class="col-span-1 md:col-span-2">
-                                <label class="block text-sm font-medium text-gray-700">Email (Optional)</label>
-                                <input type="email" formControlName="email" placeholder="patient@example.com" class="w-full border p-2 rounded">
-                                <p *ngIf="isFieldInvalid('email')" class="text-xs text-red-500 mt-1">Invalid email format.</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 2. Address Info -->
+                    <!-- Address -->
                     <div class="mb-6">
-                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">🏠 Address Details</h3>
+                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">Address</h3>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div class="col-span-1 md:col-span-2">
-                                <label class="block text-sm font-medium text-gray-700">Full Address <span class="text-red-500">*</span></label>
+                                <label class="block text-sm font-medium text-gray-700">Full Address (Optional)</label>
                                 <textarea formControlName="address" rows="3" placeholder="House No, Street Name, Area"
-                                        class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                                        [class.border-red-500]="isFieldInvalid('address')"></textarea>
-                                <p *ngIf="isFieldInvalid('address')" class="text-xs text-red-500 mt-1">Address is required.</p>
+                                        class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
                             </div>
                             
                             <div>
@@ -188,9 +201,9 @@ import { ColDef } from 'ag-grid-community';
                         </div>
                     </div>
 
-                    <!-- 3. Emergency Info -->
+                    <!-- Emergency contact -->
                     <div>
-                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">🚑 Emergency Contact</h3>
+                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">Emergency contact</h3>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700">Contact Name</label>
@@ -206,6 +219,8 @@ import { ColDef } from 'ag-grid-community';
                             </div>
                         </div>
                     </div>
+                        </div>
+                    </div>
                 </form>
             </div>
             
@@ -216,11 +231,16 @@ import { ColDef } from 'ag-grid-community';
                     <button type="button" (click)="showModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded border bg-white transition-colors">
                         Cancel
                     </button>
-                    <!-- form attribute links this button to the form above -->
-                    <button type="submit" form="patientForm" 
-                            [disabled]="patientForm.invalid" 
+                    <button *ngIf="!isEditMode" type="button" (click)="savePatient(false)"
+                            [disabled]="patientForm.invalid"
+                            class="px-4 py-2 text-blue-700 border border-blue-200 hover:bg-blue-50 rounded font-medium transition-colors disabled:opacity-50">
+                        Save only
+                    </button>
+                    <!-- form attribute links this button to the form above; Enter submits here -->
+                    <button type="submit" form="patientForm"
+                            [disabled]="patientForm.invalid"
                             class="px-6 py-2 bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed shadow transition-colors">
-                        {{ isEditMode ? 'Update Patient' : 'Save Patient' }}
+                        {{ isEditMode ? 'Update Patient' : 'Save & Add to Queue' }}
                     </button>
                 </div>
             </div>
@@ -238,6 +258,8 @@ export class PatientListComponent implements OnInit {
   loading = false;
   searchQuery = '';
   showModal = false;
+  // Additional details collapsed for rapid intake; expanded when editing.
+  showAdditional = false;
 
   // AG Grid Definitions
   colDefs: ColDef[] = [
@@ -307,8 +329,8 @@ export class PatientListComponent implements OnInit {
       blood_group: [''],
       email: ['', [Validators.email]],
 
-      // Address
-      address: ['', Validators.required],
+      // Address (all optional for rapid walk-in intake)
+      address: [''],
       street: [''],
       city: [''],
       state: [''],
@@ -398,16 +420,20 @@ export class PatientListComponent implements OnInit {
   }
 
   openAddModal() {
-    this.patientForm.reset({ gender: 'Male', age: 0 });
+    this.patientForm.reset({ gender: 'Male', age: null });
+    this.showAdditional = false;
     this.showModal = true;
   }
 
   editPatient(patient: Patient) {
     this.patientForm.patchValue(patient);
+    this.showAdditional = true;
     this.showModal = true;
   }
 
-  async savePatient() {
+  // Submit from the form (Enter key) saves and queues a new walk-in.
+  // The explicit Save button passes false for a save without queueing.
+  async savePatient(addToQueueAfter = false) {
     if (this.patientForm.invalid) {
       this.patientForm.markAllAsTouched();
       return;
@@ -415,11 +441,16 @@ export class PatientListComponent implements OnInit {
 
     try {
       const formValue = this.patientForm.value;
+      const wasNew = !formValue.id;
       const result = await this.patientService.savePatient(formValue);
+      const savedId = Number(result?.lastInsertRowid ?? result?.id ?? formValue.id);
       this.ngZone.run(() => {
         this.showModal = false;
         this.loadPatients();
       });
+      if (addToQueueAfter && wasNew && savedId) {
+        await this.addToQueue({ ...formValue, id: savedId } as Patient);
+      }
     } catch (e) {
       console.error('Failed to save patient', e);
     }
@@ -441,7 +472,7 @@ export class PatientListComponent implements OnInit {
     if (!this.patientService.isPatientComplete(patient)) {
       await this.dialogService.open({
         title: 'Incomplete Details',
-        message: 'Patient details incomplete (Age, Gender, Address etc. required). Please update details first.',
+        message: 'Some essentials are missing (name, mobile, age and gender). Please update details first.',
         type: 'warning',
         confirmText: 'Edit Now'
       });

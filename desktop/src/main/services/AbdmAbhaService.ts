@@ -57,13 +57,16 @@ export class AbdmAbhaService {
 
     // One operation snapshot per call: token, mock flag, and gateway URL are
     // resolved together so a configuration flip mid-flight can never mix one
-    // environment's credentials with another's endpoint.
+    // environment's credentials with another's endpoint. The URL is captured
+    // synchronously before any await, so even a flip during session
+    // resolution cannot split the snapshot.
     private async resolveSnapshot(): Promise<{ token: string; mock: boolean; baseUrl: string }> {
+        const baseUrl = this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '';
         const getSession = this.deps.getSessionToken;
         const session = getSession
             ? await getSession()
             : { token: `mock-abdm-token-${this.nowMs()}`, mock: true };
-        return { ...session, baseUrl: this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '' };
+        return { ...session, baseUrl };
     }
 
     /** Drops the cached gateway certificate (call when gateway config changes). */

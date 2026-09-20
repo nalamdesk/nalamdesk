@@ -188,7 +188,8 @@ describe('AbdmAbhaService (mock gateway)', () => {
         expect(certCalls).toEqual(['sandbox', 'staging']);
     });
 
-    it('refetches the certificate after explicit invalidation', async () => {        const { generateKeyPairSync } = await import('node:crypto');
+    it('refetches the certificate after explicit invalidation', async () => {
+        const { generateKeyPairSync } = await import('node:crypto');
         const { publicKey } = generateKeyPairSync('rsa', {
             modulusLength: 2048,
             publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -240,6 +241,41 @@ describe('AbdmAbhaService (mock gateway)', () => {
 
         expect(started).toMatchObject({ txnId: 'live-txn-pinned', mock: false });
         expect(urls).toHaveLength(2);
+        expect(urls.every((u) => u.startsWith('https://sandbox.example'))).toBe(true);
+    });
+
+    it('captures the gateway URL before awaiting the session', async () => {
+        const { generateKeyPairSync } = await import('node:crypto');
+        const { publicKey } = generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        let env = 'sandbox';
+        let releaseSession!: (value: { token: string; mock: boolean }) => void;
+        const urls: string[] = [];
+        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
+            urls.push(String(url));
+            if (String(url).endsWith('/v3/auth/cert')) {
+                return { ok: true, json: async () => ({ publicKey }) };
+            }
+            return { ok: true, json: async () => ({ txnId: 'live-txn-atomic' }) };
+        });
+        const svc = new AbdmAbhaService({
+            getSessionToken: () => new Promise((resolve) => { releaseSession = resolve as any; }),
+            gatewayBaseUrl: () => `https://${env}.example`,
+            fetchFn
+        });
+
+        const pending = svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
+        await Promise.resolve();
+        // Flip the environment while the session request is still suspended.
+        env = 'staging';
+        releaseSession({ token: 'live-token', mock: false });
+        const started = await pending;
+
+        expect(started).toMatchObject({ txnId: 'live-txn-atomic', mock: false });
+        expect(urls.length).toBeGreaterThan(0);
         expect(urls.every((u) => u.startsWith('https://sandbox.example'))).toBe(true);
     });
 });

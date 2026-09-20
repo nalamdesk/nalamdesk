@@ -549,5 +549,26 @@ describe('PatientDetailsComponent', () => {
         const organization = bundle.entry.find((e: any) => e.resource?.resourceType === 'Organization').resource;
         expect(organization.name).toBe('City Care Clinic');
     });
+
+    it('attaches registry identifiers when configured', () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith',
+            doctor_license_snapshot: JSON.stringify({ name: 'Dr. Smith', license_number: 'MED-1' }),
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+
+        const bundle = JSON.parse(
+            component.buildHealthRecordJson('City Care Clinic', { hfrId: 'HFR-1', hprId: 'HPR-2' }).json);
+        const organization = bundle.entry.find((e: any) => e.resource?.resourceType === 'Organization').resource;
+        expect(organization.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'HFR-1' })]));
+        const practitioner = bundle.entry.find((e: any) => e.resource?.resourceType === 'Practitioner').resource;
+        expect(practitioner.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'HPR-2' })]));
+    });
 });
 

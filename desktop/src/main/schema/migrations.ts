@@ -889,5 +889,14 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 19,
+        up: (db: any) => {
+            console.log('Running Migration v19 (facility and practitioner registry identity)...');
+            ['abdm_hfr_id TEXT', 'abdm_hpr_id TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+        }
     }
 ];

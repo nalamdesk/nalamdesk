@@ -1148,32 +1148,36 @@ export class PatientDetailsComponent implements OnInit {
     // The visit's license snapshot is the durable authorship record: it holds
     // the practitioner's identity exactly as it was when the encounter was
     // signed, even if their account details changed afterwards.
-    private practitionerForExport(visit: any, user: any): { id: any; name: string; licenseNumber?: string; specialty?: string } {
+    private practitionerForExport(visit: any, user: any, hprId?: string): { id: any; name: string; licenseNumber?: string; specialty?: string; registryId?: string } {
+        const attachRegistry = (entry: { id: any; name: string; licenseNumber?: string; specialty?: string }) =>
+            hprId ? { ...entry, registryId: hprId } : entry;
         try {
             const snapshot = visit.doctor_license_snapshot ? JSON.parse(visit.doctor_license_snapshot) : null;
             if (snapshot?.name) {
-                return {
+                return attachRegistry({
                     id: visit.doctor_id || user.id, name: snapshot.name,
                     licenseNumber: snapshot.license_number, specialty: snapshot.specialty
-                };
+                });
             }
         } catch { /* fall through to the live record below */ }
         const sameAuthor = !user.id || !visit.doctor_id || Number(user.id) === Number(visit.doctor_id);
         if (sameAuthor) {
-            return {
+            return attachRegistry({
                 id: visit.doctor_id || user.id, name: visit.doctor_name || user.name || 'Doctor',
                 licenseNumber: user.license_number, specialty: user.specialty
-            };
+            });
         }
-        return { id: visit.doctor_id, name: visit.doctor_name || 'Doctor' };
+        return attachRegistry({ id: visit.doctor_id, name: visit.doctor_name || 'Doctor' });
     }
 
-    buildHealthRecordJson(clinicName = 'NalamDesk Clinic') {
+    buildHealthRecordJson(clinicName = 'NalamDesk Clinic', registry?: { hfrId?: string; hprId?: string }) {
         const visit: any = this.selectedVisit || {};
         const patient: any = this.patient || {};
         // Historical authorship comes from the visit's own license snapshot,
         // frozen at signing time — never from whoever is exporting today.
-        const practitioner = this.practitionerForExport(visit, this.currentUser || {});
+        // The registry HPR ID identifies the same practitioner in the
+        // national registry; it is deployment-level, not encounter-level.
+        const practitioner = this.practitionerForExport(visit, this.currentUser || {}, registry?.hprId);
         const units = visit.vitals?.units || {};
         const { bundle, warnings } = buildOpConsultRecord({
             patient: {
@@ -1182,7 +1186,7 @@ export class PatientDetailsComponent implements OnInit {
                 address: patient.address, abhaAddress: patient.abha_address
             },
             practitioner,
-            clinic: { name: clinicName },
+            clinic: { name: clinicName, registryId: registry?.hfrId || undefined },
             encounter: {
                 id: visit.id, date: visit.date, diagnosis: visit.diagnosis,
                 diagnosisType: visit.diagnosis_type, symptoms: visit.symptoms,
@@ -1216,7 +1220,11 @@ export class PatientDetailsComponent implements OnInit {
         if (!this.selectedVisit) return;
         const settings = await this.dataService.invoke<any>('getPublicSettings').catch(() => null);
         const clinicName = settings?.clinic_name || 'NalamDesk Clinic';
-        const { json, warnings } = this.buildHealthRecordJson(clinicName);
+        const abdm = await this.dataService.invoke<any>('abdmGetConfig').catch(() => null);
+        const { json, warnings } = this.buildHealthRecordJson(clinicName, {
+            hfrId: abdm?.hfr_id || undefined,
+            hprId: abdm?.hpr_id || undefined
+        });
         if (warnings.length > 0) {
             await this.dialogService.open({
                 title: 'Exported with notes',

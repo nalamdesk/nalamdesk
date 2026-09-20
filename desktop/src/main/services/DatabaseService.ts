@@ -294,7 +294,8 @@ export class DatabaseService {
             drive_tokens, cloud_clinic_id, cloud_api_key, cloud_enabled,
             drive_client_id, drive_client_secret, local_backup_path,
             backup_schedule, cloud_backup_schedule,
-            abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id
+            abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id,
+            abdm_hfr_id, abdm_hpr_id
             FROM settings LIMIT 1`).get();
     }
 
@@ -354,7 +355,7 @@ export class DatabaseService {
             'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
             'drive_client_id', 'drive_client_secret', 'local_backup_path',
             'abdm_gateway_env', 'abdm_client_id', 'abdm_mock',
-            'abdm_hip_id', 'abdm_counter_id'
+            'abdm_hip_id', 'abdm_counter_id', 'abdm_hfr_id', 'abdm_hpr_id'
         ];
 
         // Filter incoming settings to only allowed columns

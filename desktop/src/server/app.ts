@@ -97,7 +97,9 @@ export class ApiServer {
                     has_secret: session.hasStoredSecret(),
                     mock: session.isMockMode(),
                     hip_id: settings.abdm_hip_id || '',
-                    counter_id: settings.abdm_counter_id || ''
+                    counter_id: settings.abdm_counter_id || '',
+                    hfr_id: settings.abdm_hfr_id || '',
+                    hpr_id: settings.abdm_hpr_id || ''
                 };
             }
             case 'abdmSaveConfig': {
@@ -109,6 +111,14 @@ export class ApiServer {
                 if (typeof payload['client_id'] === 'string') patch['abdm_client_id'] = String(payload['client_id']).trim();
                 if (typeof payload['hip_id'] === 'string') patch['abdm_hip_id'] = String(payload['hip_id']).trim();
                 if (typeof payload['counter_id'] === 'string') patch['abdm_counter_id'] = String(payload['counter_id']).trim();
+                for (const key of ['hfr_id', 'hpr_id']) {
+                    if (typeof payload[key] === 'string') {
+                        if (String(payload[key]).trim().length > 100) {
+                            throw new Error('Registry IDs must be under 100 characters.');
+                        }
+                        patch[`abdm_${key}`] = String(payload[key]).trim();
+                    }
+                }
                 if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
                 const result = db.saveSettings(patch);
                 session.invalidate();

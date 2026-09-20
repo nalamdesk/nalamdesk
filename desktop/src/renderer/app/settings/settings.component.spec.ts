@@ -352,4 +352,17 @@ describe('SettingsComponent Validation', () => {
             mock: false
         }));
     });
+
+    it('sends registry identifiers with the config', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmConfig.hfr_id = 'HFR-1';
+        component.abdmConfig.hpr_id = 'HPR-2';
+
+        await component.saveAbdmConfig();
+
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({
+            hfr_id: 'HFR-1',
+            hpr_id: 'HPR-2'
+        }));
+    });
 });

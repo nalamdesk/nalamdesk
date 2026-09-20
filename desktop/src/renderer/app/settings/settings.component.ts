@@ -52,8 +52,8 @@ export class SettingsComponent implements OnInit {
   isElectron = !!(window as any).electron;
 
   // ABDM gateway (separate tab; secret handled via its own IPC, never in settings)
-  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string } =
-    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '' };
+  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string; hfr_id: string; hpr_id: string } =
+    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '', hfr_id: '', hpr_id: '' };
   abdmSecret = '';
   abdmTest: { ok: boolean; mode: string; detail: string; latencyMs?: number } | null = null;
   abdmBusy = false;
@@ -386,7 +386,9 @@ export class SettingsComponent implements OnInit {
             has_secret: !!config.has_secret,
             mock: config.mock !== false,
             hip_id: config.hip_id || '',
-            counter_id: config.counter_id || ''
+            counter_id: config.counter_id || '',
+            hfr_id: config.hfr_id || '',
+            hpr_id: config.hpr_id || ''
           };
           void this.generateQr();
         }
@@ -403,6 +405,8 @@ export class SettingsComponent implements OnInit {
         client_id: this.abdmConfig.client_id,
         hip_id: this.abdmConfig.hip_id || '',
         counter_id: this.abdmConfig.counter_id || '',
+        hfr_id: this.abdmConfig.hfr_id || '',
+        hpr_id: this.abdmConfig.hpr_id || '',
         mock: this.abdmConfig.mock !== false
       });
       this.ngZone.run(() => {

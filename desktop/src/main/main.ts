@@ -846,7 +846,9 @@ handleDb('db:abdmGetConfig', () => {
         has_secret: abdmSessionService.hasStoredSecret(),
         mock: abdmSessionService.isMockMode(),
         hip_id: databaseService.getSettings()?.abdm_hip_id || '',
-        counter_id: databaseService.getSettings()?.abdm_counter_id || ''
+        counter_id: databaseService.getSettings()?.abdm_counter_id || '',
+        hfr_id: databaseService.getSettings()?.abdm_hfr_id || '',
+        hpr_id: databaseService.getSettings()?.abdm_hpr_id || ''
     };
 });
 handleDb('db:abdmSaveConfig', (_, config) => {
@@ -866,6 +868,13 @@ handleDb('db:abdmSaveConfig', (_, config) => {
     }
     if (config && typeof config['counter_id'] === 'string') {
         patch['abdm_counter_id'] = (config['counter_id'] as string).trim();
+    }
+    for (const key of ['hfr_id', 'hpr_id'] as const) {
+        if (config && typeof config[key] === 'string') {
+            const value = (config[key] as string).trim();
+            if (value.length > 100) throw new Error('Registry IDs must be under 100 characters.');
+            patch[`abdm_${key}`] = value;
+        }
     }
     if (config && config['mock'] !== undefined) {
         patch['abdm_mock'] = config['mock'] ? 1 : 0;

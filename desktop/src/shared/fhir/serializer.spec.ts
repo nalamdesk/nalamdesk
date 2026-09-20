@@ -233,6 +233,28 @@ describe('buildOpConsultRecord', () => {
         expect(bundle.identifier?.value).toContain('op-consult-7');
     });
 
+    it('carries registry identifiers when configured', () => {
+        const input = fixture();
+        input.clinic.registryId = 'HFR-12345';
+        input.practitioner.registryId = 'HPR-67890';
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const organization: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'Organization')?.resource;
+        expect(organization.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'HFR-12345' })]));
+        const practitioner: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'Practitioner')?.resource;
+        expect(practitioner.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'HPR-67890' })]));
+    });
+
+    it('omits registry identifiers when unconfigured', () => {
+        const { bundle } = buildOpConsultRecord(fixture(), '2026-09-20T10:00:00.000Z');
+        const organization: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'Organization')?.resource;
+        expect(organization.identifier).toBeUndefined();
+    });
+
     it('builds coded IPS sections instead of the OPConsult layout', () => {
         const { bundle } = buildIpsDocument(fixture(), '2026-09-20T10:00:00.000Z');
         const composition: any = bundle.entry[0].resource;

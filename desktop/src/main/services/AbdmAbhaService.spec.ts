@@ -46,7 +46,6 @@ describe('AbdmAbhaService (mock gateway)', () => {
         expect(card).toMatchObject({ abhaAddress: 'demo.patient@sbx', mock: true });
         expect(card.name).toBeTruthy();
     });
-
     it('sends live calls with the session token when credentials exist', async () => {
         const fetchFn = vi.fn().mockResolvedValue({
             ok: true,
@@ -65,5 +64,77 @@ describe('AbdmAbhaService (mock gateway)', () => {
                 headers: expect.objectContaining({ Authorization: 'Bearer live-token' })
             })
         );
+    });
+
+    it('RSA-encrypts live enrollment identifiers with the gateway key', async () => {
+        const { generateKeyPairSync, privateDecrypt, constants } = await import('node:crypto');
+        const { publicKey, privateKey } = generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        const calls: any[] = [];
+        const fetchFn = vi.fn().mockImplementation(async (url: string, init: any) => {
+            calls.push([url, init]);
+            if (String(url).endsWith('/v3/auth/cert')) {
+                return { ok: true, json: async () => ({ publicKey }) };
+            }
+            return { ok: true, json: async () => ({ txnId: 'live-txn-1' }) };
+        });
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => ({ token: 'live-token', mock: false }),
+            gatewayBaseUrl: () => 'https://gateway.example',
+            fetchFn
+        });
+
+        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
+        expect(started).toMatchObject({ txnId: 'live-txn-1', mock: false });
+
+        const enrolCall = calls.find(([url]) => String(url).endsWith('/byAadhaar'));
+        const sent = JSON.parse(enrolCall[1].body).aadhaar;
+        expect(sent).not.toContain('123456789012');
+        const decrypted = privateDecrypt(
+            { key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha1' },
+            Buffer.from(sent, 'base64')
+        ).toString('utf8');
+        expect(decrypted).toBe('123456789012');
+    });
+
+    it('fetches the gateway certificate once across enrollments', async () => {
+        const { generateKeyPairSync } = await import('node:crypto');
+        const { publicKey } = generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
+            if (String(url).endsWith('/v3/auth/cert')) {
+                return { ok: true, json: async () => ({ publicKey }) };
+            }
+            return { ok: true, json: async () => ({ txnId: 'live-txn-9' }) };
+        });
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => ({ token: 'live-token', mock: false }),
+            gatewayBaseUrl: () => 'https://gateway.example',
+            fetchFn
+        });
+
+        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876500001' });
+        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/auth/cert'))).toHaveLength(1);
+    });
+
+    it('fails plainly when the gateway certificate is unusable', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ publicKey: 'not-a-key' })
+        });
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => ({ token: 'live-token', mock: false }),
+            gatewayBaseUrl: () => 'https://gateway.example',
+            fetchFn
+        });
+        await expect(svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' }))
+            .rejects.toThrow('usable public key');
     });
 });

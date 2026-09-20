@@ -1,3 +1,5 @@
+import { AbdmSessionService } from './AbdmSessionService';
+
 export interface AbdmAbhaDeps {
     getSessionToken?: () => Promise<{ token: string; mock: boolean }>;
     gatewayBaseUrl?: () => string;
@@ -28,8 +30,14 @@ const PATHS = {
     enrolByMobile: '/v3/enrollment/enrol/byMobile',
     enrolVerify: '/v3/enrollment/enrol/verify',
     verifyAbha: '/v3/profile/account/verify',
-    abhaCard: '/v3/profile/account/abha-card'
+    abhaCard: '/v3/profile/account/abha-card',
+    // Gateway public key for encrypting enrollment identifiers (HIE-CM cert
+    // endpoint per public ABDM docs; reconfirm at live integration).
+    authCert: '/v3/auth/cert'
 };
+
+// Gateway certificates rotate infrequently; refetch at most daily.
+const CERT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const MOCK_OTP_HINT = 'Mock gateway: any 6-digit code is accepted.';
 
@@ -39,13 +47,15 @@ const MOCK_OTP_HINT = 'Mock gateway: any 6-digit code is accepted.';
  * served by the sandbox-shaped mock responder, flagged on every result.
  */
 export class AbdmAbhaService {
+    private certCache: { pem: string; fetchedAt: number } | null = null;
+
     constructor(private readonly deps: AbdmAbhaDeps = {}) { }
 
     private nowMs(): number {
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
 
-    private async authorized(path: string, body: unknown): Promise<{ json: any; mock: boolean }> {
+    private async authorized(path: string, body: unknown, method = 'POST'): Promise<{ json: any; mock: boolean }> {
         const getSession = this.deps.getSessionToken;
         const session = getSession
             ? await getSession()
@@ -58,9 +68,9 @@ export class AbdmAbhaService {
         let response: any;
         try {
             response = await fetchFn(`${base}${path}`, {
-                method: 'POST',
+                method,
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
-                body: JSON.stringify(body || {})
+                body: method === 'GET' ? undefined : JSON.stringify(body || {})
             });
         } catch (error) {
             throw new Error(`ABDM gateway is unreachable: ${error instanceof Error ? error.message : String(error)}`);
@@ -69,6 +79,22 @@ export class AbdmAbhaService {
             throw new Error(`ABDM request rejected (HTTP ${response?.status || 'unknown'}).`);
         }
         return { json: await response.json(), mock: false };
+    }
+
+    // Fetches (and caches) the gateway public key used to encrypt enrollment
+    // identifiers on live calls. Mock sessions never reach this path.
+    private async getGatewayPublicKey(): Promise<string> {
+        const cached = this.certCache;
+        if (cached && this.nowMs() - cached.fetchedAt < CERT_CACHE_TTL_MS) {
+            return cached.pem;
+        }
+        const { json } = await this.authorized(PATHS.authCert, null, 'GET');
+        const pem = String(json?.publicKey || json?.public_key || json?.cert || '').trim();
+        if (!pem.includes('BEGIN PUBLIC KEY')) {
+            throw new Error('ABDM gateway did not return a usable public key.');
+        }
+        this.certCache = { pem, fetchedAt: this.nowMs() };
+        return pem;
     }
 
     /** Starts enrollment: sends an OTP for an Aadhaar number or mobile number. */
@@ -82,10 +108,22 @@ export class AbdmAbhaService {
             throw new Error('Mobile number must be 10 to 15 digits.');
         }
         const path = via === 'mobile' ? PATHS.enrolByMobile : PATHS.enrolByAadhaar;
-        const { json, mock } = await this.authorized(path, { [via === 'mobile' ? 'mobile' : 'aadhaar']: identifier });
+        // Live identifiers travel RSA-encrypted; mock traffic stays plaintext.
+        const field = via === 'mobile' ? 'mobile' : 'aadhaar';
+        const live = !(await this.isMockSession());
+        const value = live
+            ? AbdmSessionService.encryptWithPublicKey(identifier, await this.getGatewayPublicKey())
+            : identifier;
+        const { json, mock } = await this.authorized(path, { [field]: value });
         const txnId = String(json?.txnId || json?.txn_id || '');
         if (!txnId) throw new Error('ABDM enrollment did not return a transaction.');
         return mock ? { txnId, mock, hint: MOCK_OTP_HINT } : { txnId, mock };
+    }
+
+    private async isMockSession(): Promise<boolean> {
+        const getSession = this.deps.getSessionToken;
+        if (!getSession) return true;
+        return (await getSession()).mock;
     }
 
     /** Verifies the enrollment OTP; returns the created health ID and name. */

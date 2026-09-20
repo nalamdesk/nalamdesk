@@ -323,25 +323,20 @@ export class QueueComponent implements OnInit, OnDestroy {
     if (!token || this.acceptingTokenId != null) return;
     this.acceptingTokenId = token.id;
     try {
-      // Prefer an existing patient already linked to this health ID.
-      let patient = token.abha_address
-        ? await this.dataService.invoke<any>('findPatientByAbha', { abhaAddress: token.abha_address }).catch(() => null)
-        : null;
-      if (!patient) {
-        const created: any = await this.dataService.invoke<any>('savePatient', {
-          name: token.patient_name,
-          mobile: token.mobile || '',
-          age: token.age ?? null,
-          gender: token.gender || '',
-          abha_address: token.abha_address || null,
-          abha_name: token.abha_name || null
+      // One atomic server call: claim, match-or-create, and queue together.
+      // Partial states (queued patient with a failed accept) are impossible.
+      const result: any = await this.dataService.invoke(
+        'abdmAcceptShareTokenAndCheckIn', { tokenId: token.id });
+      if (result?.outcome === 'incomplete' && result?.patientId) {
+        await this.dialogService.open({
+          title: 'Details needed',
+          message: 'Some essentials are missing. Opened the patient chart to complete them — the token stays pending.',
+          type: 'info'
         });
-        const newId = Number(created?.lastInsertRowid ?? created?.id);
-        if (!newId) throw new Error('Could not create the patient record.');
-        patient = { id: newId, name: token.patient_name, mobile: token.mobile || '', age: token.age ?? null, gender: token.gender || '' };
+        this.router.navigate(['/patients', result.patientId]);
+      } else {
+        await this.refreshQueue();
       }
-      await this.addToQueueFromShare(patient, token);
-      await this.dataService.invoke('abdmAcceptShareToken', { tokenId: token.id });
       await this.refreshShareTokens();
     } catch (e) {
       console.error('Failed to accept share token', e);
@@ -353,30 +348,6 @@ export class QueueComponent implements OnInit, OnDestroy {
     } finally {
       this.acceptingTokenId = null;
     }
-  }
-
-  private async addToQueueFromShare(patient: any, token: any) {
-    const alreadyQueued = (this.queue() || []).some((q: any) =>
-      Number(q.patient_id) === Number(patient.id) && q.status !== 'completed');
-    if (alreadyQueued) {
-      // The caller acknowledges exactly once after this returns.
-      await this.refreshShareTokens();
-      return;
-    }
-    if (!this.patientServiceIsComplete(patient)) {
-      this.router.navigate(['/patients', patient.id]);
-      throw new Error(`${patient.name || 'This patient'} needs age, gender, and mobile completed before queueing. Opened their chart instead — the token stays pending.`);
-    }
-    await this.dataService.invoke<any>('addToQueue', { patientId: patient.id, priority: 1 });
-    await this.refreshQueue();
-  }
-
-  private patientServiceIsComplete(patient: any): boolean {
-    return !!patient
-      && !!String(patient.name || '').trim()
-      && !!String(patient.mobile || '').trim()
-      && !!String(patient.gender || '').trim()
-      && (patient.age != null && Number(patient.age) !== 0 || !!patient.dob);
   }
 
   goBack() {

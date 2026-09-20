@@ -287,7 +287,27 @@ export class DatabaseService {
 
     // ... existing methods ...
     getSettings() {
-        return this.db.prepare('SELECT * FROM settings LIMIT 1').get();
+        // Explicit column list: the keychain-protected ABDM secret blob must
+        // never ride along on generic settings reads. Use the dedicated
+        // getAbdmSecretProtected accessor from the main process only.
+        return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, license_key,
+            drive_tokens, cloud_clinic_id, cloud_api_key, cloud_enabled,
+            drive_client_id, drive_client_secret, local_backup_path,
+            backup_schedule, cloud_backup_schedule,
+            abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id
+            FROM settings LIMIT 1`).get();
+    }
+
+    // Main-process-only accessor for the keychain-protected ABDM secret blob.
+    // Never exposed through generic settings responses, IPC getters, or LAN.
+    getAbdmSecretProtected(): string | null {
+        try {
+            const row = this.db.prepare(
+                'SELECT abdm_client_secret_protected AS value FROM settings LIMIT 1').get() as any;
+            return row?.value ?? null;
+        } catch {
+            return null;
+        }
     }
 
     // ... (existing code)
@@ -518,6 +538,62 @@ export class DatabaseService {
             this.logAudit('UPDATE', 'abdm_share_tokens', token.id, actingUserId,
                 `Accepted Scan & Share token #${token.token_no} for ${token.patient_name}`);
             return this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?').get(token.id);
+        });
+        return accept.immediate();
+    }
+
+    // Atomic Scan & Share check-in: claim the token, match or create the
+    // patient, and insert the queue entry in one transaction. Anything that
+    // fails rolls everything back, so reception never sees "failed" for a
+    // patient that was actually queued, and concurrent accepts cannot create
+    // duplicate patients. Incomplete demographics leave the token pending and
+    // report the patient id for explicit handling in the chart.
+    acceptShareTokenAndCheckIn(tokenId: number, actingUserId?: number) {
+        const accept = this.db.transaction(() => {
+            const token = this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?').get(Number(tokenId)) as any;
+            if (!token || token.status !== 'pending') {
+                throw new Error('Token was already handled or has expired.');
+            }
+            const expired = this.db.prepare(`SELECT 1 FROM abdm_share_tokens
+                WHERE id = ? AND expires_at <= CURRENT_TIMESTAMP`).get(token.id) as any;
+            if (expired) {
+                this.db.prepare(`UPDATE abdm_share_tokens SET status = 'expired' WHERE id = ?`).run(token.id);
+                throw new Error('Token has expired. Ask the patient to scan again.');
+            }
+            let patient = token.abha_address ? this.findPatientByAbhaAddress(token.abha_address) : null;
+            if (!patient) {
+                const created = this.savePatient({
+                    name: token.patient_name,
+                    mobile: token.mobile || '',
+                    age: token.age ?? null,
+                    gender: token.gender || '',
+                    abha_address: token.abha_address || null,
+                    abha_name: token.abha_name || null
+                });
+                patient = { id: Number((created as any)?.lastInsertRowid ?? (created as any)?.id) };
+                if (!patient.id) throw new Error('Could not create the patient record.');
+                patient = this.getPatientById(patient.id);
+            }
+            const complete = !!String(patient.name || '').trim()
+                && !!String(patient.mobile || '').trim()
+                && !!String(patient.gender || '').trim()
+                && ((patient.age != null && Number(patient.age) !== 0) || !!patient.dob);
+            if (!complete) {
+                return { outcome: 'incomplete', patientId: patient.id, tokenId: token.id };
+            }
+            const alreadyQueued = this.db.prepare(
+                `SELECT id FROM patient_queue WHERE patient_id = ? AND status != 'completed'`
+            ).get(patient.id) as any;
+            if (!alreadyQueued) {
+                this.addToQueue(patient.id, 1, actingUserId);
+            }
+            this.db.prepare(`UPDATE abdm_share_tokens SET status = 'accepted' WHERE id = ?`).run(token.id);
+            this.logAudit('UPDATE', 'abdm_share_tokens', token.id, actingUserId,
+                `Accepted Scan & Share token #${token.token_no} for ${token.patient_name}`);
+            const entry = this.db.prepare(
+                `SELECT id FROM patient_queue WHERE patient_id = ? AND status != 'completed' ORDER BY id DESC LIMIT 1`
+            ).get(patient.id) as any;
+            return { outcome: 'checked-in', patientId: patient.id, queueEntryId: entry?.id ?? null, tokenId: token.id };
         });
         return accept.immediate();
     }

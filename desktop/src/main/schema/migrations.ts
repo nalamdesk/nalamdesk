@@ -812,6 +812,27 @@ export const MIGRATIONS = [
         version: 17,
         up: (db: any) => {
             console.log('Running Migration v17 (ABHA uniqueness & LAN grants)...');
+            // Reconcile pre-existing case-insensitive duplicates before the
+            // unique index lands: keep the lowest-id holder, clear the rest.
+            // Clearing is safe here because the address stays on the kept row.
+            try {
+                const dupes = (db.prepare(`
+                    SELECT LOWER(abha_address) AS key, COUNT(*) AS n FROM patients
+                    WHERE abha_address IS NOT NULL GROUP BY key HAVING n > 1
+                `).all() || []);
+                if (dupes.length > 0) {
+                    console.log(`[Migration v17] Reconciling ${dupes.length} duplicated health ID(s); keeping the earliest record.`);
+                }
+                db.exec(`
+                    UPDATE patients SET abha_address = NULL, abha_name = NULL
+                    WHERE abha_address IS NOT NULL AND id NOT IN (
+                        SELECT MIN(id) FROM patients
+                        WHERE abha_address IS NOT NULL GROUP BY LOWER(abha_address)
+                    );
+                `);
+            } catch (e) {
+                console.error('[Migration v17] Duplicate reconciliation failed:', e);
+            }
             // One health ID belongs to exactly one patient (case-insensitive);
             // unlinked rows are unaffected by the partial index.
             try {
@@ -845,6 +866,23 @@ export const MIGRATIONS = [
                     if (role?.permissions) {
                         const permissions = new Set<string>(JSON.parse(role.permissions));
                         methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 18,
+        up: (db: any) => {
+            console.log('Running Migration v18 (atomic check-in LAN grant)...');
+            ['doctor', 'receptionist', 'admin'].forEach(roleName => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        permissions.add('abdmAcceptShareTokenAndCheckIn');
                         db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
                             .run(JSON.stringify([...permissions]), roleName);
                     }

@@ -46,6 +46,7 @@ const ALLOWED_IPC_METHODS = [
     'getMedications', 'saveMedication', 'deleteMedication',
     'getPatientSafetyContext',
     'abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken',
+    'abdmAcceptShareTokenAndCheckIn',
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha',
@@ -69,6 +70,7 @@ export class ApiServer {
             const db = this.dbService as any;
             const session = new AbdmSessionService({
                 getSettings: () => db.getSettings(),
+                getSecretProtected: () => db.getAbdmSecretProtected(),
                 saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
                 saveSecretProtected: (value: string) => db.saveAbdmSecretProtected(value),
                 keyStore: new ElectronSafeStorageDeviceKeyStore()

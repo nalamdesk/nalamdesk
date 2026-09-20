@@ -112,6 +112,7 @@ export class ApiServer {
                 if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
                 const result = db.saveSettings(patch);
                 session.invalidate();
+                abha.invalidateCert();
                 return result;
             }
             case 'abdmSetSecret':

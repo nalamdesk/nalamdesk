@@ -1,3 +1,5 @@
+import { AbdmSessionService } from './AbdmSessionService';
+
 export interface AbdmAbhaDeps {
     getSessionToken?: () => Promise<{ token: string; mock: boolean }>;
     gatewayBaseUrl?: () => string;
@@ -28,8 +30,14 @@ const PATHS = {
     enrolByMobile: '/v3/enrollment/enrol/byMobile',
     enrolVerify: '/v3/enrollment/enrol/verify',
     verifyAbha: '/v3/profile/account/verify',
-    abhaCard: '/v3/profile/account/abha-card'
+    abhaCard: '/v3/profile/account/abha-card',
+    // Gateway public key for encrypting enrollment identifiers (HIE-CM cert
+    // endpoint per public ABDM docs; reconfirm at live integration).
+    authCert: '/v3/auth/cert'
 };
+
+// Gateway certificates rotate infrequently; refetch at most daily.
+const CERT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const MOCK_OTP_HINT = 'Mock gateway: any 6-digit code is accepted.';
 
@@ -39,18 +47,36 @@ const MOCK_OTP_HINT = 'Mock gateway: any 6-digit code is accepted.';
  * served by the sandbox-shaped mock responder, flagged on every result.
  */
 export class AbdmAbhaService {
+    private certCache: { pem: string; baseUrl: string; fetchedAt: number } | null = null;
+
     constructor(private readonly deps: AbdmAbhaDeps = {}) { }
 
     private nowMs(): number {
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
 
-    private async authorized(path: string, body: unknown): Promise<{ json: any; mock: boolean }> {
+    // One session snapshot per operation: resolving it once guarantees the
+    // mock/live decision and the outgoing request can never disagree, even
+    // if the configuration flips mid-flight.
+    private async resolveSession(): Promise<{ token: string; mock: boolean }> {
         const getSession = this.deps.getSessionToken;
-        const session = getSession
-            ? await getSession()
-            : { token: `mock-abdm-token-${this.nowMs()}`, mock: true };
-        if (session.mock) {
+        if (!getSession) return { token: `mock-abdm-token-${this.nowMs()}`, mock: true };
+        return getSession();
+    }
+
+    /** Drops the cached gateway certificate (call when gateway config changes). */
+    invalidateCert(): void {
+        this.certCache = null;
+    }
+
+    private async authorized(
+        path: string,
+        body: unknown,
+        method = 'POST',
+        session?: { token: string; mock: boolean }
+    ): Promise<{ json: any; mock: boolean }> {
+        const active = session ?? await this.resolveSession();
+        if (active.mock) {
             return { json: this.mockRespond(path, body), mock: true };
         }
         const base = this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '';
@@ -58,9 +84,9 @@ export class AbdmAbhaService {
         let response: any;
         try {
             response = await fetchFn(`${base}${path}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
-                body: JSON.stringify(body || {})
+                method,
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${active.token}` },
+                body: method === 'GET' ? undefined : JSON.stringify(body || {})
             });
         } catch (error) {
             throw new Error(`ABDM gateway is unreachable: ${error instanceof Error ? error.message : String(error)}`);
@@ -69,6 +95,27 @@ export class AbdmAbhaService {
             throw new Error(`ABDM request rejected (HTTP ${response?.status || 'unknown'}).`);
         }
         return { json: await response.json(), mock: false };
+    }
+
+    // Fetches (and caches) the gateway public key used to encrypt enrollment
+    // identifiers on live calls. The cache is keyed by gateway base URL so an
+    // environment switch never reuses the previous environment's key. Mock
+    // sessions never reach this path.
+    private async getGatewayPublicKey(
+        session: { token: string; mock: boolean }
+    ): Promise<string> {
+        const baseUrl = this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '';
+        const cached = this.certCache;
+        if (cached && cached.baseUrl === baseUrl && this.nowMs() - cached.fetchedAt < CERT_CACHE_TTL_MS) {
+            return cached.pem;
+        }
+        const { json } = await this.authorized(PATHS.authCert, null, 'GET', session);
+        const pem = String(json?.publicKey || json?.public_key || json?.cert || '').trim();
+        if (!pem.includes('BEGIN PUBLIC KEY')) {
+            throw new Error('ABDM gateway did not return a usable public key.');
+        }
+        this.certCache = { pem, baseUrl, fetchedAt: this.nowMs() };
+        return pem;
     }
 
     /** Starts enrollment: sends an OTP for an Aadhaar number or mobile number. */
@@ -82,7 +129,14 @@ export class AbdmAbhaService {
             throw new Error('Mobile number must be 10 to 15 digits.');
         }
         const path = via === 'mobile' ? PATHS.enrolByMobile : PATHS.enrolByAadhaar;
-        const { json, mock } = await this.authorized(path, { [via === 'mobile' ? 'mobile' : 'aadhaar']: identifier });
+        // Live identifiers travel RSA-encrypted; mock traffic stays plaintext.
+        // The session is resolved once so the decision and the request agree.
+        const field = via === 'mobile' ? 'mobile' : 'aadhaar';
+        const session = await this.resolveSession();
+        const value = session.mock
+            ? identifier
+            : AbdmSessionService.encryptWithPublicKey(identifier, await this.getGatewayPublicKey(session));
+        const { json, mock } = await this.authorized(path, { [field]: value }, 'POST', session);
         const txnId = String(json?.txnId || json?.txn_id || '');
         if (!txnId) throw new Error('ABDM enrollment did not return a transaction.');
         return mock ? { txnId, mock, hint: MOCK_OTP_HINT } : { txnId, mock };

@@ -15,6 +15,8 @@ import { requireExistingRestoreAuthorization } from './services/RestoreAuthoriza
 import { CrashService } from './services/CrashService';
 import { SecurityService } from './services/SecurityService';
 import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './services/DeviceKeyStore';
+import { AbdmSessionService } from './services/AbdmSessionService';
+import { AbdmAbhaService } from './services/AbdmAbhaService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
 import { CloudSyncService } from './services/CloudSyncService';
@@ -135,6 +137,17 @@ autoUpdater.logger = log;
 // Services
 const securityService = new SecurityService(new ElectronSafeStorageDeviceKeyStore());
 const databaseService = new DatabaseService();
+const abdmSessionService = new AbdmSessionService({
+    getSettings: () => databaseService.getSettings(),
+    getSecretProtected: () => databaseService.getAbdmSecretProtected(),
+    saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
+    saveSecretProtected: (value) => databaseService.saveAbdmSecretProtected(value),
+    keyStore: new ElectronSafeStorageDeviceKeyStore()
+});
+const abdmAbhaService = new AbdmAbhaService({
+    getSessionToken: () => abdmSessionService.getSessionToken(),
+    gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl()
+});
 const credentialRotationService = new CredentialRotationService();
 const provisioningService = new ProvisioningService(securityService, databaseService);
 const googleDriveService = new GoogleDriveService();
@@ -816,6 +829,136 @@ handleDb('db:saveSettings', async (_, settings) => {
     }
 
     return result;
+});
+
+// ABDM gateway IPC handlers. Reads are open to any authenticated user (same
+// posture as settings reads); writes and connectivity checks are admin-only.
+// The plaintext secret never leaves the main process: readers only learn
+// whether one is stored.
+handleDb('db:abdmGetConfig', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return {
+        gateway_env: abdmSessionService.gatewayEnv(),
+        client_id: abdmSessionService.hasClientId()
+            ? databaseService.getSettings()?.abdm_client_id || ''
+            : '',
+        has_secret: abdmSessionService.hasStoredSecret(),
+        mock: abdmSessionService.isMockMode(),
+        hip_id: databaseService.getSettings()?.abdm_hip_id || '',
+        counter_id: databaseService.getSettings()?.abdm_counter_id || ''
+    };
+});
+handleDb('db:abdmSaveConfig', (_, config) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    const patch: Record<string, unknown> = {};
+    if (config && typeof config['gateway_env'] === 'string'
+        && ['sandbox', 'staging'].includes(config['gateway_env'] as string)) {
+        patch['abdm_gateway_env'] = config['gateway_env'];
+    }
+    if (config && typeof config['client_id'] === 'string') {
+        patch['abdm_client_id'] = (config['client_id'] as string).trim();
+    }
+    if (config && typeof config['hip_id'] === 'string') {
+        patch['abdm_hip_id'] = (config['hip_id'] as string).trim();
+    }
+    if (config && typeof config['counter_id'] === 'string') {
+        patch['abdm_counter_id'] = (config['counter_id'] as string).trim();
+    }
+    if (config && config['mock'] !== undefined) {
+        patch['abdm_mock'] = config['mock'] ? 1 : 0;
+    }
+    const result = databaseService.saveSettings(patch);
+    abdmSessionService.invalidate();
+    return result;
+});
+handleDb('db:abdmSetSecret', (_, payload) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    const secret = payload && typeof payload.secret === 'string' ? payload.secret : '';
+    return abdmSessionService.saveClientSecret(secret);
+});
+handleDb('db:abdmTestConnectivity', async () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return abdmSessionService.testConnectivity();
+});
+
+// ABDM health-ID IPC handlers. Front-desk roles only (doctor, receptionist,
+// admin): verifying and linking a health ID is part of intake, same posture
+// as saving a patient.
+function requireAbdmDeskRole(user: any) {
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return user;
+}
+handleDb('db:abdmAbhaRequestOtp', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    return abdmAbhaService.requestEnrollmentOtp(payload || {});
+});
+handleDb('db:abdmAbhaConfirmOtp', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return abdmAbhaService.confirmEnrollmentOtp(args.txnId, args.otp);
+});
+handleDb('db:abdmAbhaLookup', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return abdmAbhaService.lookupAddress(args.abhaAddress);
+});
+handleDb('db:abdmAbhaCard', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return abdmAbhaService.getCard(args.abhaAddress);
+});
+handleDb('db:abdmLinkAbha', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return databaseService.linkAbhaAddress(args.patientId, {
+        abhaAddress: args.abhaAddress ?? null,
+        abhaName: args.abhaName ?? null
+    }, user.id);
+});
+handleDb('db:abdmGetShareTokens', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return databaseService.getPendingShareTokens();
+});
+handleDb('db:abdmAcceptShareToken', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return databaseService.acceptShareToken(args.tokenId ?? args.id, user.id);
+});
+handleDb('db:abdmAcceptShareTokenAndCheckIn', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return databaseService.acceptShareTokenAndCheckIn(args.tokenId ?? args.id, user.id);
+});
+handleDb('db:findPatientByAbha', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return databaseService.findPatientByAbhaAddress(args.abhaAddress);
+});
+handleDb('db:abdmSimulateShare', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    if (!abdmSessionService.isMockMode()) {
+        throw new Error('Demo scans are only available while the mock gateway is active.');
+    }
+    const demo = Math.floor(1000 + Math.random() * 9000);
+    return databaseService.receiveAbhaShare({
+        name: 'Demo Patient',
+        age: 34,
+        gender: 'Female',
+        mobile: '9876500000',
+        abhaAddress: `demo.patient${demo}@sbx`,
+        abhaName: 'Demo Patient'
+    }, user.id);
 });
 
 // Queue IPC Handlers

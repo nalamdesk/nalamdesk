@@ -727,5 +727,167 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 13,
+        up: (db: any) => {
+            console.log('Running Migration v13 (ABDM gateway settings)...');
+            const abdmCols = [
+                'abdm_gateway_env TEXT',
+                'abdm_client_id TEXT',
+                'abdm_client_secret_protected TEXT',
+                'abdm_mock INTEGER DEFAULT 1'
+            ];
+            abdmCols.forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 14,
+        up: (db: any) => {
+            console.log('Running Migration v14 (patient ABHA link)...');
+            ['abha_address TEXT', 'abha_name TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE patients ADD COLUMN ${col}`); } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 15,
+        up: (db: any) => {
+            console.log('Running Migration v15 (ABDM share tokens & facility identity)...');
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_share_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token_no INTEGER NOT NULL,
+                    token_date TEXT NOT NULL DEFAULT (date('now', 'localtime')),
+                    patient_name TEXT NOT NULL,
+                    age INTEGER,
+                    gender TEXT,
+                    mobile TEXT,
+                    abha_address TEXT,
+                    abha_name TEXT,
+                    raw_payload TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    expires_at DATETIME
+                );
+            `);
+            db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_abdm_share_tokens_status
+                ON abdm_share_tokens(status, token_date);
+            `);
+            ['abdm_hip_id TEXT', 'abdm_counter_id TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 16,
+        up: (db: any) => {
+            console.log('Running Migration v16 (share-token LAN grants)...');
+            // Browser (LAN) sessions reach the share dock through /api/ipc,
+            // which enforces DB role permissions. Grant the three share
+            // methods to desk roles; nurses keep the two read methods.
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken'],
+                receptionist: ['abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken'],
+                admin: ['abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken'],
+                nurse: ['abdmGetShareTokens', 'findPatientByAbha']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 17,
+        up: (db: any) => {
+            console.log('Running Migration v17 (ABHA uniqueness & LAN grants)...');
+            // Reconcile pre-existing case-insensitive duplicates before the
+            // unique index lands: keep the lowest-id holder, clear the rest.
+            // Clearing is safe here because the address stays on the kept row.
+            try {
+                const dupes = (db.prepare(`
+                    SELECT LOWER(abha_address) AS key, COUNT(*) AS n FROM patients
+                    WHERE abha_address IS NOT NULL GROUP BY key HAVING n > 1
+                `).all() || []);
+                if (dupes.length > 0) {
+                    console.log(`[Migration v17] Reconciling ${dupes.length} duplicated health ID(s); keeping the earliest record.`);
+                }
+                db.exec(`
+                    UPDATE patients SET abha_address = NULL, abha_name = NULL
+                    WHERE abha_address IS NOT NULL AND id NOT IN (
+                        SELECT MIN(id) FROM patients
+                        WHERE abha_address IS NOT NULL GROUP BY LOWER(abha_address)
+                    );
+                `);
+            } catch (e) {
+                console.error('[Migration v17] Duplicate reconciliation failed:', e);
+            }
+            // One health ID belongs to exactly one patient (case-insensitive);
+            // unlinked rows are unaffected by the partial index.
+            try {
+                db.exec(`
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_abha_unique
+                    ON patients(LOWER(abha_address)) WHERE abha_address IS NOT NULL;
+                `);
+            } catch (e) { }
+            // Browser (LAN) sessions reach ABDM flows through /api/ipc, which
+            // enforces DB role permissions.
+            const grants: Record<string, string[]> = {
+                doctor: [
+                    'abdmGetConfig', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
+                    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha'
+                ],
+                receptionist: [
+                    'abdmGetConfig', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
+                    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha'
+                ],
+                admin: [
+                    'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret',
+                    'abdmTestConnectivity', 'abdmSimulateShare',
+                    'abdmAbhaLookup', 'abdmAbhaRequestOtp', 'abdmAbhaConfirmOtp',
+                    'abdmAbhaCard', 'abdmLinkAbha'
+                ],
+                nurse: ['abdmGetConfig', 'abdmAbhaLookup', 'abdmAbhaCard']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 18,
+        up: (db: any) => {
+            console.log('Running Migration v18 (atomic check-in LAN grant)...');
+            ['doctor', 'receptionist', 'admin'].forEach(roleName => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        permissions.add('abdmAcceptShareTokenAndCheckIn');
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

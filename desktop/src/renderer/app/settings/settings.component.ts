@@ -51,6 +51,16 @@ export class SettingsComponent implements OnInit {
   settingsSaved = false;
   isElectron = !!(window as any).electron;
 
+  // ABDM gateway (separate tab; secret handled via its own IPC, never in settings)
+  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string } =
+    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '' };
+  abdmSecret = '';
+  abdmTest: { ok: boolean; mode: string; detail: string; latencyMs?: number } | null = null;
+  abdmBusy = false;
+  abdmSaved = false;
+  qrDataUrl: string | null = null;
+  abdmSimResult: string | null = null;
+
   // Cloud
   cloudEnabled = false;
   cloudClinicId: string | null = null;
@@ -264,6 +274,9 @@ export class SettingsComponent implements OnInit {
     if (tab === 'audit') {
       this.loadAuditLogs();
     }
+    if (tab === 'abdm') {
+      this.loadAbdmConfig();
+    }
   }
 
   private dataService = inject(DataService);
@@ -360,6 +373,104 @@ export class SettingsComponent implements OnInit {
       await this.dataService.invoke('saveSettings', this.settings);
       this.ngZone.run(() => { this.settingsSaved = true; setTimeout(() => this.settingsSaved = false, 3000); });
     } catch (e) { console.error(e); }
+  }
+
+  async loadAbdmConfig() {
+    try {
+      const config = await this.dataService.invoke<any>('abdmGetConfig');
+      this.ngZone.run(() => {
+        if (config) {
+          this.abdmConfig = {
+            gateway_env: config.gateway_env || 'sandbox',
+            client_id: config.client_id || '',
+            has_secret: !!config.has_secret,
+            mock: config.mock !== false,
+            hip_id: config.hip_id || '',
+            counter_id: config.counter_id || ''
+          };
+          void this.generateQr();
+        }
+      });
+    } catch (e) { console.error(e); }
+  }
+
+  async saveAbdmConfig() {
+    if (this.abdmBusy) return;
+    this.abdmBusy = true;
+    try {
+      await this.dataService.invoke('abdmSaveConfig', {
+        gateway_env: this.abdmConfig.gateway_env,
+        client_id: this.abdmConfig.client_id,
+        hip_id: this.abdmConfig.hip_id || '',
+        counter_id: this.abdmConfig.counter_id || '',
+        mock: this.abdmConfig.mock !== false
+      });
+      this.ngZone.run(() => {
+        this.abdmSaved = true;
+        setTimeout(() => this.abdmSaved = false, 3000);
+      });
+      await this.loadAbdmConfig();
+    } catch (e) { console.error(e); }
+    finally { this.abdmBusy = false; }
+  }
+
+  async saveAbdmSecret() {
+    if (this.abdmBusy || !this.abdmSecret) return;
+    this.abdmBusy = true;
+    try {
+      await this.dataService.invoke('abdmSetSecret', { secret: this.abdmSecret });
+      this.ngZone.run(() => {
+        this.abdmSecret = '';
+        this.abdmSaved = true;
+        setTimeout(() => this.abdmSaved = false, 3000);
+      });
+      await this.loadAbdmConfig();
+    } catch (e) { console.error(e); }
+    finally { this.abdmBusy = false; }
+  }
+
+  async testAbdm() {
+    if (this.abdmBusy) return;
+    this.abdmBusy = true;
+    try {
+      const result = await this.dataService.invoke<any>('abdmTestConnectivity');
+      this.ngZone.run(() => { this.abdmTest = result; });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : 'Connectivity test failed.';
+      this.ngZone.run(() => { this.abdmTest = { ok: false, mode: 'error', detail }; });
+    } finally { this.abdmBusy = false; }
+  }
+
+  // Counter QR encodes the facility identity patients scan. Shape is
+  // documented in DEVELOPER_GUIDE alongside the tunnel setup.
+  async generateQr(): Promise<void> {
+    const hip = (this.abdmConfig.hip_id || '').trim();
+    const counter = (this.abdmConfig.counter_id || '').trim();
+    if (!hip || !counter) {
+      this.qrDataUrl = null;
+      return;
+    }
+    try {
+      const { default: QRCode } = await import('qrcode');
+      const payload = JSON.stringify({ app: 'NalamDesk Scan & Share', v: 1, hipId: hip, counterId: counter });
+      const url = await QRCode.toDataURL(payload, { width: 220, margin: 1 });
+      this.ngZone.run(() => { this.qrDataUrl = url; });
+    } catch (e) { console.error(e); }
+  }
+
+  async simulateShare() {
+    if (this.abdmBusy) return;
+    this.abdmBusy = true;
+    try {
+      const token: any = await this.dataService.invoke('abdmSimulateShare');
+      this.ngZone.run(() => {
+        this.abdmSimResult = `Demo scan queued as Token #${token?.token_no ?? '?'}. Check the Queue page.`;
+      });
+    } catch (e) {
+      this.ngZone.run(() => {
+        this.abdmSimResult = e instanceof Error ? e.message : 'Demo scan failed.';
+      });
+    } finally { this.abdmBusy = false; }
   }
 
   async loadUsers() {

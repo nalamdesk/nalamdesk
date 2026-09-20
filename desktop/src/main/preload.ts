@@ -90,7 +90,22 @@ contextBridge.exposeInMainWorld('electron', {
         updateMedicine: (input: any) => ipcRenderer.invoke('db:updateMedicine', input),
         retireCondition: (id: number) => ipcRenderer.invoke('db:retireCondition', id),
         retireMedicine: (id: number) => ipcRenderer.invoke('db:retireMedicine', id),
-        replaceConditionMedPresets: (input: any) => ipcRenderer.invoke('db:replaceConditionMedPresets', input)
+        replaceConditionMedPresets: (input: any) => ipcRenderer.invoke('db:replaceConditionMedPresets', input),
+        // ABDM gateway (M1): config, secrets, connectivity, health IDs, share tokens
+        abdmGetConfig: () => ipcRenderer.invoke('db:abdmGetConfig'),
+        abdmSaveConfig: (config: any) => ipcRenderer.invoke('db:abdmSaveConfig', config),
+        abdmSetSecret: (input: any) => ipcRenderer.invoke('db:abdmSetSecret', input),
+        abdmTestConnectivity: () => ipcRenderer.invoke('db:abdmTestConnectivity'),
+        abdmAbhaRequestOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaRequestOtp', input),
+        abdmAbhaConfirmOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaConfirmOtp', input),
+        abdmAbhaLookup: (input: any) => ipcRenderer.invoke('db:abdmAbhaLookup', input),
+        abdmAbhaCard: (input: any) => ipcRenderer.invoke('db:abdmAbhaCard', input),
+        abdmLinkAbha: (input: any) => ipcRenderer.invoke('db:abdmLinkAbha', input),
+        findPatientByAbha: (input: any) => ipcRenderer.invoke('db:findPatientByAbha', input),
+        abdmGetShareTokens: () => ipcRenderer.invoke('db:abdmGetShareTokens'),
+        abdmAcceptShareToken: (input: any) => ipcRenderer.invoke('db:abdmAcceptShareToken', input),
+        abdmAcceptShareTokenAndCheckIn: (input: any) => ipcRenderer.invoke('db:abdmAcceptShareTokenAndCheckIn', input),
+        abdmSimulateShare: () => ipcRenderer.invoke('db:abdmSimulateShare')
     },
     drive: {
         isAuthenticated: () => ipcRenderer.invoke('drive:isAuthenticated'),

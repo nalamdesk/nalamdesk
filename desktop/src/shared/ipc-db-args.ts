@@ -56,6 +56,14 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
         }
         case 'removeFromQueue':
             return [args[0], actingUserId];
+        case 'abdmAcceptShareToken': {
+            const payload = payloadObject(args[0]);
+            return [payload['tokenId'] ?? payload['id'], actingUserId];
+        }
+        case 'abdmAcceptShareTokenAndCheckIn': {
+            const payload = payloadObject(args[0]);
+            return [payload['tokenId'] ?? payload['id'], actingUserId];
+        }
         case 'saveVitals':
             return [args[0], actingUserId];
         default:

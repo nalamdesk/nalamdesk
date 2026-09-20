@@ -149,6 +149,84 @@ describe('QueueComponent', () => {
         expect(mockRouter.navigate).not.toHaveBeenCalled();
     });
 
+    it('loads pending scan tokens for the dock', async () => {
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'abdmGetShareTokens') {
+                return Promise.resolve([{ id: 1, token_no: 14, patient_name: 'Ramesh', abha_address: 'ramesh@sbx' }]);
+            }
+            return Promise.resolve([]);
+        });
+
+        await component.refreshShareTokens();
+
+        expect(component.shareTokens).toHaveLength(1);
+        expect(component.shareTokens[0].token_no).toBe(14);
+    });
+
+    it('checks in a scan through one atomic call', async () => {
+        const token = { id: 3, token_no: 15, patient_name: 'Ramesh', abha_address: 'ramesh@sbx' };
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'abdmAcceptShareTokenAndCheckIn') {
+                return Promise.resolve({ outcome: 'checked-in', patientId: 9, queueEntryId: 11, tokenId: 3 });
+            }
+            if (endpoint === 'abdmGetShareTokens') return Promise.resolve([]);
+            if (endpoint === 'getQueue') return Promise.resolve([]);
+            return Promise.resolve(null);
+        });
+
+        await component.acceptShareToken(token);
+
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmAcceptShareTokenAndCheckIn', { tokenId: 3 });
+        expect(mockDialogService.open).not.toHaveBeenCalled();
+        expect(component.acceptingTokenId).toBeNull();
+    });
+
+    it('opens the chart when the atomic check-in reports incomplete demographics', async () => {
+        const token = { id: 5, token_no: 17, patient_name: 'NoMobile' };
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'abdmAcceptShareTokenAndCheckIn') {
+                return Promise.resolve({ outcome: 'incomplete', patientId: 22, tokenId: 5 });
+            }
+            return Promise.resolve(null);
+        });
+
+        await component.acceptShareToken(token);
+
+        expect(mockRouter.navigate).toHaveBeenCalledWith(['/patients', 22]);
+        expect(component.acceptingTokenId).toBeNull();
+    });
+
+    it('reports atomic check-in failures without partial states', async () => {
+        const token = { id: 6, token_no: 18, patient_name: 'Ramesh' };
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'abdmAcceptShareTokenAndCheckIn') {
+                return Promise.reject(new Error('Token has expired. Ask the patient to scan again.'));
+            }
+            return Promise.resolve(null);
+        });
+
+        await component.acceptShareToken(token);
+
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Could not check in',
+            type: 'error'
+        }));
+        expect(mockRouter.navigate).not.toHaveBeenCalled();
+    });
+
+    it('ignores Space while typing but accepts the oldest token when idle', async () => {
+        component.shareTokens = [{ id: 6, token_no: 18, patient_name: 'Ramesh' }];
+        const acceptSpy = vi.spyOn(component, 'acceptShareToken').mockResolvedValue(undefined);
+        const inInput = { key: ' ', target: { tagName: 'INPUT' }, preventDefault: vi.fn() } as any;
+        expect(component.acceptFirstTokenIfIdle(inInput)).toBe(false);
+        expect(acceptSpy).not.toHaveBeenCalled();
+
+        const idle = { key: ' ', target: { tagName: 'DIV' }, preventDefault: vi.fn() } as any;
+        expect(component.acceptFirstTokenIfIdle(idle)).toBe(true);
+        expect(idle.preventDefault).toHaveBeenCalled();
+        expect(acceptSpy).toHaveBeenCalledWith(component.shareTokens[0]);
+    });
+
     it('surfaces remove-from-queue failures in the in-app dialog instead of alert', async () => {
         vi.spyOn(window, 'confirm').mockReturnValue(true);
         mockDataService.invoke.mockRejectedValue(new Error('Cannot remove a queue entry with an active encounter'));
@@ -311,8 +389,7 @@ describe('QueueComponent', () => {
         expect(mockRouter.navigate).not.toHaveBeenCalled();
     });
 
-    it('warns when admin starts a consultation with no active doctor on file', async () => {
-        mockAuthService.getUser.mockReturnValue({ role: 'admin', id: 99 });
+    it('warns when admin starts a consultation with no active doctor on file', async () => {        mockAuthService.getUser.mockReturnValue({ role: 'admin', id: 99 });
         mockDataService.invoke.mockImplementation((endpoint: string) => {
             if (endpoint === 'getDoctors') return Promise.resolve([]);
             return Promise.resolve(null);

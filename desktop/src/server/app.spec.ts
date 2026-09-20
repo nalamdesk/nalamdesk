@@ -184,3 +184,142 @@ describe('hash SPA fallback', () => {
         expect(response.headers.location).toBe('/#/patients?editId=5');
     });
 });
+
+describe('ABDM Scan & Share callback', () => {
+    let server: ApiServer;
+    let db: any;
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            receiveAbhaShare: vi.fn().mockReturnValue({ id: 1, token_no: 3 })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    it('queues a valid profile share with 202 without authentication', async () => {
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/patients/profile/share',
+            payload: { name: 'Ramesh Kumar', abhaAddress: 'ramesh@sbx' }
+        });
+        expect(response.statusCode).toBe(202);
+        expect(response.json()).toMatchObject({ status: 'queued', tokenNo: 3 });
+        expect(db.receiveAbhaShare).toHaveBeenCalledWith(
+            expect.objectContaining({ name: 'Ramesh Kumar' })
+        );
+    });
+
+    it('rejects a nameless payload with 400', async () => {
+        db.receiveAbhaShare.mockImplementation(() => {
+            throw new Error('Shared profile must include a patient name.');
+        });
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/patients/profile/share',
+            payload: { abhaAddress: 'nobody@sbx' }
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error).toContain('patient name');
+    });
+
+    it('rate-limits share floods with 429', async () => {
+        for (let i = 0; i < 30; i += 1) {
+            const response = await server.inject({
+                method: 'POST',
+                url: '/abdm/v0.5/patients/profile/share',
+                payload: { name: `Patient ${i}` }
+            });
+            expect(response.statusCode).toBe(202);
+        }
+        const throttled = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/patients/profile/share',
+            payload: { name: 'Patient overflow' }
+        });
+        expect(throttled.statusCode).toBe(429);
+    });
+});
+
+describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
+    let server: ApiServer;
+    let db: any;
+    let savedSettings: any[];
+
+    beforeEach(() => {
+        savedSettings = [];
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            getPermissions: vi.fn().mockImplementation((role: string) => role === 'receptionist'
+                ? ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig']
+                : []),
+            getSettings: vi.fn().mockReturnValue({}),
+            saveSettings: vi.fn().mockImplementation((patch: any) => {
+                savedSettings.push(patch);
+                return { changes: 1 };
+            }),
+            saveAbdmSecretProtected: vi.fn(),
+            linkAbhaAddress: vi.fn().mockReturnValue({ id: 7 })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    function postIpc(method: string, args: unknown[], role = 'admin') {
+        return server.inject({
+            method: 'POST',
+            url: `/api/ipc/${method}`,
+            headers: {
+                authorization: authHeader({ id: 7, role }),
+                'content-type': 'application/json'
+            },
+            payload: args
+        });
+    }
+
+    it('serves ABDM config and lookup over LAN in mock mode', async () => {
+        const config = await postIpc('abdmGetConfig', []);
+        expect(config.statusCode).toBe(200);
+        expect(config.json()).toMatchObject({ mock: true });
+
+        const lookup = await postIpc('abdmAbhaLookup', [{ abhaAddress: 'demo@sbx' }]);
+        expect(lookup.statusCode).toBe(200);
+        expect(lookup.json().mock).toBe(true);
+    });
+
+    it('saves ABDM config over LAN for admins', async () => {
+        const response = await postIpc('abdmSaveConfig', [{
+            gateway_env: 'staging', client_id: 'CID', mock: false
+        }]);
+        expect(response.statusCode).toBe(200);
+        expect(savedSettings[0]).toMatchObject({
+            abdm_gateway_env: 'staging', abdm_client_id: 'CID', abdm_mock: 0
+        });
+    });
+
+    it('forbids ABDM config writes for non-admin LAN roles', async () => {
+        const response = await postIpc('abdmSaveConfig', [{ gateway_env: 'staging' }], 'doctor');
+        expect(response.statusCode).toBe(403);
+    });
+
+    it('links health IDs over LAN for desk roles', async () => {
+        const response = await postIpc('abdmLinkAbha', [
+            { patientId: 7, abhaAddress: 'asha@sbx', abhaName: 'Asha' }
+        ], 'receptionist');
+        expect(response.statusCode).toBe(200);
+        expect(db.linkAbhaAddress).toHaveBeenCalledWith(
+            7,
+            expect.objectContaining({ abhaAddress: 'asha@sbx' }),
+            expect.anything()
+        );
+    });
+});

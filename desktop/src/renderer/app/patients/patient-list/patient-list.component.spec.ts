@@ -106,6 +106,34 @@ describe('PatientListComponent', () => {
         expect(component.isEditMode).toBe(true);
     });
 
+    it('should keep the form valid without an address for rapid intake', () => {
+        component.openAddModal();
+        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30 });
+        expect(component.patientForm.valid).toBe(true);
+    });
+
+    it('should save and queue a new walk-in in one action', async () => {
+        component.openAddModal();
+        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30 });
+
+        await component.savePatient(true);
+
+        expect(mockPatientService.savePatient).toHaveBeenCalled();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('addToQueue', { patientId: 1, priority: 1 });
+        expect(component.showModal).toBe(false);
+        expect(component.isEnqueued({ id: 1 } as any)).toBe(true);
+    });
+
+    it('should save without queueing when asked', async () => {
+        component.openAddModal();
+        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30 });
+
+        await component.savePatient(false);
+
+        expect(mockPatientService.savePatient).toHaveBeenCalled();
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('addToQueue', expect.anything());
+    });
+
     it('should calculate minDate as 110 years ago', () => {
         const minDate = component.minDate;
         const currentYear = new Date().getFullYear();

@@ -27,6 +27,13 @@ interface CachedSession {
     token: string;
     expiresAt: number;
     mock: boolean;
+    baseUrl: string;
+}
+
+export interface AbdmSessionSnapshot {
+    token: string;
+    mock: boolean;
+    baseUrl: string;
 }
 
 /**
@@ -40,7 +47,7 @@ interface CachedSession {
  */
 export class AbdmSessionService {
     private cached: CachedSession | null = null;
-    private inflight: Promise<CachedSession> | null = null;
+    private inflight: { baseUrl: string; promise: Promise<CachedSession> } | null = null;
 
     constructor(private readonly deps: AbdmSessionDeps = {}) { }
 
@@ -115,23 +122,47 @@ export class AbdmSessionService {
         return keyStore.unprotect(Buffer.from(String(protectedValue), 'base64')).toString('utf8');
     }
 
+    // Settings inputs are snapshotted synchronously at call entry, so a
+    // mid-flight configuration change cannot mix one environment's
+    // credentials with another's endpoint. Cache and in-flight requests are
+    // scoped per base URL; invalidation only detaches them (held promises
+    // still settle for their original awaiters).
+    private snapshotSettings(): { baseUrl: string; mock: boolean } {
+        return { baseUrl: this.gatewayBaseUrl(), mock: this.isMockMode() };
+    }
+
     /** Returns a valid session token, refreshing proactively before expiry. */
-    async getSessionToken(): Promise<{ token: string; mock: boolean }> {
+    async getSessionToken(): Promise<AbdmSessionSnapshot> {
+        const { baseUrl, mock } = this.snapshotSettings();
+        if (mock) {
+            return { token: `mock-abdm-token-${this.nowMs()}`, mock: true, baseUrl };
+        }
         const cached = this.cached;
-        if (cached && this.nowMs() < cached.expiresAt - PROACTIVE_REFRESH_MS) {
-            return { token: cached.token, mock: cached.mock };
+        if (cached && cached.baseUrl === baseUrl && !cached.mock
+            && this.nowMs() < cached.expiresAt - PROACTIVE_REFRESH_MS) {
+            return { token: cached.token, mock: cached.mock, baseUrl: cached.baseUrl };
         }
-        if (!this.inflight) {
-            this.inflight = this.openSession().finally(() => {
-                this.inflight = null;
-            });
+        const flight = this.inflight;
+        if (flight && flight.baseUrl === baseUrl) {
+            const joined = await flight.promise;
+            return { token: joined.token, mock: joined.mock, baseUrl: flight.baseUrl };
         }
-        const session = await this.inflight;
-        return { token: session.token, mock: session.mock };
+        const next: { baseUrl: string; promise: Promise<CachedSession> } = {
+            baseUrl,
+            promise: this.openSession(baseUrl)
+        };
+        this.inflight = next;
+        try {
+            const session = await next.promise;
+            return { token: session.token, mock: session.mock, baseUrl: next.baseUrl };
+        } finally {
+            if (this.inflight === next) this.inflight = null;
+        }
     }
 
     invalidate(): void {
         this.cached = null;
+        this.inflight = null;
     }
 
     /** Lightweight connectivity probe used by the Settings test button. */
@@ -170,21 +201,12 @@ export class AbdmSessionService {
         ).toString('base64');
     }
 
-    private async openSession(): Promise<CachedSession> {
-        if (this.isMockMode()) {
-            const session: CachedSession = {
-                token: `mock-abdm-token-${this.nowMs()}`,
-                expiresAt: this.nowMs() + ABDM_MOCK_TOKEN_TTL_MS,
-                mock: true
-            };
-            this.cached = session;
-            return session;
-        }
+    private async openSession(baseUrl: string): Promise<CachedSession> {
         const clientId = String(this.settings.abdm_client_id || '').trim();
         if (!clientId) throw new Error('ABDM Client ID is not configured.');
         const clientSecret = this.readClientSecret();
         const fetchFn = this.deps.fetchFn || fetch;
-        const url = `${this.gatewayBaseUrl()}/api/hiecm/gateway/v3/sessions`;
+        const url = `${baseUrl}/api/hiecm/gateway/v3/sessions`;
         let response: any;
         try {
             response = await fetchFn(url, {
@@ -204,7 +226,7 @@ export class AbdmSessionService {
         const ttlMs = Number(body?.expiresIn || body?.expires_in) > 0
             ? Number(body.expiresIn || body.expires_in) * 1000
             : ABDM_MOCK_TOKEN_TTL_MS;
-        const session: CachedSession = { token: String(token), expiresAt: this.nowMs() + ttlMs, mock: false };
+        const session: CachedSession = { token: String(token), expiresAt: this.nowMs() + ttlMs, mock: false, baseUrl };
         this.cached = session;
         return session;
     }

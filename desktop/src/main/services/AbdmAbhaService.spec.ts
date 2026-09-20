@@ -137,4 +137,79 @@ describe('AbdmAbhaService (mock gateway)', () => {
         await expect(svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' }))
             .rejects.toThrow('usable public key');
     });
+
+    it('uses one session snapshot so a mid-flight flip cannot leak plaintext', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ txnId: 'should-not-happen' })
+        });
+        let calls = 0;
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => {
+                calls += 1;
+                return calls === 1 ? { token: 'mock-token', mock: true } : { token: 'live-token', mock: false };
+            },
+            gatewayBaseUrl: () => 'https://gateway.example',
+            fetchFn
+        });
+        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
+        expect(started.mock).toBe(true);
+        expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it('scopes the certificate cache to the gateway environment', async () => {
+        const { generateKeyPairSync } = await import('node:crypto');
+        const keypair = (env: string) => generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        const sandboxKeys = keypair('sandbox');
+        const stagingKeys = keypair('staging');
+        let env = 'sandbox';
+        const certCalls: string[] = [];
+        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
+            if (String(url).endsWith('/v3/auth/cert')) {
+                certCalls.push(env);
+                const keys = env === 'sandbox' ? sandboxKeys : stagingKeys;
+                return { ok: true, json: async () => ({ publicKey: keys.publicKey }) };
+            }
+            return { ok: true, json: async () => ({ txnId: 'live-txn-env' }) };
+        });
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => ({ token: 'live-token', mock: false }),
+            gatewayBaseUrl: () => `https://${env}.example`,
+            fetchFn
+        });
+
+        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
+        env = 'staging';
+        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
+        expect(certCalls).toEqual(['sandbox', 'staging']);
+    });
+
+    it('refetches the certificate after explicit invalidation', async () => {
+        const { generateKeyPairSync } = await import('node:crypto');
+        const { publicKey } = generateKeyPairSync('rsa', {
+            modulusLength: 2048,
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
+            if (String(url).endsWith('/v3/auth/cert')) {
+                return { ok: true, json: async () => ({ publicKey }) };
+            }
+            return { ok: true, json: async () => ({ txnId: 'live-txn-inv' }) };
+        });
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => ({ token: 'live-token', mock: false }),
+            gatewayBaseUrl: () => 'https://gateway.example',
+            fetchFn
+        });
+
+        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        svc.invalidateCert();
+        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/auth/cert'))).toHaveLength(2);
+    });
 });

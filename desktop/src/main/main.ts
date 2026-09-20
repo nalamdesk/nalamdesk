@@ -872,6 +872,7 @@ handleDb('db:abdmSaveConfig', (_, config) => {
     }
     const result = databaseService.saveSettings(patch);
     abdmSessionService.invalidate();
+    abdmAbhaService.invalidateCert();
     return result;
 });
 handleDb('db:abdmSetSecret', (_, payload) => {

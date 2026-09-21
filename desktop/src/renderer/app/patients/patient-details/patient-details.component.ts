@@ -556,7 +556,7 @@ import { newRequestId } from '../../services/request-id';
                     <button (click)="exportHealthRecord()" class="px-4 py-2 bg-white border border-gray-300 rounded font-medium hover:bg-gray-100 transition">
                         Export Record
                     </button>
-                    <button (click)="transferHealthRecord()" [disabled]="transferBusy" class="px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded font-medium hover:bg-blue-50 transition disabled:opacity-50">
+                    <button (click)="transferHealthRecord()" [disabled]="transferBusy" *ngIf="canTransfer" class="px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded font-medium hover:bg-blue-50 transition disabled:opacity-50">
                         {{ transferBusy ? 'Sending...' : 'Secure Share' }}
                     </button>
 
@@ -1174,14 +1174,18 @@ export class PatientDetailsComponent implements OnInit {
     }
 
     // Resolves the registry ID that belongs to the visit's own doctor: the
-    // doctor's own record first; the deployment default only when the clinic
-    // has exactly one doctor (unambiguous); otherwise omitted rather than
-    // misattributed.
+    // doctor's own record first; the deployment default only when the single
+    // doctor on file IS the visit's author (verified by id match, so a
+    // deactivated author's record can never inherit another doctor's ID);
+    // otherwise omitted rather than misattributed.
     private resolveVisitHprId(visit: any, doctors: any[], deploymentHprId?: string): string | undefined {
         const match = (doctors || []).find((d: any) => Number(d?.id) === Number(visit?.doctor_id));
         if (match?.abdm_hpr_id) return String(match.abdm_hpr_id);
         const activeDoctors = (doctors || []).filter((d: any) => d && Number(d.id) > 0);
-        if (deploymentHprId && activeDoctors.length === 1) return deploymentHprId;
+        if (deploymentHprId && activeDoctors.length === 1
+            && Number(activeDoctors[0].id) === Number(visit?.doctor_id)) {
+            return deploymentHprId;
+        }
         return undefined;
     }
 
@@ -1261,6 +1265,12 @@ export class PatientDetailsComponent implements OnInit {
     }
 
     transferBusy = false;
+
+    // Mirrors the doctor/admin gate on the transfer handler: roles that
+    // would only ever see Forbidden never see the button.
+    get canTransfer(): boolean {
+        return this.currentUser?.role === 'doctor' || this.currentUser?.role === 'admin';
+    }
 
     // Encrypts the current receipt bundle for the configured recipient and
     // pushes it. Without a live endpoint the transfer loopbacks on-device

@@ -596,6 +596,26 @@ describe('PatientDetailsComponent', () => {
         expect((component as any).resolveVisitHprId(visit, [], 'HPR-DEPLOY')).toBeUndefined();
     });
 
+    it('never assigns the fallback to a deactivated author', () => {
+        // The visit author is gone; the one remaining active doctor is
+        // someone else. The deployment ID must not attach to the wrong name.
+        const visit = { id: 9, doctor_id: 10 };
+        expect((component as any).resolveVisitHprId(
+            visit, [{ id: 11, name: 'Dr. Other', abdm_hpr_id: 'HPR-OTHER' }], 'HPR-DEPLOY'))
+            .toBeUndefined();
+    });
+
+    it('hides Secure Share from roles that cannot invoke it', () => {
+        component.currentUser = { id: 5, role: 'receptionist', name: 'Front Desk' };
+        expect(component.canTransfer).toBe(false);
+        component.currentUser = { id: 7, role: 'nurse', name: 'Nurse' };
+        expect(component.canTransfer).toBe(false);
+        component.currentUser = { id: 10, role: 'doctor', name: 'Dr. Smith' };
+        expect(component.canTransfer).toBe(true);
+        component.currentUser = { id: 99, role: 'admin', name: 'Admin' };
+        expect(component.canTransfer).toBe(true);
+    });
+
     it('identifies the exported encounter with its care context reference', () => {
         component.patient = { id: 1, name: 'Asha' };
         component.currentUser = { id: 10, name: 'Dr. Smith' };

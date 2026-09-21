@@ -145,15 +145,17 @@ export class FideliusService {
         const at = new Date(this.nowMs()).toISOString();
         const target = String(endpoint || '').trim();
         if (!target) {
-            // Mock loopback: prove the crypto pipeline with a throwaway
-            // recipient pair before claiming anything about the envelope.
-            const canaryKeys = crypto.generateKeyPairSync('x25519');
-            const canaryRaw = (canaryKeys.publicKey as crypto.KeyObject)
+            // Mock loopback: prove THIS bundle round-trips by sealing it to a
+            // throwaway recipient pair and opening it again. A mismatch means
+            // the payload itself cannot survive the pipeline — reported, not
+            // delivered.
+            const testKeys = crypto.generateKeyPairSync('x25519');
+            const testRaw = (testKeys.publicKey as crypto.KeyObject)
                 .export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
-            const canary = this.encryptBundle({ canary: true }, canaryRaw);
-            const opened = this.decryptEnvelope(canary, (canaryKeys.privateKey as crypto.KeyObject)
+            const testEnvelope = this.encryptBundle(bundle, testRaw);
+            const opened = this.decryptEnvelope(testEnvelope, (testKeys.privateKey as crypto.KeyObject)
                 .export({ type: 'pkcs8', format: 'pem' }).toString()) as any;
-            if (!opened || opened.canary !== true) {
+            if (JSON.stringify(opened) !== JSON.stringify(bundle ?? null)) {
                 throw new Error('Local crypto self-test failed; transfer aborted.');
             }
             return { status: 'mock-loopback', bytes, keyId: envelope.keyId, endpoint: 'mock-loopback', at };

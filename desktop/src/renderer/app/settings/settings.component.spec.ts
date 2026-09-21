@@ -352,4 +352,70 @@ describe('SettingsComponent Validation', () => {
             mock: false
         }));
     });
+
+    it('sends registry identifiers with the config', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmConfig.hfr_id = 'HFR-1';
+        component.abdmConfig.hpr_id = 'HPR-2';
+
+        await component.saveAbdmConfig();
+
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({
+            hfr_id: 'HFR-1',
+            hpr_id: 'HPR-2'
+        }));
+    });
+
+    it('loads and acknowledges inbox callbacks', async () => {
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmGetInbox') {
+                return Promise.resolve([{ id: 3, kind: 'consent-request', created_at: '2026-09-20 10:00:00' }]);
+            }
+            if (method === 'abdmAckInbox') return Promise.resolve({ status: 'handled' });
+            return Promise.resolve(null);
+        });
+
+        await component.loadInbox();
+        expect(component.inboxItems).toHaveLength(1);
+
+        await component.ackInbox(3);
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmAckInbox', { id: 3 });
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmGetInbox');
+    });
+
+    it('sends a recipient key only when the field holds a new one', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmRecipientKey = '';
+        component.abdmConfig.hip_endpoint = 'https://hip.example/push';
+
+        await component.saveAbdmConfig();
+
+        const payload = mockData.invoke.mock.calls
+            .find((call: any[]) => call[0] === 'abdmSaveConfig')[1];
+        expect(payload.hip_endpoint).toBe('https://hip.example/push');
+        expect('recipient_key' in payload).toBe(false);
+
+        component.abdmRecipientKey = 'QUJD';
+        await component.saveAbdmConfig();
+        const payload2 = mockData.invoke.mock.calls
+            .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
+        expect(payload2.recipient_key).toBe('QUJD');
+    });
+
+    it('sends a callback password only when the field holds a new one', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmCallbackSecret = '';
+
+        await component.saveAbdmConfig();
+
+        const payload = mockData.invoke.mock.calls
+            .find((call: any[]) => call[0] === 'abdmSaveConfig')[1];
+        expect('callback_secret' in payload).toBe(false);
+
+        component.abdmCallbackSecret = 'a-very-long-shared-secret';
+        await component.saveAbdmConfig();
+        const payload2 = mockData.invoke.mock.calls
+            .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
+        expect(payload2.callback_secret).toBe('a-very-long-shared-secret');
+    });
 });

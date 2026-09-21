@@ -12,6 +12,7 @@ import { invokeDbMethod } from '../shared/ipc-db-args';
 import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmSessionService } from '../main/services/AbdmSessionService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
+import { FideliusService } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
 
 loadDevelopmentEnv();
@@ -26,7 +27,7 @@ const JWT_SECRET = process.env['JWT_SECRET'] || crypto.randomBytes(64).toString(
 const ABDM_SERVICE_METHODS = new Set([
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
-    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha'
+    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle'
 ]);
 
 const ALLOWED_IPC_METHODS = [
@@ -46,7 +47,7 @@ const ALLOWED_IPC_METHODS = [
     'getMedications', 'saveMedication', 'deleteMedication',
     'getPatientSafetyContext',
     'abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken',
-    'abdmAcceptShareTokenAndCheckIn',
+    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox', 'abdmTransferBundle',
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha',
@@ -97,7 +98,12 @@ export class ApiServer {
                     has_secret: session.hasStoredSecret(),
                     mock: session.isMockMode(),
                     hip_id: settings.abdm_hip_id || '',
-                    counter_id: settings.abdm_counter_id || ''
+                    counter_id: settings.abdm_counter_id || '',
+                    hfr_id: settings.abdm_hfr_id || '',
+                    hpr_id: settings.abdm_hpr_id || '',
+                    hip_endpoint: settings.abdm_hip_endpoint || '',
+                    has_recipient_key: !!settings.abdm_recipient_key,
+                    has_callback_secret: db.hasCallbackSecret()
                 };
             }
             case 'abdmSaveConfig': {
@@ -109,6 +115,39 @@ export class ApiServer {
                 if (typeof payload['client_id'] === 'string') patch['abdm_client_id'] = String(payload['client_id']).trim();
                 if (typeof payload['hip_id'] === 'string') patch['abdm_hip_id'] = String(payload['hip_id']).trim();
                 if (typeof payload['counter_id'] === 'string') patch['abdm_counter_id'] = String(payload['counter_id']).trim();
+                for (const key of ['hfr_id', 'hpr_id']) {
+                    if (typeof payload[key] === 'string') {
+                        if (String(payload[key]).trim().length > 100) {
+                            throw new Error('Registry IDs must be under 100 characters.');
+                        }
+                        patch[`abdm_${key}`] = String(payload[key]).trim();
+                    }
+                }
+                if (typeof payload['hip_endpoint'] === 'string') {
+                    const endpoint = String(payload['hip_endpoint']).trim();
+                    if (endpoint && !/^https:\/\//.test(endpoint)) {
+                        throw new Error('Transfer endpoint must be an https URL.');
+                    }
+                    patch['abdm_hip_endpoint'] = endpoint;
+                }
+                if (typeof payload['recipient_key'] === 'string') {
+                    const key = String(payload['recipient_key']).trim();
+                    if (key) {
+                        if (Buffer.from(key, 'base64').length !== 32) {
+                            throw new Error('Recipient key must be a 32-byte X25519 public key.');
+                        }
+                        patch['abdm_recipient_key'] = key;
+                    }
+                }
+                if (typeof payload['callback_secret'] === 'string') {
+                    const secret = String(payload['callback_secret']).trim();
+                    if (secret) {
+                        if (secret.length < 16) {
+                            throw new Error('Callback password must be at least 16 characters.');
+                        }
+                        patch['abdm_callback_secret'] = secret;
+                    }
+                }
                 if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
                 const result = db.saveSettings(patch);
                 session.invalidate();
@@ -142,6 +181,16 @@ export class ApiServer {
                     abhaAddress: payload['abhaAddress'] ?? null,
                     abhaName: payload['abhaName'] ?? null
                 }, user?.id);
+            case 'abdmTransferBundle': {
+                const recipientKey = db.getSettings()?.abdm_recipient_key || '';
+                if (!recipientKey) {
+                    throw new Error('No recipient key configured. Add one under Settings → ABDM first.');
+                }
+                if (!payload['bundle']) throw new Error('A health record bundle is required.');
+                const fidelius = new FideliusService();
+                return fidelius.pushBundle(
+                    payload['bundle'], recipientKey, db.getSettings()?.abdm_hip_endpoint || '');
+            }
             default:
                 throw new Error(`Method not implemented: ${method}`);
         }
@@ -268,6 +317,30 @@ export class ApiServer {
                     return reply.code(202).send({ status: 'queued', tokenNo: (token as any)?.token_no });
                 } catch (e: any) {
                     return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid share payload.' });
+                }
+            });
+
+        // Generic ABDM callback inbox (consent events, data-share notices).
+        // Same posture as the share route: validated, rate-limited, and
+        // stored for explicit human handling — never auto-applied. When a
+        // callback secret is configured, the sender must prove knowledge of
+        // it; otherwise the route stays open for sandbox testing.
+        this.fastify.post('/abdm/v0.5/callbacks/:kind',
+            { bodyLimit: 8192 },
+            async (request: any, reply: any) => {
+                if (!this.shareCallbackAllowed(`${request.ip || 'unknown'}:inbox`)) {
+                    return reply.code(429).send({ error: 'Too many callbacks. Slow down and retry.' });
+                }
+                const liveCallbacks = !this.abdmServices().session.isMockMode();
+                if (!this.dbService.callbackSecretMatches(request.headers?.['x-callback-token'], liveCallbacks)) {
+                    return reply.code(401).send({ error: 'Callback authentication required.' });
+                }
+                try {
+                    const row = this.dbService.receiveInboxCallback(
+                        (request.params as any)?.kind, request.body);
+                    return reply.code(202).send({ status: 'queued', id: (row as any)?.id });
+                } catch (e: any) {
+                    return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid callback.' });
                 }
             });
 

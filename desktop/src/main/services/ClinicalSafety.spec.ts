@@ -662,6 +662,40 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 .toThrow('already linked');
         });
 
+        it('matches callback secrets in constant time and stays open without one', () => {
+            expect(service.callbackSecretMatches(undefined)).toBe(true);
+
+            service.saveSettings({ abdm_callback_secret: 's3cret-shared-token' });
+            expect(service.hasCallbackSecret()).toBe(true);
+            expect(service.callbackSecretMatches('s3cret-shared-token')).toBe(true);
+            expect(service.callbackSecretMatches('wrong')).toBe(false);
+            expect(service.callbackSecretMatches(undefined)).toBe(false);
+        });
+
+        it('requires the callback password in strict live mode', () => {
+            expect(service.callbackSecretMatches(undefined, true)).toBe(false);
+
+            service.saveSettings({ abdm_callback_secret: 's3cret-shared-token' });
+            expect(service.callbackSecretMatches('s3cret-shared-token', true)).toBe(true);
+            expect(service.callbackSecretMatches('wrong', true)).toBe(false);
+        });
+
+        it('preserves per-doctor registry IDs across unrelated edits', async () => {
+            await service.saveUser({
+                username: 'drhpr', password: 'Password1!', role: 'doctor',
+                name: 'Dr. HPR', abdm_hpr_id: 'HPR-DOC-1'
+            }, 99);
+            const doctors = service.getDoctors() as any[];
+            const match = doctors.find((d) => d.username === 'drhpr');
+            expect(match?.abdm_hpr_id).toBe('HPR-DOC-1');
+
+            // An edit payload without the field must not wipe the stored ID.
+            await service.saveUser({ id: match.id, username: 'drhpr', role: 'doctor', name: 'Dr. HPR Updated' }, 99);
+            const reloaded = (service.getDoctors() as any[]).find((d) => d.username === 'drhpr');
+            expect(reloaded?.abdm_hpr_id).toBe('HPR-DOC-1');
+            expect(reloaded?.name).toBe('Dr. HPR Updated');
+        });
+
         it('checks in a token atomically: claim, match-or-create, and queue together', () => {
             db.prepare(`INSERT INTO patients (uuid, name, mobile, age, gender, abha_address)
                 VALUES ('p-atomic', 'Ramesh Kumar', '9876543210', 42, 'Male', 'ramesh@sbx')`).run();
@@ -700,6 +734,52 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(db.prepare(`SELECT count(*) AS n FROM patients WHERE name = 'Sita'`).get().n).toBe(1);
             expect(db.prepare(`SELECT count(*) AS n FROM patient_queue WHERE patient_id = ?`)
                 .get(first.patientId).n).toBe(1);
+        });
+
+        it('assigns yearly care context references to encounters', () => {
+            const year = new Date().getFullYear();
+            const q1 = queuePatient(1);
+            const enc1 = service.beginConsultation(
+                { patientId: 1, queueEntryId: Number(q1.lastInsertRowid), startRequestId: 'cc-1' }, 10);
+            expect(enc1.care_context_ref).toBe(`OP-${year}-0001`);
+
+            service.completeConsultation({ encounterId: enc1.id, visit: { diagnosis: 'Done' } }, 10);
+            const q2 = queuePatient(2);
+            const enc2 = service.beginConsultation(
+                { patientId: 2, queueEntryId: Number(q2.lastInsertRowid), startRequestId: 'cc-2' }, 10);
+            expect(enc2.care_context_ref).toBe(`OP-${year}-0002`);
+        });
+
+        it('never reuses a care context reference after encounter deletion', () => {
+            const year = new Date().getFullYear();
+            const q1 = queuePatient(1);
+            const enc1 = service.beginConsultation(
+                { patientId: 1, queueEntryId: Number(q1.lastInsertRowid), startRequestId: 'cc-del-1' }, 10);
+            expect(enc1.care_context_ref).toBe(`OP-${year}-0001`);
+
+            service.completeConsultation({ encounterId: enc1.id, visit: { diagnosis: 'Done' } }, 10);
+            service.deleteVisit(enc1.id);
+
+            const q2 = queuePatient(2);
+            const enc2 = service.beginConsultation(
+                { patientId: 2, queueEntryId: Number(q2.lastInsertRowid), startRequestId: 'cc-del-2' }, 10);
+            expect(enc2.care_context_ref).toBe(`OP-${year}-0002`);
+        });
+
+        it('queues gateway callbacks and acknowledges them once', () => {
+            const row: any = service.receiveInboxCallback('consent-request', { requestId: 'r-1' }, 20);
+            expect(row.status).toBe('pending');
+
+            expect(() => service.receiveInboxCallback('  ', {}, 20)).toThrow('kind is required');
+            expect(() => service.receiveInboxCallback('x', 'y'.repeat(9000), 20)).toThrow('too large');
+
+            const pending = service.getPendingInbox() as any[];
+            expect(pending.map((r) => r.id)).toContain(row.id);
+
+            const acked: any = service.ackInbox(row.id, 20);
+            expect(acked.status).toBe('handled');
+            expect(() => service.ackInbox(row.id, 20)).toThrow('already handled');
+            expect((service.getPendingInbox() as any[]).map((r) => r.id)).not.toContain(row.id);
         });
     });
 });

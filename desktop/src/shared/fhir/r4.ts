@@ -151,6 +151,7 @@ export interface Organization extends Resource {
 
 export interface Encounter extends Resource {
     resourceType: 'Encounter';
+    identifier?: Identifier[];
     status: 'finished' | 'in-progress' | 'planned' | string;
     subject?: Reference;
     participant?: Array<{ individual?: Reference }>;

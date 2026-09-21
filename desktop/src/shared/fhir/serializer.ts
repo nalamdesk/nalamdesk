@@ -69,8 +69,8 @@ export interface EncounterExportInput {
         address?: string;
         abhaAddress?: string | null;
     };
-    practitioner: { id: number | string; name: string; licenseNumber?: string; specialty?: string };
-    clinic: { name: string; address?: string };
+    practitioner: { id: number | string; name: string; licenseNumber?: string; specialty?: string; registryId?: string };
+    clinic: { name: string; address?: string; registryId?: string };
     encounter: {
         id: number | string;
         date?: string;
@@ -78,6 +78,7 @@ export interface EncounterExportInput {
         diagnosisType?: string;
         symptoms?: string;
         examinationNotes?: string;
+        careContextRef?: string | null;
     };
     prescriptions?: ExportPrescriptionLine[];
     allergies?: ExportAllergy[];
@@ -281,6 +282,11 @@ function practitionerResource(input: EncounterExportInput): Practitioner {
     if (input.practitioner.licenseNumber) {
         identifiers.push({ system: 'https://indianmedicalcouncil.gov.in/license', value: input.practitioner.licenseNumber });
     }
+    // TODO (live reconfirm): confirm the HPR identifier system URL against
+    // the current ABDM registry documentation during live integration.
+    if (input.practitioner.registryId) {
+        identifiers.push({ system: 'https://abdm.gov.in/hpr', value: input.practitioner.registryId });
+    }
     return {
         resourceType: 'Practitioner',
         identifier: identifiers.length > 0 ? identifiers : undefined,
@@ -289,8 +295,14 @@ function practitionerResource(input: EncounterExportInput): Practitioner {
 }
 
 function organizationResource(input: EncounterExportInput): Organization {
+    // TODO (live reconfirm): confirm the HFR identifier system URL against
+    // the current ABDM registry documentation during live integration.
+    const identifiers = input.clinic.registryId
+        ? [{ system: 'https://abdm.gov.in/hfr', value: input.clinic.registryId }]
+        : undefined;
     return {
         resourceType: 'Organization',
+        identifier: identifiers,
         name: input.clinic.name,
         address: input.clinic.address ? [{ text: input.clinic.address }] : undefined
     };
@@ -299,6 +311,9 @@ function organizationResource(input: EncounterExportInput): Organization {
 function encounterResource(input: EncounterExportInput, date: string): Encounter {
     return {
         resourceType: 'Encounter',
+        identifier: input.encounter.careContextRef
+            ? [{ system: 'https://nalamdesk.app/fhir/care-context', value: input.encounter.careContextRef }]
+            : undefined,
         status: 'finished',
         subject: ref('Patient', input.patient.id),
         participant: [{ individual: ref('Practitioner', input.practitioner.id) }],

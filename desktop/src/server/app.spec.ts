@@ -8,6 +8,7 @@ const JWT_SECRET = vi.hoisted(() => {
 
 import * as jwt from 'jsonwebtoken';
 import * as os from 'node:os';
+import * as crypto from 'node:crypto';
 import { ApiServer } from './app';
 
 function authHeader(user: { id: number; role: string; username?: string }) {
@@ -229,8 +230,7 @@ describe('ABDM Scan & Share callback', () => {
     });
 
     it('rate-limits share floods with 429', async () => {
-        for (let i = 0; i < 30; i += 1) {
-            const response = await server.inject({
+        for (let i = 0; i < 30; i += 1) {            const response = await server.inject({
                 method: 'POST',
                 url: '/abdm/v0.5/patients/profile/share',
                 payload: { name: `Patient ${i}` }
@@ -246,6 +246,108 @@ describe('ABDM Scan & Share callback', () => {
     });
 });
 
+describe('ABDM callback inbox route', () => {
+    let server: ApiServer;
+    let db: any;
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            receiveInboxCallback: vi.fn().mockReturnValue({ id: 5, status: 'pending' }),
+            callbackSecretMatches: vi.fn().mockReturnValue(true)
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    it('queues a valid callback with 202', async () => {
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            payload: { requestId: 'r-1' }
+        });
+        expect(response.statusCode).toBe(202);
+        expect(response.json()).toMatchObject({ status: 'queued', id: 5 });
+        expect(db.receiveInboxCallback).toHaveBeenCalledWith(
+            'consent-request', expect.objectContaining({ requestId: 'r-1' }));
+    });
+
+    it('rejects invalid callbacks with 400', async () => {
+        db.receiveInboxCallback.mockImplementation(() => {
+            throw new Error('Callback kind is required.');
+        });
+        const badKind = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/%20',
+            payload: {}
+        });
+        expect(badKind.statusCode).toBe(400);
+    });
+
+    it('enforces the callback password when one is configured', async () => {
+        db.callbackSecretMatches = vi.fn().mockImplementation((presented: unknown) => presented === 's3cret-token');
+        const denied = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            payload: { requestId: 'r-9' }
+        });
+        expect(denied.statusCode).toBe(401);
+
+        const wrong = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            headers: { 'x-callback-token': 'wrong' },
+            payload: { requestId: 'r-9' }
+        });
+        expect(wrong.statusCode).toBe(401);
+
+        const allowed = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            headers: { 'x-callback-token': 's3cret-token' },
+            payload: { requestId: 'r-9' }
+        });
+        expect(allowed.statusCode).toBe(202);
+    });
+
+    it('leaves callbacks open when no password is configured', async () => {
+        db.callbackSecretMatches = vi.fn().mockReturnValue(true);
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            payload: { requestId: 'r-10' }
+        });
+        expect(response.statusCode).toBe(202);
+        expect(db.callbackSecretMatches).toHaveBeenCalledWith(undefined, false);
+    });
+
+    it('rejects live callbacks without a password when none is configured', async () => {
+        // Flip this server to live mode with no secret: strict gate applies.
+        // The matcher reports no match (mirroring the real method with no
+        // secret stored and strict mode on).
+        const liveDb = {
+            ...db,
+            getSettings: vi.fn().mockReturnValue({ abdm_mock: 0, abdm_client_id: 'CID' }),
+            callbackSecretMatches: vi.fn().mockReturnValue(false)
+        };
+        const liveServer = new ApiServer(liveDb, os.tmpdir());
+        try {
+            const response = await liveServer.inject({
+                method: 'POST',
+                url: '/abdm/v0.5/callbacks/consent-request',
+                payload: { requestId: 'r-11' }
+            });
+            expect(response.statusCode).toBe(401);
+        } finally {
+            await liveServer.close();
+        }
+    });
+});
+
 describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
     let server: ApiServer;
     let db: any;
@@ -256,10 +358,17 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         db = {
             beginWork: vi.fn(),
             endWork: vi.fn(),
-            getPermissions: vi.fn().mockImplementation((role: string) => role === 'receptionist'
-                ? ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig']
-                : []),
+            getPermissions: vi.fn().mockImplementation((role: string) => {
+                if (role === 'receptionist') {
+                    return ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig'];
+                }
+                if (role === 'doctor') {
+                    return ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig', 'abdmTransferBundle'];
+                }
+                return [];
+            }),
             getSettings: vi.fn().mockReturnValue({}),
+            hasCallbackSecret: vi.fn().mockReturnValue(false),
             saveSettings: vi.fn().mockImplementation((patch: any) => {
                 savedSettings.push(patch);
                 return { changes: 1 };
@@ -321,5 +430,31 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
             expect.objectContaining({ abhaAddress: 'asha@sbx' }),
             expect.anything()
         );
+    });
+
+    it('transfers bundles over LAN without exposing the recipient key', async () => {
+        const { generateKeyPairSync } = await import('node:crypto');
+        const { publicKey } = generateKeyPairSync('x25519', {
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        const raw = crypto.createPublicKey(publicKey)
+            .export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
+        db.getSettings = vi.fn().mockReturnValue({
+            abdm_recipient_key: raw,
+            abdm_hip_endpoint: ''
+        });
+        const response = await postIpc('abdmTransferBundle', [
+            { bundle: { resourceType: 'Bundle', entry: [] } }
+        ], 'doctor');
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ status: 'mock-loopback' });
+    });
+
+    it('rejects LAN transfers for nurses', async () => {
+        const response = await postIpc('abdmTransferBundle', [
+            { bundle: { resourceType: 'Bundle', entry: [] } }
+        ], 'nurse');
+        expect(response.statusCode).toBe(403);
     });
 });

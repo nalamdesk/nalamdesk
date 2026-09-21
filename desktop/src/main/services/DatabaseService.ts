@@ -158,7 +158,7 @@ export class DatabaseService {
 
     // Users
     getUsers() {
-        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date FROM users ORDER BY created_at DESC').all();
+        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date, abdm_hpr_id FROM users ORDER BY created_at DESC').all();
     }
 
     getUserByUsername(username: string) {
@@ -195,7 +195,7 @@ export class DatabaseService {
 
         // Prepare optional fields to ensure they aren't undefined
         const safeUser = {
-            specialty: null, license_number: null,
+            specialty: null, license_number: null, abdm_hpr_id: null,
             mobile: null, email: null, designation: null, joining_date: null,
             address: null, emergency_contact_name: null, emergency_contact_phone: null,
             password_reset_required: 0,
@@ -216,9 +216,35 @@ export class DatabaseService {
         if (Object.prototype.hasOwnProperty.call(user, 'password')) {
             throw new Error('GENERIC_PASSWORD_CHANGE_FORBIDDEN');
         }
+        // Password-reset flags move only through dedicated reset workflows,
+        // never through generic profile edits.
+        delete safeUser.password_reset_required;
+        // Registry IDs live outside most edit forms: an absent value must not
+        // wipe the stored one. Clearing goes through an explicit empty string.
+        if (user.abdm_hpr_id == null && existing.abdm_hpr_id) {
+            safeUser.abdm_hpr_id = existing.abdm_hpr_id;
+        }
 
         const query = this.buildUpdateQuery();
-        const result = this.db.prepare(query).run(safeUser);
+        // Bind exactly the columns the query names: extra keys (username,
+        // uuid, reset flags) must never reach the statement.
+        const params = {
+            id: safeUser.id,
+            role: safeUser.role,
+            name: safeUser.name,
+            active: safeUser.active,
+            specialty: safeUser.specialty,
+            license_number: safeUser.license_number,
+            abdm_hpr_id: safeUser.abdm_hpr_id,
+            mobile: safeUser.mobile,
+            email: safeUser.email,
+            designation: safeUser.designation,
+            joining_date: safeUser.joining_date,
+            address: safeUser.address,
+            emergency_contact_name: safeUser.emergency_contact_name,
+            emergency_contact_phone: safeUser.emergency_contact_phone
+        };
+        const result = this.db.prepare(query).run(params);
 
         if (actingUserId) {
             this.logAudit('USER_UPDATE', 'users', user.id, actingUserId, `Updated user ${user.username}`);
@@ -228,6 +254,7 @@ export class DatabaseService {
 
     private buildUpdateQuery(): string {
         const baseCols = `role = @role, name = @name, active = @active, specialty = @specialty, license_number = @license_number,
+            abdm_hpr_id = @abdm_hpr_id,
             mobile = @mobile, email = @email, designation = @designation, joining_date = @joining_date,
             address = @address, emergency_contact_name = @emergency_contact_name, emergency_contact_phone = @emergency_contact_phone`;
 
@@ -246,12 +273,12 @@ export class DatabaseService {
 
         const result = this.db.prepare(`
             INSERT INTO users(
-                username, password, role, name, active, specialty, license_number,
+                username, password, role, name, active, specialty, license_number, abdm_hpr_id,
                 mobile, email, designation, joining_date, address, emergency_contact_name, emergency_contact_phone,
                 password_reset_required
             )
             VALUES(
-                @username, @password, @role, @name, @active, @specialty, @license_number,
+                @username, @password, @role, @name, @active, @specialty, @license_number, @abdm_hpr_id,
                 @mobile, @email, @designation, @joining_date, @address, @emergency_contact_name, @emergency_contact_phone,
                 @password_reset_required
             )
@@ -294,10 +321,47 @@ export class DatabaseService {
             drive_tokens, cloud_clinic_id, cloud_api_key, cloud_enabled,
             drive_client_id, drive_client_secret, local_backup_path,
             backup_schedule, cloud_backup_schedule,
-            abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id
+            abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id,
+            abdm_hfr_id, abdm_hpr_id, abdm_hip_endpoint, abdm_recipient_key
             FROM settings LIMIT 1`).get();
     }
 
+    // The callback shared secret is write-only through settings: readers
+    // learn only whether one is set, never its value.
+    hasCallbackSecret(): boolean {
+        try {
+            const row = this.db.prepare(
+                'SELECT abdm_callback_secret AS value FROM settings LIMIT 1').get() as any;
+            return !!row?.value;
+        } catch {
+            return false;
+        }
+    }
+
+    callbackSecretMatches(presented: unknown, strict = false): boolean {
+        try {
+            const row = this.db.prepare(
+                'SELECT abdm_callback_secret AS value FROM settings LIMIT 1').get() as any;
+            const expected = String(row?.value || '');
+            // Without a configured secret, callbacks stay open only for
+            // sandbox testing. Live mode requires the password.
+            if (!expected) return !strict;
+            return this.secretsEqual(String(presented || ''), expected);
+        } catch {
+            return false;
+        }
+    }
+
+    // Constant-time comparison over the longer length, so neither value nor
+    // length leaks through timing.
+    private secretsEqual(a: string, b: string): boolean {
+        const max = Math.max(a.length, b.length);
+        let diff = a.length ^ b.length;
+        for (let i = 0; i < max; i++) {
+            diff |= ((i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0));
+        }
+        return diff === 0;
+    }
     // Main-process-only accessor for the keychain-protected ABDM secret blob.
     // Never exposed through generic settings responses, IPC getters, or LAN.
     getAbdmSecretProtected(): string | null {
@@ -353,8 +417,9 @@ export class DatabaseService {
             'clinic_name', 'doctor_name', 'logo_path', 'license_key',
             'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
             'drive_client_id', 'drive_client_secret', 'local_backup_path',
-            'abdm_gateway_env', 'abdm_client_id', 'abdm_mock',
-            'abdm_hip_id', 'abdm_counter_id'
+            'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
+            'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
+            'abdm_callback_secret'
         ];
 
         // Filter incoming settings to only allowed columns
@@ -470,6 +535,23 @@ export class DatabaseService {
         return this.acceptShareToken(args.tokenId ?? args.id, actingUserId);
     }
 
+    // Care context references (`OP-YYYY-NNNN`) durably link an encounter to
+    // its ABDM care context. Numbers come from a per-year sequence table —
+    // never from MAX() over visits — so deleting an encounter can never
+    // cause its externally visible reference to be reused. Called inside the
+    // encounter transactions, so concurrent begins cannot share a number.
+    private nextCareContextRef(): string {
+        const year = new Date().getFullYear();
+        this.db.prepare(
+            `INSERT INTO care_context_seq (year, last_no) VALUES (?, 0)
+             ON CONFLICT(year) DO NOTHING`
+        ).run(year);
+        const row = this.db.prepare(
+            `UPDATE care_context_seq SET last_no = last_no + 1 WHERE year = ? RETURNING last_no`
+        ).get(year) as any;
+        return `OP-${year}-${String(Number(row?.last_no || 0)).padStart(4, '0')}`;
+    }
+
     // Scan & Share intake: stores a gateway profile-share callback as a
     // numbered queue token. Numbers restart daily; tokens expire after
     // 15 minutes so a stale scan never blocks the dock.
@@ -540,6 +622,43 @@ export class DatabaseService {
             return this.db.prepare('SELECT * FROM abdm_share_tokens WHERE id = ?').get(token.id);
         });
         return accept.immediate();
+    }
+
+    // ABDM callback inbox: gateway notifications (consent events, data-share
+    // notices, link confirmations) land here for explicit human handling.
+    // Kinds are free-form today; M3 consent work will enumerate them.
+    receiveInboxCallback(kind: string, payload: any, actingUserId?: number) {
+        const cleanKind = String(kind || '').trim().slice(0, 64);
+        if (!cleanKind) throw new Error('Callback kind is required.');
+        const body = JSON.stringify(payload ?? null);
+        if (body.length > 8192) throw new Error('Callback payload is too large.');
+        const result = this.db.prepare(
+            `INSERT INTO abdm_inbox (kind, payload) VALUES (?, ?)`
+        ).run(cleanKind, body);
+        const row = this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?')
+            .get(Number(result.lastInsertRowid));
+        this.logAudit('INSERT', 'abdm_inbox', Number(result.lastInsertRowid),
+            actingUserId, `ABDM callback (${cleanKind}) queued`);
+        return row;
+    }
+
+    getPendingInbox() {
+        return this.db.prepare(`SELECT * FROM abdm_inbox
+            WHERE status = 'pending' ORDER BY id ASC`).all();
+    }
+
+    ackInbox(id: number, actingUserId?: number) {
+        const ack = this.db.transaction(() => {
+            const row = this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?').get(Number(id)) as any;
+            if (!row || row.status !== 'pending') {
+                throw new Error('Callback was already handled.');
+            }
+            this.db.prepare(`UPDATE abdm_inbox SET status = 'handled' WHERE id = ?`).run(row.id);
+            this.logAudit('UPDATE', 'abdm_inbox', row.id, actingUserId,
+                `Acknowledged ABDM callback (${row.kind})`);
+            return this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?').get(row.id);
+        });
+        return ack.immediate();
     }
 
     // Atomic Scan & Share check-in: claim the token, match or create the
@@ -866,9 +985,10 @@ export class DatabaseService {
                     diagnosis, prescription_json, amount_paid,
                     symptoms, examination_notes, diagnosis_type, status,
                     started_at, updated_at, queue_entry_id, start_request_id,
-                    start_operation, start_actor_id
-                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'begin', ?)
-            `).run(patientId, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId);
+                    start_operation, start_actor_id, care_context_ref
+                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'begin', ?, ?)
+            `).run(patientId, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId,
+                this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'begin', Number(result.lastInsertRowid), patientId, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
             this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started encounter for queue entry ${queue.id}`);
@@ -1037,9 +1157,10 @@ export class DatabaseService {
                     diagnosis, prescription_json, amount_paid,
                     symptoms, examination_notes, diagnosis_type, status,
                     started_at, updated_at, queue_entry_id, start_request_id,
-                    start_operation, start_actor_id
-                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'next', ?)
-            `).run(queue.patient_id, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId);
+                    start_operation, start_actor_id, care_context_ref
+                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'next', ?, ?)
+            `).run(queue.patient_id, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId,
+                this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'next', Number(result.lastInsertRowid), queue.patient_id, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
             this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started next encounter for queue entry ${queue.id}`);

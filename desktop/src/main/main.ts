@@ -17,6 +17,7 @@ import { SecurityService } from './services/SecurityService';
 import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './services/DeviceKeyStore';
 import { AbdmSessionService } from './services/AbdmSessionService';
 import { AbdmAbhaService } from './services/AbdmAbhaService';
+import { FideliusService } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
 import { CloudSyncService } from './services/CloudSyncService';
@@ -148,6 +149,7 @@ const abdmAbhaService = new AbdmAbhaService({
     getSessionToken: () => abdmSessionService.getSessionToken(),
     gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl()
 });
+const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
 const provisioningService = new ProvisioningService(securityService, databaseService);
 const googleDriveService = new GoogleDriveService();
@@ -846,7 +848,12 @@ handleDb('db:abdmGetConfig', () => {
         has_secret: abdmSessionService.hasStoredSecret(),
         mock: abdmSessionService.isMockMode(),
         hip_id: databaseService.getSettings()?.abdm_hip_id || '',
-        counter_id: databaseService.getSettings()?.abdm_counter_id || ''
+        counter_id: databaseService.getSettings()?.abdm_counter_id || '',
+        hfr_id: databaseService.getSettings()?.abdm_hfr_id || '',
+        hpr_id: databaseService.getSettings()?.abdm_hpr_id || '',
+        hip_endpoint: databaseService.getSettings()?.abdm_hip_endpoint || '',
+        has_recipient_key: !!databaseService.getSettings()?.abdm_recipient_key,
+        has_callback_secret: databaseService.hasCallbackSecret()
     };
 });
 handleDb('db:abdmSaveConfig', (_, config) => {
@@ -866,6 +873,47 @@ handleDb('db:abdmSaveConfig', (_, config) => {
     }
     if (config && typeof config['counter_id'] === 'string') {
         patch['abdm_counter_id'] = (config['counter_id'] as string).trim();
+    }
+    for (const key of ['hfr_id', 'hpr_id'] as const) {
+        if (config && typeof config[key] === 'string') {
+            const value = (config[key] as string).trim();
+            if (value.length > 100) throw new Error('Registry IDs must be under 100 characters.');
+            patch[`abdm_${key}`] = value;
+        }
+    }
+    if (config && typeof config['hip_endpoint'] === 'string') {
+        const endpoint = (config['hip_endpoint'] as string).trim();
+        if (endpoint && !/^https:\/\//.test(endpoint)) {
+            throw new Error('Transfer endpoint must be an https URL.');
+        }
+        patch['abdm_hip_endpoint'] = endpoint;
+    }
+    if (config && typeof config['recipient_key'] === 'string') {
+        const key = (config['recipient_key'] as string).trim();
+        if (!key) {
+            // Empty field means "leave the stored key alone", never wipe it.
+        } else {
+            try {
+                Buffer.from(key, 'base64');
+            } catch {
+                throw new Error('Recipient key must be base64.');
+            }
+            if (Buffer.from(key, 'base64').length !== 32) {
+                throw new Error('Recipient key must be a 32-byte X25519 public key.');
+            }
+            patch['abdm_recipient_key'] = key;
+        }
+    }
+    if (config && typeof config['callback_secret'] === 'string') {
+        const secret = (config['callback_secret'] as string).trim();
+        // Empty field leaves the stored secret alone; only a new value
+        // replaces it. Minimum length keeps weak shared secrets out.
+        if (secret) {
+            if (secret.length < 16) {
+                throw new Error('Callback password must be at least 16 characters.');
+            }
+            patch['abdm_callback_secret'] = secret;
+        }
     }
     if (config && config['mock'] !== undefined) {
         patch['abdm_mock'] = config['mock'] ? 1 : 0;
@@ -928,6 +976,31 @@ handleDb('db:abdmGetShareTokens', () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     return databaseService.getPendingShareTokens();
+});
+handleDb('db:abdmGetInbox', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return databaseService.getPendingInbox();
+});
+handleDb('db:abdmAckInbox', (_, payload) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const args = payload || {};
+    return databaseService.ackInbox(args.id, user.id);
+});
+handleDb('db:abdmTransferBundle', async (_, payload) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const args = payload || {};
+    const settings = databaseService.getSettings() || {};
+    const recipientKey = settings.abdm_recipient_key || '';
+    if (!recipientKey) {
+        throw new Error('No recipient key configured. Add one under Settings → ABDM first.');
+    }
+    if (!args.bundle) throw new Error('A health record bundle is required.');
+    return fideliusService.pushBundle(args.bundle, recipientKey, settings.abdm_hip_endpoint || '');
 });
 handleDb('db:abdmAcceptShareToken', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());

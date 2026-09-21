@@ -549,5 +549,136 @@ describe('PatientDetailsComponent', () => {
         const organization = bundle.entry.find((e: any) => e.resource?.resourceType === 'Organization').resource;
         expect(organization.name).toBe('City Care Clinic');
     });
+
+    it('attaches registry identifiers when configured', () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith',
+            doctor_license_snapshot: JSON.stringify({ name: 'Dr. Smith', license_number: 'MED-1' }),
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+
+        const bundle = JSON.parse(
+            component.buildHealthRecordJson('City Care Clinic', { hfrId: 'HFR-1', hprId: 'HPR-2' }).json);
+        const organization = bundle.entry.find((e: any) => e.resource?.resourceType === 'Organization').resource;
+        expect(organization.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'HFR-1' })]));
+        const practitioner = bundle.entry.find((e: any) => e.resource?.resourceType === 'Practitioner').resource;
+        expect(practitioner.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'HPR-2' })]));
+    });
+
+    it('resolves the registry ID from the visit doctor, not the deployment default', () => {
+        const visit = { id: 9, doctor_id: 10 };
+        const doctors = [
+            { id: 10, name: 'Dr. A', abdm_hpr_id: 'HPR-A' },
+            { id: 11, name: 'Dr. B', abha_hpr_id: undefined, abdm_hpr_id: 'HPR-B' }
+        ];
+        expect((component as any).resolveVisitHprId(visit, doctors, 'HPR-DEPLOY')).toBe('HPR-A');
+    });
+
+    it('omits the registry ID when the visit doctor cannot be resolved', () => {
+        const visit = { id: 9, doctor_id: 99 };
+        const doctors = [
+            { id: 10, name: 'Dr. A', abdm_hpr_id: 'HPR-A' },
+            { id: 11, name: 'Dr. B', abdm_hpr_id: 'HPR-B' }
+        ];
+        expect((component as any).resolveVisitHprId(visit, doctors, 'HPR-DEPLOY')).toBeUndefined();
+    });
+
+    it('falls back to the deployment ID only with a single doctor on file', () => {
+        const visit = { id: 9, doctor_id: 10 };
+        expect((component as any).resolveVisitHprId(visit, [{ id: 10, name: 'Dr. Solo' }], 'HPR-DEPLOY'))
+            .toBe('HPR-DEPLOY');
+        expect((component as any).resolveVisitHprId(visit, [], 'HPR-DEPLOY')).toBeUndefined();
+    });
+
+    it('never assigns the fallback to a deactivated author', () => {
+        // The visit author is gone; the one remaining active doctor is
+        // someone else. The deployment ID must not attach to the wrong name.
+        const visit = { id: 9, doctor_id: 10 };
+        expect((component as any).resolveVisitHprId(
+            visit, [{ id: 11, name: 'Dr. Other', abdm_hpr_id: 'HPR-OTHER' }], 'HPR-DEPLOY'))
+            .toBeUndefined();
+    });
+
+    it('hides Secure Share from roles that cannot invoke it', () => {
+        component.currentUser = { id: 5, role: 'receptionist', name: 'Front Desk' };
+        expect(component.canTransfer).toBe(false);
+        component.currentUser = { id: 7, role: 'nurse', name: 'Nurse' };
+        expect(component.canTransfer).toBe(false);
+        component.currentUser = { id: 10, role: 'doctor', name: 'Dr. Smith' };
+        expect(component.canTransfer).toBe(true);
+        component.currentUser = { id: 99, role: 'admin', name: 'Admin' };
+        expect(component.canTransfer).toBe(true);
+    });
+
+    it('identifies the exported encounter with its care context reference', () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith', care_context_ref: 'OP-2026-0042',
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+
+        const bundle = JSON.parse(component.buildHealthRecordJson().json);
+        const encounter = bundle.entry.find((e: any) => e.resource?.resourceType === 'Encounter').resource;
+        expect(encounter.identifier).toEqual(
+            expect.arrayContaining([expect.objectContaining({ value: 'OP-2026-0042' })]));
+    });
+
+    it('asks for a recipient key before transferring', async () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith',
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmGetConfig') return Promise.resolve({ has_recipient_key: false });
+            return Promise.resolve(null);
+        });
+
+        await component.transferHealthRecord();
+
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'No recipient key'
+        }));
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('abdmTransferBundle', expect.anything());
+        expect(component.transferBusy).toBe(false);
+    });
+
+    it('transfers the receipt bundle and reports the receipt honestly', async () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith',
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmGetConfig') return Promise.resolve({ has_recipient_key: true });
+            if (method === 'abdmTransferBundle') {
+                return Promise.resolve({ status: 'mock-loopback', bytes: 128 });
+            }
+            return Promise.resolve(null);
+        });
+
+        await component.transferHealthRecord();
+
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmTransferBundle',
+            expect.objectContaining({ bundle: expect.objectContaining({ resourceType: 'Bundle' }) }));
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Test transfer complete'
+        }));
+    });
 });
 

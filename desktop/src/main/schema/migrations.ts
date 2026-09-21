@@ -889,5 +889,119 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 19,
+        up: (db: any) => {
+            console.log('Running Migration v19 (facility and practitioner registry identity)...');
+            ['abdm_hfr_id TEXT', 'abdm_hpr_id TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 20,
+        up: (db: any) => {
+            console.log('Running Migration v20 (care context linking and callback inbox)...');
+            try { db.exec(`ALTER TABLE visits ADD COLUMN care_context_ref TEXT`); } catch (e) { }
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_inbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    payload TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_visits_care_context_ref
+                ON visits(care_context_ref) WHERE care_context_ref IS NOT NULL;
+            `);
+            db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_abdm_inbox_status
+                ON abdm_inbox(status, created_at);
+            `);
+        }
+    },
+    {
+        version: 21,
+        up: (db: any) => {
+            console.log('Running Migration v21 (inbox LAN grants)...');
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmGetInbox', 'abdmAckInbox'],
+                receptionist: ['abdmGetInbox', 'abdmAckInbox'],
+                admin: ['abdmGetInbox', 'abdmAckInbox'],
+                nurse: ['abdmGetInbox']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 22,
+        up: (db: any) => {
+            console.log('Running Migration v22 (transfer endpoint and recipient key)...');
+            ['abdm_hip_endpoint TEXT', 'abdm_recipient_key TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 23,
+        up: (db: any) => {
+            console.log('Running Migration v23 (transfer grants, callback secret, per-doctor registry)...');
+            ['abdm_callback_secret TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+            try { db.exec(`ALTER TABLE users ADD COLUMN abdm_hpr_id TEXT`); } catch (e) { }
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmTransferBundle'],
+                admin: ['abdmTransferBundle']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
+    },
+    {
+        version: 24,
+        up: (db: any) => {
+            console.log('Running Migration v24 (care context sequence)...');
+            // Per-year counters independent of deletable visit rows, so a
+            // deleted encounter can never cause its reference to be reused.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS care_context_seq (
+                    year INTEGER PRIMARY KEY,
+                    last_no INTEGER NOT NULL DEFAULT 0
+                );
+            `);
+            try {
+                db.exec(`
+                    INSERT INTO care_context_seq (year, last_no)
+                    SELECT CAST(SUBSTR(care_context_ref, 4, 4) AS INTEGER) AS year,
+                           MAX(CAST(SUBSTR(care_context_ref, 9) AS INTEGER)) AS last_no
+                    FROM visits WHERE care_context_ref LIKE 'OP-%'
+                    GROUP BY year
+                    ON CONFLICT(year) DO UPDATE SET last_no = MAX(last_no, excluded.last_no);
+                `);
+            } catch (e) { }
+        }
     }
 ];

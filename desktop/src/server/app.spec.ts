@@ -322,7 +322,29 @@ describe('ABDM callback inbox route', () => {
             payload: { requestId: 'r-10' }
         });
         expect(response.statusCode).toBe(202);
-        expect(db.callbackSecretMatches).toHaveBeenCalledWith(undefined);
+        expect(db.callbackSecretMatches).toHaveBeenCalledWith(undefined, false);
+    });
+
+    it('rejects live callbacks without a password when none is configured', async () => {
+        // Flip this server to live mode with no secret: strict gate applies.
+        // The matcher reports no match (mirroring the real method with no
+        // secret stored and strict mode on).
+        const liveDb = {
+            ...db,
+            getSettings: vi.fn().mockReturnValue({ abdm_mock: 0, abdm_client_id: 'CID' }),
+            callbackSecretMatches: vi.fn().mockReturnValue(false)
+        };
+        const liveServer = new ApiServer(liveDb, os.tmpdir());
+        try {
+            const response = await liveServer.inject({
+                method: 'POST',
+                url: '/abdm/v0.5/callbacks/consent-request',
+                payload: { requestId: 'r-11' }
+            });
+            expect(response.statusCode).toBe(401);
+        } finally {
+            await liveServer.close();
+        }
     });
 });
 

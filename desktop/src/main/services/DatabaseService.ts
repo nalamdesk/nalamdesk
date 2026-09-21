@@ -1,5 +1,4 @@
 import { MIGRATIONS } from '../schema/migrations';
-import * as crypto from 'node:crypto';
 import * as catalog from '../catalog/catalogStore';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
 
@@ -159,7 +158,7 @@ export class DatabaseService {
 
     // Users
     getUsers() {
-        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date FROM users ORDER BY created_at DESC').all();
+        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date, abdm_hpr_id FROM users ORDER BY created_at DESC').all();
     }
 
     getUserByUsername(username: string) {
@@ -217,9 +216,35 @@ export class DatabaseService {
         if (Object.prototype.hasOwnProperty.call(user, 'password')) {
             throw new Error('GENERIC_PASSWORD_CHANGE_FORBIDDEN');
         }
+        // Password-reset flags move only through dedicated reset workflows,
+        // never through generic profile edits.
+        delete safeUser.password_reset_required;
+        // Registry IDs live outside most edit forms: an absent value must not
+        // wipe the stored one. Clearing goes through an explicit empty string.
+        if (user.abdm_hpr_id == null && existing.abdm_hpr_id) {
+            safeUser.abdm_hpr_id = existing.abdm_hpr_id;
+        }
 
         const query = this.buildUpdateQuery();
-        const result = this.db.prepare(query).run(safeUser);
+        // Bind exactly the columns the query names: extra keys (username,
+        // uuid, reset flags) must never reach the statement.
+        const params = {
+            id: safeUser.id,
+            role: safeUser.role,
+            name: safeUser.name,
+            active: safeUser.active,
+            specialty: safeUser.specialty,
+            license_number: safeUser.license_number,
+            abdm_hpr_id: safeUser.abdm_hpr_id,
+            mobile: safeUser.mobile,
+            email: safeUser.email,
+            designation: safeUser.designation,
+            joining_date: safeUser.joining_date,
+            address: safeUser.address,
+            emergency_contact_name: safeUser.emergency_contact_name,
+            emergency_contact_phone: safeUser.emergency_contact_phone
+        };
+        const result = this.db.prepare(query).run(params);
 
         if (actingUserId) {
             this.logAudit('USER_UPDATE', 'users', user.id, actingUserId, `Updated user ${user.username}`);
@@ -313,18 +338,29 @@ export class DatabaseService {
         }
     }
 
-    callbackSecretMatches(presented: unknown): boolean {
+    callbackSecretMatches(presented: unknown, strict = false): boolean {
         try {
             const row = this.db.prepare(
                 'SELECT abdm_callback_secret AS value FROM settings LIMIT 1').get() as any;
             const expected = String(row?.value || '');
-            if (!expected) return true;
-            const a = crypto.hash('sha256', String(presented || ''), 'hex');
-            const b = crypto.hash('sha256', expected, 'hex');
-            return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+            // Without a configured secret, callbacks stay open only for
+            // sandbox testing. Live mode requires the password.
+            if (!expected) return !strict;
+            return this.secretsEqual(String(presented || ''), expected);
         } catch {
             return false;
         }
+    }
+
+    // Constant-time comparison over the longer length, so neither value nor
+    // length leaks through timing.
+    private secretsEqual(a: string, b: string): boolean {
+        const max = Math.max(a.length, b.length);
+        let diff = a.length ^ b.length;
+        for (let i = 0; i < max; i++) {
+            diff |= ((i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0));
+        }
+        return diff === 0;
     }
     // Main-process-only accessor for the keychain-protected ABDM secret blob.
     // Never exposed through generic settings responses, IPC getters, or LAN.

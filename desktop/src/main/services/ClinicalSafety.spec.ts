@@ -672,7 +672,15 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.callbackSecretMatches(undefined)).toBe(false);
         });
 
-        it('persists per-doctor registry IDs through user save', async () => {
+        it('requires the callback password in strict live mode', () => {
+            expect(service.callbackSecretMatches(undefined, true)).toBe(false);
+
+            service.saveSettings({ abdm_callback_secret: 's3cret-shared-token' });
+            expect(service.callbackSecretMatches('s3cret-shared-token', true)).toBe(true);
+            expect(service.callbackSecretMatches('wrong', true)).toBe(false);
+        });
+
+        it('preserves per-doctor registry IDs across unrelated edits', async () => {
             await service.saveUser({
                 username: 'drhpr', password: 'Password1!', role: 'doctor',
                 name: 'Dr. HPR', abdm_hpr_id: 'HPR-DOC-1'
@@ -680,6 +688,12 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             const doctors = service.getDoctors() as any[];
             const match = doctors.find((d) => d.username === 'drhpr');
             expect(match?.abdm_hpr_id).toBe('HPR-DOC-1');
+
+            // An edit payload without the field must not wipe the stored ID.
+            await service.saveUser({ id: match.id, username: 'drhpr', role: 'doctor', name: 'Dr. HPR Updated' }, 99);
+            const reloaded = (service.getDoctors() as any[]).find((d) => d.username === 'drhpr');
+            expect(reloaded?.abdm_hpr_id).toBe('HPR-DOC-1');
+            expect(reloaded?.name).toBe('Dr. HPR Updated');
         });
 
         it('checks in a token atomically: claim, match-or-create, and queue together', () => {

@@ -331,7 +331,8 @@ export class ApiServer {
                 if (!this.shareCallbackAllowed(`${request.ip || 'unknown'}:inbox`)) {
                     return reply.code(429).send({ error: 'Too many callbacks. Slow down and retry.' });
                 }
-                if (!this.dbService.callbackSecretMatches(request.headers?.['x-callback-token'])) {
+                const liveCallbacks = !this.abdmServices().session.isMockMode();
+                if (!this.dbService.callbackSecretMatches(request.headers?.['x-callback-token'], liveCallbacks)) {
                     return reply.code(401).send({ error: 'Callback authentication required.' });
                 }
                 try {

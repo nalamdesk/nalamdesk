@@ -207,6 +207,15 @@
                             class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
                         <p class="text-xs text-gray-400 mt-1">Stored on this device only. It is never displayed again.</p>
                     </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Callback Password</label>
+                        <input [(ngModel)]="abdmCallbackSecret" name="abdm_callback_secret" type="password" placeholder="Required from senders once set" autocomplete="new-password"
+                            class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
+                        <p class="text-xs text-gray-400 mt-1">
+                            <span *ngIf="abdmConfig.has_callback_secret" class="font-medium text-green-700">A password is set.</span>
+                            <span *ngIf="!abdmConfig.has_callback_secret">No password set yet — callbacks are accepted openly for testing.</span>
+                        </p>
+                    </div>
                 </div>
                 <div class="mt-6 flex items-center gap-4">
                     <button type="button" (click)="saveAbdmConfig()" [disabled]="abdmBusy" class="btn btn-primary px-6">Save Changes</button>
@@ -746,6 +755,13 @@
                     <label class="block text-sm font-medium text-gray-700">Designation / Title</label>
                     <input [(ngModel)]="editingUser.designation" placeholder="e.g. Senior Nurse"
                         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2">
+                </div>
+
+                <div *ngIf="editingUser.role === 'doctor'" class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700">Registry ID (HPR)</label>
+                    <input [(ngModel)]="editingUser.abdm_hpr_id" placeholder="e.g. HPR-67890"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
+                    <p class="text-[10px] text-gray-400 mt-1">Identifies this doctor on exported health records.</p>
                 </div>
             </div>
 

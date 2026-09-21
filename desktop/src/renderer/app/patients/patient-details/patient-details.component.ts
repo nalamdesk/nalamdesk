@@ -1173,6 +1173,18 @@ export class PatientDetailsComponent implements OnInit {
         return attachRegistry({ id: visit.doctor_id, name: visit.doctor_name || 'Doctor' });
     }
 
+    // Resolves the registry ID that belongs to the visit's own doctor: the
+    // doctor's own record first; the deployment default only when the clinic
+    // has exactly one doctor (unambiguous); otherwise omitted rather than
+    // misattributed.
+    private resolveVisitHprId(visit: any, doctors: any[], deploymentHprId?: string): string | undefined {
+        const match = (doctors || []).find((d: any) => Number(d?.id) === Number(visit?.doctor_id));
+        if (match?.abdm_hpr_id) return String(match.abdm_hpr_id);
+        const activeDoctors = (doctors || []).filter((d: any) => d && Number(d.id) > 0);
+        if (deploymentHprId && activeDoctors.length === 1) return deploymentHprId;
+        return undefined;
+    }
+
     buildHealthRecordJson(clinicName = 'NalamDesk Clinic', registry?: { hfrId?: string; hprId?: string }) {
         const visit: any = this.selectedVisit || {};
         const patient: any = this.patient || {};
@@ -1225,9 +1237,10 @@ export class PatientDetailsComponent implements OnInit {
         const settings = await this.dataService.invoke<any>('getPublicSettings').catch(() => null);
         const clinicName = settings?.clinic_name || 'NalamDesk Clinic';
         const abdm = await this.dataService.invoke<any>('abdmGetConfig').catch(() => null);
+        const doctors = await this.dataService.invoke<any[]>('getDoctors').catch(() => []);
         const { json, warnings } = this.buildHealthRecordJson(clinicName, {
             hfrId: abdm?.hfr_id || undefined,
-            hprId: abdm?.hpr_id || undefined
+            hprId: this.resolveVisitHprId(this.selectedVisit, doctors || [], abdm?.hpr_id || undefined)
         });
         if (warnings.length > 0) {
             await this.dialogService.open({
@@ -1269,7 +1282,10 @@ export class PatientDetailsComponent implements OnInit {
             }
             const { json, warnings } = this.buildHealthRecordJson(clinicName, {
                 hfrId: abdm?.hfr_id || undefined,
-                hprId: abdm?.hpr_id || undefined
+                hprId: this.resolveVisitHprId(
+                    this.selectedVisit,
+                    await this.dataService.invoke<any[]>('getDoctors').catch(() => []) || [],
+                    abdm?.hpr_id || undefined)
             });
             if (warnings.length > 0) {
                 await this.dialogService.open({

@@ -254,7 +254,8 @@ describe('ABDM callback inbox route', () => {
         db = {
             beginWork: vi.fn(),
             endWork: vi.fn(),
-            receiveInboxCallback: vi.fn().mockReturnValue({ id: 5, status: 'pending' })
+            receiveInboxCallback: vi.fn().mockReturnValue({ id: 5, status: 'pending' }),
+            callbackSecretMatches: vi.fn().mockReturnValue(true)
         };
         server = new ApiServer(db, os.tmpdir());
     });
@@ -286,6 +287,43 @@ describe('ABDM callback inbox route', () => {
         });
         expect(badKind.statusCode).toBe(400);
     });
+
+    it('enforces the callback password when one is configured', async () => {
+        db.callbackSecretMatches = vi.fn().mockImplementation((presented: unknown) => presented === 's3cret-token');
+        const denied = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            payload: { requestId: 'r-9' }
+        });
+        expect(denied.statusCode).toBe(401);
+
+        const wrong = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            headers: { 'x-callback-token': 'wrong' },
+            payload: { requestId: 'r-9' }
+        });
+        expect(wrong.statusCode).toBe(401);
+
+        const allowed = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            headers: { 'x-callback-token': 's3cret-token' },
+            payload: { requestId: 'r-9' }
+        });
+        expect(allowed.statusCode).toBe(202);
+    });
+
+    it('leaves callbacks open when no password is configured', async () => {
+        db.callbackSecretMatches = vi.fn().mockReturnValue(true);
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/v0.5/callbacks/consent-request',
+            payload: { requestId: 'r-10' }
+        });
+        expect(response.statusCode).toBe(202);
+        expect(db.callbackSecretMatches).toHaveBeenCalledWith(undefined);
+    });
 });
 
 describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
@@ -308,6 +346,7 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
                 return [];
             }),
             getSettings: vi.fn().mockReturnValue({}),
+            hasCallbackSecret: vi.fn().mockReturnValue(false),
             saveSettings: vi.fn().mockImplementation((patch: any) => {
                 savedSettings.push(patch);
                 return { changes: 1 };

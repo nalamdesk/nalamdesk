@@ -1,4 +1,5 @@
 import { MIGRATIONS } from '../schema/migrations';
+import * as crypto from 'node:crypto';
 import * as catalog from '../catalog/catalogStore';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
 
@@ -195,7 +196,7 @@ export class DatabaseService {
 
         // Prepare optional fields to ensure they aren't undefined
         const safeUser = {
-            specialty: null, license_number: null,
+            specialty: null, license_number: null, abdm_hpr_id: null,
             mobile: null, email: null, designation: null, joining_date: null,
             address: null, emergency_contact_name: null, emergency_contact_phone: null,
             password_reset_required: 0,
@@ -228,6 +229,7 @@ export class DatabaseService {
 
     private buildUpdateQuery(): string {
         const baseCols = `role = @role, name = @name, active = @active, specialty = @specialty, license_number = @license_number,
+            abdm_hpr_id = @abdm_hpr_id,
             mobile = @mobile, email = @email, designation = @designation, joining_date = @joining_date,
             address = @address, emergency_contact_name = @emergency_contact_name, emergency_contact_phone = @emergency_contact_phone`;
 
@@ -246,12 +248,12 @@ export class DatabaseService {
 
         const result = this.db.prepare(`
             INSERT INTO users(
-                username, password, role, name, active, specialty, license_number,
+                username, password, role, name, active, specialty, license_number, abdm_hpr_id,
                 mobile, email, designation, joining_date, address, emergency_contact_name, emergency_contact_phone,
                 password_reset_required
             )
             VALUES(
-                @username, @password, @role, @name, @active, @specialty, @license_number,
+                @username, @password, @role, @name, @active, @specialty, @license_number, @abdm_hpr_id,
                 @mobile, @email, @designation, @joining_date, @address, @emergency_contact_name, @emergency_contact_phone,
                 @password_reset_required
             )
@@ -299,6 +301,31 @@ export class DatabaseService {
             FROM settings LIMIT 1`).get();
     }
 
+    // The callback shared secret is write-only through settings: readers
+    // learn only whether one is set, never its value.
+    hasCallbackSecret(): boolean {
+        try {
+            const row = this.db.prepare(
+                'SELECT abdm_callback_secret AS value FROM settings LIMIT 1').get() as any;
+            return !!row?.value;
+        } catch {
+            return false;
+        }
+    }
+
+    callbackSecretMatches(presented: unknown): boolean {
+        try {
+            const row = this.db.prepare(
+                'SELECT abdm_callback_secret AS value FROM settings LIMIT 1').get() as any;
+            const expected = String(row?.value || '');
+            if (!expected) return true;
+            const a = crypto.hash('sha256', String(presented || ''), 'hex');
+            const b = crypto.hash('sha256', expected, 'hex');
+            return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+        } catch {
+            return false;
+        }
+    }
     // Main-process-only accessor for the keychain-protected ABDM secret blob.
     // Never exposed through generic settings responses, IPC getters, or LAN.
     getAbdmSecretProtected(): string | null {
@@ -355,7 +382,8 @@ export class DatabaseService {
             'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
             'drive_client_id', 'drive_client_secret', 'local_backup_path',
             'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
-            'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key'
+            'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
+            'abdm_callback_secret'
         ];
 
         // Filter incoming settings to only allowed columns

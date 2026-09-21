@@ -571,6 +571,31 @@ describe('PatientDetailsComponent', () => {
             expect.arrayContaining([expect.objectContaining({ value: 'HPR-2' })]));
     });
 
+    it('resolves the registry ID from the visit doctor, not the deployment default', () => {
+        const visit = { id: 9, doctor_id: 10 };
+        const doctors = [
+            { id: 10, name: 'Dr. A', abdm_hpr_id: 'HPR-A' },
+            { id: 11, name: 'Dr. B', abha_hpr_id: undefined, abdm_hpr_id: 'HPR-B' }
+        ];
+        expect((component as any).resolveVisitHprId(visit, doctors, 'HPR-DEPLOY')).toBe('HPR-A');
+    });
+
+    it('omits the registry ID when the visit doctor cannot be resolved', () => {
+        const visit = { id: 9, doctor_id: 99 };
+        const doctors = [
+            { id: 10, name: 'Dr. A', abdm_hpr_id: 'HPR-A' },
+            { id: 11, name: 'Dr. B', abdm_hpr_id: 'HPR-B' }
+        ];
+        expect((component as any).resolveVisitHprId(visit, doctors, 'HPR-DEPLOY')).toBeUndefined();
+    });
+
+    it('falls back to the deployment ID only with a single doctor on file', () => {
+        const visit = { id: 9, doctor_id: 10 };
+        expect((component as any).resolveVisitHprId(visit, [{ id: 10, name: 'Dr. Solo' }], 'HPR-DEPLOY'))
+            .toBe('HPR-DEPLOY');
+        expect((component as any).resolveVisitHprId(visit, [], 'HPR-DEPLOY')).toBeUndefined();
+    });
+
     it('identifies the exported encounter with its care context reference', () => {
         component.patient = { id: 1, name: 'Asha' };
         component.currentUser = { id: 10, name: 'Dr. Smith' };

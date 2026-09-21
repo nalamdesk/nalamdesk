@@ -74,4 +74,26 @@ describe('FideliusService', () => {
         await expect(svc.pushBundle({ a: 1 }, keys.publicKey, 'https://down.example'))
             .rejects.toThrow('unreachable');
     });
+
+    it('bounds live transfers with a timeout signal', async () => {
+        const seen: any[] = [];
+        const fetchFn = vi.fn().mockImplementation(async (_url: string, init: any) => {
+            seen.push(init);
+            return { ok: true };
+        });
+        const svc = new FideliusService({ fetchFn });
+        const keys = recipient();
+        await svc.pushBundle({ a: 1 }, keys.publicKey, 'https://hip.example/push');
+        expect(seen[0]?.signal).toBeTruthy();
+    });
+
+    it('maps aborted transfers to a timeout message', async () => {
+        const abortError = new Error('The operation was aborted');
+        abortError.name = 'AbortError';
+        const fetchFn = vi.fn().mockRejectedValue(abortError);
+        const svc = new FideliusService({ fetchFn });
+        const keys = recipient();
+        await expect(svc.pushBundle({ a: 1 }, keys.publicKey, 'https://slow.example'))
+            .rejects.toThrow('timed out');
+    });
 });

@@ -401,4 +401,21 @@ describe('SettingsComponent Validation', () => {
             .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
         expect(payload2.recipient_key).toBe('QUJD');
     });
+
+    it('sends a callback password only when the field holds a new one', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmCallbackSecret = '';
+
+        await component.saveAbdmConfig();
+
+        const payload = mockData.invoke.mock.calls
+            .find((call: any[]) => call[0] === 'abdmSaveConfig')[1];
+        expect('callback_secret' in payload).toBe(false);
+
+        component.abdmCallbackSecret = 'a-very-long-shared-secret';
+        await component.saveAbdmConfig();
+        const payload2 = mockData.invoke.mock.calls
+            .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
+        expect(payload2.callback_secret).toBe('a-very-long-shared-secret');
+    });
 });

@@ -645,7 +645,8 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 .toThrow('looks invalid');
         });
 
-        it('migration v17 reconciles duplicate links keeping the earliest record', async () => {            const { MIGRATIONS } = await import('../schema/migrations');
+        it('migration v17 reconciles duplicate links keeping the earliest record', async () => {
+            const { MIGRATIONS } = await import('../schema/migrations');
             const v17 = MIGRATIONS.find((m: any) => m.version === 17);
             expect(v17).toBeTruthy();
 
@@ -659,6 +660,26 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(rows[1].abha_address).toBeNull();
             expect(() => service.linkAbhaAddress(rows[1].id, { abhaAddress: 'dup@sbx' }, 10))
                 .toThrow('already linked');
+        });
+
+        it('matches callback secrets in constant time and stays open without one', () => {
+            expect(service.callbackSecretMatches(undefined)).toBe(true);
+
+            service.saveSettings({ abdm_callback_secret: 's3cret-shared-token' });
+            expect(service.hasCallbackSecret()).toBe(true);
+            expect(service.callbackSecretMatches('s3cret-shared-token')).toBe(true);
+            expect(service.callbackSecretMatches('wrong')).toBe(false);
+            expect(service.callbackSecretMatches(undefined)).toBe(false);
+        });
+
+        it('persists per-doctor registry IDs through user save', async () => {
+            await service.saveUser({
+                username: 'drhpr', password: 'Password1!', role: 'doctor',
+                name: 'Dr. HPR', abdm_hpr_id: 'HPR-DOC-1'
+            }, 99);
+            const doctors = service.getDoctors() as any[];
+            const match = doctors.find((d) => d.username === 'drhpr');
+            expect(match?.abdm_hpr_id).toBe('HPR-DOC-1');
         });
 
         it('checks in a token atomically: claim, match-or-create, and queue together', () => {

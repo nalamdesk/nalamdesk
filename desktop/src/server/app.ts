@@ -102,7 +102,8 @@ export class ApiServer {
                     hfr_id: settings.abdm_hfr_id || '',
                     hpr_id: settings.abdm_hpr_id || '',
                     hip_endpoint: settings.abdm_hip_endpoint || '',
-                    has_recipient_key: !!settings.abdm_recipient_key
+                    has_recipient_key: !!settings.abdm_recipient_key,
+                    has_callback_secret: db.hasCallbackSecret()
                 };
             }
             case 'abdmSaveConfig': {
@@ -136,6 +137,15 @@ export class ApiServer {
                             throw new Error('Recipient key must be a 32-byte X25519 public key.');
                         }
                         patch['abdm_recipient_key'] = key;
+                    }
+                }
+                if (typeof payload['callback_secret'] === 'string') {
+                    const secret = String(payload['callback_secret']).trim();
+                    if (secret) {
+                        if (secret.length < 16) {
+                            throw new Error('Callback password must be at least 16 characters.');
+                        }
+                        patch['abdm_callback_secret'] = secret;
                     }
                 }
                 if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
@@ -312,12 +322,17 @@ export class ApiServer {
 
         // Generic ABDM callback inbox (consent events, data-share notices).
         // Same posture as the share route: validated, rate-limited, and
-        // stored for explicit human handling — never auto-applied.
+        // stored for explicit human handling — never auto-applied. When a
+        // callback secret is configured, the sender must prove knowledge of
+        // it; otherwise the route stays open for sandbox testing.
         this.fastify.post('/abdm/v0.5/callbacks/:kind',
             { bodyLimit: 8192 },
             async (request: any, reply: any) => {
                 if (!this.shareCallbackAllowed(`${request.ip || 'unknown'}:inbox`)) {
                     return reply.code(429).send({ error: 'Too many callbacks. Slow down and retry.' });
+                }
+                if (!this.dbService.callbackSecretMatches(request.headers?.['x-callback-token'])) {
+                    return reply.code(401).send({ error: 'Callback authentication required.' });
                 }
                 try {
                     const row = this.dbService.receiveInboxCallback(

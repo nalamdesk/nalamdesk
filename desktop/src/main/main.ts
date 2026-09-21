@@ -852,7 +852,8 @@ handleDb('db:abdmGetConfig', () => {
         hfr_id: databaseService.getSettings()?.abdm_hfr_id || '',
         hpr_id: databaseService.getSettings()?.abdm_hpr_id || '',
         hip_endpoint: databaseService.getSettings()?.abdm_hip_endpoint || '',
-        has_recipient_key: !!databaseService.getSettings()?.abdm_recipient_key
+        has_recipient_key: !!databaseService.getSettings()?.abdm_recipient_key,
+        has_callback_secret: databaseService.hasCallbackSecret()
     };
 });
 handleDb('db:abdmSaveConfig', (_, config) => {
@@ -901,6 +902,17 @@ handleDb('db:abdmSaveConfig', (_, config) => {
                 throw new Error('Recipient key must be a 32-byte X25519 public key.');
             }
             patch['abdm_recipient_key'] = key;
+        }
+    }
+    if (config && typeof config['callback_secret'] === 'string') {
+        const secret = (config['callback_secret'] as string).trim();
+        // Empty field leaves the stored secret alone; only a new value
+        // replaces it. Minimum length keeps weak shared secrets out.
+        if (secret) {
+            if (secret.length < 16) {
+                throw new Error('Callback password must be at least 16 characters.');
+            }
+            patch['abdm_callback_secret'] = secret;
         }
     }
     if (config && config['mock'] !== undefined) {

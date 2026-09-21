@@ -145,19 +145,36 @@ export class FideliusService {
         const at = new Date(this.nowMs()).toISOString();
         const target = String(endpoint || '').trim();
         if (!target) {
-            // Mock loopback: prove the envelope round-trips before claiming delivery.
+            // Mock loopback: prove the crypto pipeline with a throwaway
+            // recipient pair before claiming anything about the envelope.
+            const canaryKeys = crypto.generateKeyPairSync('x25519');
+            const canaryRaw = (canaryKeys.publicKey as crypto.KeyObject)
+                .export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
+            const canary = this.encryptBundle({ canary: true }, canaryRaw);
+            const opened = this.decryptEnvelope(canary, (canaryKeys.privateKey as crypto.KeyObject)
+                .export({ type: 'pkcs8', format: 'pem' }).toString()) as any;
+            if (!opened || opened.canary !== true) {
+                throw new Error('Local crypto self-test failed; transfer aborted.');
+            }
             return { status: 'mock-loopback', bytes, keyId: envelope.keyId, endpoint: 'mock-loopback', at };
         }
         const fetchFn = this.deps.fetchFn || fetch;
+        const timeoutSupported = typeof AbortSignal !== 'undefined'
+            && typeof (AbortSignal as any).timeout === 'function';
+        const signal = timeoutSupported ? (AbortSignal as any).timeout(30_000) : undefined;
         let response: any;
         try {
             response = await fetchFn(target, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ envelope })
+                body: JSON.stringify({ envelope }),
+                ...(signal ? { signal } : {})
             });
         } catch (error) {
-            throw new Error(`Transfer endpoint unreachable: ${error instanceof Error ? error.message : String(error)}`);
+            const timedOut = error instanceof Error && /abort|timeout/i.test(error.message);
+            throw new Error(timedOut
+                ? 'Transfer timed out after 30 seconds. Retry when the receiving system responds.'
+                : `Transfer endpoint unreachable: ${error instanceof Error ? error.message : String(error)}`);
         }
         if (!response || !response.ok) {
             throw new Error(`Transfer rejected (HTTP ${response?.status || 'unknown'}).`);

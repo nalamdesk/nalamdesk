@@ -945,5 +945,14 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 22,
+        up: (db: any) => {
+            console.log('Running Migration v22 (transfer endpoint and recipient key)...');
+            ['abdm_hip_endpoint TEXT', 'abdm_recipient_key TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+        }
     }
 ];

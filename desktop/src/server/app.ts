@@ -12,6 +12,7 @@ import { invokeDbMethod } from '../shared/ipc-db-args';
 import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmSessionService } from '../main/services/AbdmSessionService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
+import { FideliusService } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
 
 loadDevelopmentEnv();
@@ -26,7 +27,7 @@ const JWT_SECRET = process.env['JWT_SECRET'] || crypto.randomBytes(64).toString(
 const ABDM_SERVICE_METHODS = new Set([
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
-    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha'
+    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle'
 ]);
 
 const ALLOWED_IPC_METHODS = [
@@ -46,7 +47,7 @@ const ALLOWED_IPC_METHODS = [
     'getMedications', 'saveMedication', 'deleteMedication',
     'getPatientSafetyContext',
     'abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken',
-    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox',
+    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox', 'abdmTransferBundle',
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha',
@@ -99,7 +100,9 @@ export class ApiServer {
                     hip_id: settings.abdm_hip_id || '',
                     counter_id: settings.abdm_counter_id || '',
                     hfr_id: settings.abdm_hfr_id || '',
-                    hpr_id: settings.abdm_hpr_id || ''
+                    hpr_id: settings.abdm_hpr_id || '',
+                    hip_endpoint: settings.abdm_hip_endpoint || '',
+                    has_recipient_key: !!settings.abdm_recipient_key
                 };
             }
             case 'abdmSaveConfig': {
@@ -117,6 +120,22 @@ export class ApiServer {
                             throw new Error('Registry IDs must be under 100 characters.');
                         }
                         patch[`abdm_${key}`] = String(payload[key]).trim();
+                    }
+                }
+                if (typeof payload['hip_endpoint'] === 'string') {
+                    const endpoint = String(payload['hip_endpoint']).trim();
+                    if (endpoint && !/^https:\/\//.test(endpoint)) {
+                        throw new Error('Transfer endpoint must be an https URL.');
+                    }
+                    patch['abdm_hip_endpoint'] = endpoint;
+                }
+                if (typeof payload['recipient_key'] === 'string') {
+                    const key = String(payload['recipient_key']).trim();
+                    if (key) {
+                        if (Buffer.from(key, 'base64').length !== 32) {
+                            throw new Error('Recipient key must be a 32-byte X25519 public key.');
+                        }
+                        patch['abdm_recipient_key'] = key;
                     }
                 }
                 if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
@@ -152,6 +171,16 @@ export class ApiServer {
                     abhaAddress: payload['abhaAddress'] ?? null,
                     abhaName: payload['abhaName'] ?? null
                 }, user?.id);
+            case 'abdmTransferBundle': {
+                const recipientKey = db.getSettings()?.abdm_recipient_key || '';
+                if (!recipientKey) {
+                    throw new Error('No recipient key configured. Add one under Settings → ABDM first.');
+                }
+                if (!payload['bundle']) throw new Error('A health record bundle is required.');
+                const fidelius = new FideliusService();
+                return fidelius.pushBundle(
+                    payload['bundle'], recipientKey, db.getSettings()?.abdm_hip_endpoint || '');
+            }
             default:
                 throw new Error(`Method not implemented: ${method}`);
         }

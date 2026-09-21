@@ -52,9 +52,10 @@ export class SettingsComponent implements OnInit {
   isElectron = !!(window as any).electron;
 
   // ABDM gateway (separate tab; secret handled via its own IPC, never in settings)
-  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string; hfr_id: string; hpr_id: string } =
-    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '', hfr_id: '', hpr_id: '' };
+  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string; hfr_id: string; hpr_id: string; hip_endpoint: string; has_recipient_key: boolean } =
+    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '', hfr_id: '', hpr_id: '', hip_endpoint: '', has_recipient_key: false };
   abdmSecret = '';
+  abdmRecipientKey = '';
   abdmTest: { ok: boolean; mode: string; detail: string; latencyMs?: number } | null = null;
   abdmBusy = false;
   abdmSaved = false;
@@ -390,8 +391,11 @@ export class SettingsComponent implements OnInit {
             hip_id: config.hip_id || '',
             counter_id: config.counter_id || '',
             hfr_id: config.hfr_id || '',
-            hpr_id: config.hpr_id || ''
+            hpr_id: config.hpr_id || '',
+            hip_endpoint: config.hip_endpoint || '',
+            has_recipient_key: !!config.has_recipient_key
           };
+          this.abdmRecipientKey = '';
           void this.generateQr();
         }
       });
@@ -402,16 +406,22 @@ export class SettingsComponent implements OnInit {
     if (this.abdmBusy) return;
     this.abdmBusy = true;
     try {
-      await this.dataService.invoke('abdmSaveConfig', {
+      const payload: Record<string, unknown> = {
         gateway_env: this.abdmConfig.gateway_env,
         client_id: this.abdmConfig.client_id,
         hip_id: this.abdmConfig.hip_id || '',
         counter_id: this.abdmConfig.counter_id || '',
         hfr_id: this.abdmConfig.hfr_id || '',
         hpr_id: this.abdmConfig.hpr_id || '',
+        hip_endpoint: this.abdmConfig.hip_endpoint || '',
         mock: this.abdmConfig.mock !== false
-      });
+      };
+      // Only send a recipient key when the field holds a new one; an empty
+      // field must never wipe the stored key.
+      if (this.abdmRecipientKey.trim()) payload['recipient_key'] = this.abdmRecipientKey.trim();
+      await this.dataService.invoke('abdmSaveConfig', payload);
       this.ngZone.run(() => {
+        this.abdmRecipientKey = '';
         this.abdmSaved = true;
         setTimeout(() => this.abdmSaved = false, 3000);
       });

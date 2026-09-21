@@ -556,6 +556,9 @@ import { newRequestId } from '../../services/request-id';
                     <button (click)="exportHealthRecord()" class="px-4 py-2 bg-white border border-gray-300 rounded font-medium hover:bg-gray-100 transition">
                         Export Record
                     </button>
+                    <button (click)="transferHealthRecord()" [disabled]="transferBusy" class="px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded font-medium hover:bg-blue-50 transition disabled:opacity-50">
+                        {{ transferBusy ? 'Sending...' : 'Secure Share' }}
+                    </button>
 
                     <button (click)="printVisit()" class="px-4 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-md transition">
                         Print Record
@@ -1241,6 +1244,58 @@ export class PatientDetailsComponent implements OnInit {
             anchor.download = `health-record-${this.selectedVisit.id || 'visit'}.json`;
             anchor.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+    }
+
+    transferBusy = false;
+
+    // Encrypts the current receipt bundle for the configured recipient and
+    // pushes it. Without a live endpoint the transfer loopbacks on-device
+    // and the dialog says so — nothing silently pretends to leave.
+    async transferHealthRecord() {
+        if (!this.selectedVisit || this.transferBusy) return;
+        this.transferBusy = true;
+        try {
+            const settings = await this.dataService.invoke<any>('getPublicSettings').catch(() => null);
+            const clinicName = settings?.clinic_name || 'NalamDesk Clinic';
+            const abdm = await this.dataService.invoke<any>('abdmGetConfig').catch(() => null);
+            if (!abdm?.has_recipient_key) {
+                await this.dialogService.open({
+                    title: 'No recipient key',
+                    message: 'Add a recipient public key under Settings → ABDM → Secure Transfer first.',
+                    type: 'warning'
+                });
+                return;
+            }
+            const { json, warnings } = this.buildHealthRecordJson(clinicName, {
+                hfrId: abdm?.hfr_id || undefined,
+                hprId: abdm?.hpr_id || undefined
+            });
+            if (warnings.length > 0) {
+                await this.dialogService.open({
+                    title: 'Exported with notes',
+                    message: warnings.join('\n'),
+                    type: 'info'
+                });
+            }
+            const receipt: any = await this.dataService.invoke('abdmTransferBundle', {
+                bundle: JSON.parse(json)
+            });
+            await this.dialogService.open({
+                title: receipt?.status === 'delivered' ? 'Record sent' : 'Test transfer complete',
+                message: receipt?.status === 'delivered'
+                    ? `Encrypted record delivered (${receipt.bytes} bytes).`
+                    : 'No live endpoint is configured, so the encrypted record looped back on this device for testing.',
+                type: 'success'
+            });
+        } catch (e) {
+            await this.dialogService.open({
+                title: 'Transfer failed',
+                message: e instanceof Error ? e.message : 'Could not send the record.',
+                type: 'error'
+            });
+        } finally {
+            this.transferBusy = false;
         }
     }
 

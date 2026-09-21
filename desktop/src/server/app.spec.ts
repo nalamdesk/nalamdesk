@@ -8,6 +8,7 @@ const JWT_SECRET = vi.hoisted(() => {
 
 import * as jwt from 'jsonwebtoken';
 import * as os from 'node:os';
+import * as crypto from 'node:crypto';
 import { ApiServer } from './app';
 
 function authHeader(user: { id: number; role: string; username?: string }) {
@@ -297,9 +298,15 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         db = {
             beginWork: vi.fn(),
             endWork: vi.fn(),
-            getPermissions: vi.fn().mockImplementation((role: string) => role === 'receptionist'
-                ? ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig']
-                : []),
+            getPermissions: vi.fn().mockImplementation((role: string) => {
+                if (role === 'receptionist') {
+                    return ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig'];
+                }
+                if (role === 'doctor') {
+                    return ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig', 'abdmTransferBundle'];
+                }
+                return [];
+            }),
             getSettings: vi.fn().mockReturnValue({}),
             saveSettings: vi.fn().mockImplementation((patch: any) => {
                 savedSettings.push(patch);
@@ -362,5 +369,31 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
             expect.objectContaining({ abhaAddress: 'asha@sbx' }),
             expect.anything()
         );
+    });
+
+    it('transfers bundles over LAN without exposing the recipient key', async () => {
+        const { generateKeyPairSync } = await import('node:crypto');
+        const { publicKey } = generateKeyPairSync('x25519', {
+            publicKeyEncoding: { type: 'spki', format: 'pem' },
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        const raw = crypto.createPublicKey(publicKey)
+            .export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
+        db.getSettings = vi.fn().mockReturnValue({
+            abdm_recipient_key: raw,
+            abdm_hip_endpoint: ''
+        });
+        const response = await postIpc('abdmTransferBundle', [
+            { bundle: { resourceType: 'Bundle', entry: [] } }
+        ], 'doctor');
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ status: 'mock-loopback' });
+    });
+
+    it('rejects LAN transfers for nurses', async () => {
+        const response = await postIpc('abdmTransferBundle', [
+            { bundle: { resourceType: 'Bundle', entry: [] } }
+        ], 'nurse');
+        expect(response.statusCode).toBe(403);
     });
 });

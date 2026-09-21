@@ -586,5 +586,54 @@ describe('PatientDetailsComponent', () => {
         expect(encounter.identifier).toEqual(
             expect.arrayContaining([expect.objectContaining({ value: 'OP-2026-0042' })]));
     });
+
+    it('asks for a recipient key before transferring', async () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith',
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmGetConfig') return Promise.resolve({ has_recipient_key: false });
+            return Promise.resolve(null);
+        });
+
+        await component.transferHealthRecord();
+
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'No recipient key'
+        }));
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('abdmTransferBundle', expect.anything());
+        expect(component.transferBusy).toBe(false);
+    });
+
+    it('transfers the receipt bundle and reports the receipt honestly', async () => {
+        component.patient = { id: 1, name: 'Asha' };
+        component.currentUser = { id: 10, name: 'Dr. Smith' };
+        component.selectedVisit = {
+            id: 9, doctor_id: 10, doctor_name: 'Dr. Smith',
+            date: '2026-09-10T09:00:00.000Z', diagnosis: 'Follow-up', prescription: []
+        };
+        component.allergies = [];
+        component.conditions = [];
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmGetConfig') return Promise.resolve({ has_recipient_key: true });
+            if (method === 'abdmTransferBundle') {
+                return Promise.resolve({ status: 'mock-loopback', bytes: 128 });
+            }
+            return Promise.resolve(null);
+        });
+
+        await component.transferHealthRecord();
+
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmTransferBundle',
+            expect.objectContaining({ bundle: expect.objectContaining({ resourceType: 'Bundle' }) }));
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Test transfer complete'
+        }));
+    });
 });
 

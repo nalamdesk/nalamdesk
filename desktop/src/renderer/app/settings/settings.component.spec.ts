@@ -382,4 +382,23 @@ describe('SettingsComponent Validation', () => {
         expect(mockData.invoke).toHaveBeenCalledWith('abdmAckInbox', { id: 3 });
         expect(mockData.invoke).toHaveBeenCalledWith('abdmGetInbox');
     });
+
+    it('sends a recipient key only when the field holds a new one', async () => {
+        mockData.invoke.mockResolvedValue(null);
+        component.abdmRecipientKey = '';
+        component.abdmConfig.hip_endpoint = 'https://hip.example/push';
+
+        await component.saveAbdmConfig();
+
+        const payload = mockData.invoke.mock.calls
+            .find((call: any[]) => call[0] === 'abdmSaveConfig')[1];
+        expect(payload.hip_endpoint).toBe('https://hip.example/push');
+        expect('recipient_key' in payload).toBe(false);
+
+        component.abdmRecipientKey = 'QUJD';
+        await component.saveAbdmConfig();
+        const payload2 = mockData.invoke.mock.calls
+            .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
+        expect(payload2.recipient_key).toBe('QUJD');
+    });
 });

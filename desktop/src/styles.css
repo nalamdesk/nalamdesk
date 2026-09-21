@@ -12604,12 +12604,12 @@ html:has(.drawer-toggle:checked) {
   width: 1px;
 }
 
-.min-w-\[70px\] {
-  min-width: 70px;
-}
-
 .min-w-0 {
   min-width: 0px;
+}
+
+.min-w-\[70px\] {
+  min-width: 70px;
 }
 
 .max-w-2xl {

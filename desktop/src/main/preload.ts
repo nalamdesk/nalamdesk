@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('electron', {
         abdmGetShareTokens: () => ipcRenderer.invoke('db:abdmGetShareTokens'),
         abdmGetInbox: () => ipcRenderer.invoke('db:abdmGetInbox'),
         abdmAckInbox: (input: any) => ipcRenderer.invoke('db:abdmAckInbox', input),
+        abdmTransferBundle: (input: any) => ipcRenderer.invoke('db:abdmTransferBundle', input),
         abdmAcceptShareToken: (input: any) => ipcRenderer.invoke('db:abdmAcceptShareToken', input),
         abdmAcceptShareTokenAndCheckIn: (input: any) => ipcRenderer.invoke('db:abdmAcceptShareTokenAndCheckIn', input),
         abdmSimulateShare: () => ipcRenderer.invoke('db:abdmSimulateShare')

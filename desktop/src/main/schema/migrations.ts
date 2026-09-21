@@ -979,5 +979,29 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 24,
+        up: (db: any) => {
+            console.log('Running Migration v24 (care context sequence)...');
+            // Per-year counters independent of deletable visit rows, so a
+            // deleted encounter can never cause its reference to be reused.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS care_context_seq (
+                    year INTEGER PRIMARY KEY,
+                    last_no INTEGER NOT NULL DEFAULT 0
+                );
+            `);
+            try {
+                db.exec(`
+                    INSERT INTO care_context_seq (year, last_no)
+                    SELECT CAST(SUBSTR(care_context_ref, 4, 4) AS INTEGER) AS year,
+                           MAX(CAST(SUBSTR(care_context_ref, 9) AS INTEGER)) AS last_no
+                    FROM visits WHERE care_context_ref LIKE 'OP-%'
+                    GROUP BY year
+                    ON CONFLICT(year) DO UPDATE SET last_no = MAX(last_no, excluded.last_no);
+                `);
+            } catch (e) { }
+        }
     }
 ];

@@ -736,6 +736,22 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(enc2.care_context_ref).toBe(`OP-${year}-0002`);
         });
 
+        it('never reuses a care context reference after encounter deletion', () => {
+            const year = new Date().getFullYear();
+            const q1 = queuePatient(1);
+            const enc1 = service.beginConsultation(
+                { patientId: 1, queueEntryId: Number(q1.lastInsertRowid), startRequestId: 'cc-del-1' }, 10);
+            expect(enc1.care_context_ref).toBe(`OP-${year}-0001`);
+
+            service.completeConsultation({ encounterId: enc1.id, visit: { diagnosis: 'Done' } }, 10);
+            service.deleteVisit(enc1.id);
+
+            const q2 = queuePatient(2);
+            const enc2 = service.beginConsultation(
+                { patientId: 2, queueEntryId: Number(q2.lastInsertRowid), startRequestId: 'cc-del-2' }, 10);
+            expect(enc2.care_context_ref).toBe(`OP-${year}-0002`);
+        });
+
         it('queues gateway callbacks and acknowledges them once', () => {
             const row: any = service.receiveInboxCallback('consent-request', { requestId: 'r-1' }, 20);
             expect(row.status).toBe('pending');

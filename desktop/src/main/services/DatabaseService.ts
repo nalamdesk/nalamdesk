@@ -500,16 +500,20 @@ export class DatabaseService {
     }
 
     // Care context references (`OP-YYYY-NNNN`) durably link an encounter to
-    // its ABDM care context. Numbers restart each calendar year; assignment
-    // happens inside the encounter transactions below, so concurrent begins
-    // can never share a number.
+    // its ABDM care context. Numbers come from a per-year sequence table —
+    // never from MAX() over visits — so deleting an encounter can never
+    // cause its externally visible reference to be reused. Called inside the
+    // encounter transactions, so concurrent begins cannot share a number.
     private nextCareContextRef(): string {
         const year = new Date().getFullYear();
+        this.db.prepare(
+            `INSERT INTO care_context_seq (year, last_no) VALUES (?, 0)
+             ON CONFLICT(year) DO NOTHING`
+        ).run(year);
         const row = this.db.prepare(
-            `SELECT COALESCE(MAX(CAST(SUBSTR(care_context_ref, 9) AS INTEGER)), 0) AS maxNo
-             FROM visits WHERE care_context_ref LIKE ?`
-        ).get(`OP-${year}-%`) as any;
-        return `OP-${year}-${String(Number(row?.maxNo || 0) + 1).padStart(4, '0')}`;
+            `UPDATE care_context_seq SET last_no = last_no + 1 WHERE year = ? RETURNING last_no`
+        ).get(year) as any;
+        return `OP-${year}-${String(Number(row?.last_no || 0)).padStart(4, '0')}`;
     }
 
     // Scan & Share intake: stores a gateway profile-share callback as a

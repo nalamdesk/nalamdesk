@@ -35,4 +35,31 @@ describe('VisitListComponent layout', () => {
             state: { visitId: 42, mode: 'view' }
         });
     });
+
+    it('defaults to cards and persists the narrow-viewport view override', () => {
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        expect(component.mobileView).toBe('cards');
+        component.setMobileView('grid');
+        expect(component.mobileView).toBe('grid');
+        component.ngOnInit();
+        expect(component.mobileView).toBe('grid');
+        component.setMobileView('cards');
+    });
+
+    it('filters visits client-side across patient, diagnosis, and doctor', () => {
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        component.visits = [
+            { patient_name: 'Ramesh Gupta', diagnosis: 'Hypertension', doctor_name: 'Dr. Meera Krishnan' },
+            { patient_name: 'Arjun Karthik', diagnosis: 'Viral fever', doctor_name: 'Dr. Meera Krishnan' }
+        ] as any;
+        expect(component.visibleVisits()).toHaveLength(2);
+        component.searchTerm = 'ramesh';
+        expect(component.visibleVisits()).toHaveLength(1);
+        component.searchTerm = 'fever';
+        expect(component.visibleVisits()).toHaveLength(1);
+        component.searchTerm = 'meera';
+        expect(component.visibleVisits()).toHaveLength(2);
+        component.searchTerm = 'no-match-xyz';
+        expect(component.visibleVisits()).toHaveLength(0);
+    });
 });

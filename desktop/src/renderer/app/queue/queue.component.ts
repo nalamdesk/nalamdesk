@@ -9,26 +9,35 @@ import { VitalsFormComponent } from '../visits/vitals/vitals-form.component';
 import { newRequestId } from '../services/request-id';
 import { DialogService } from '../shared/services/dialog.service';
 import { SharedTableComponent } from '../shared/components/table/table.component';
+import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../shared/components/view-toggle/view-toggle.component';
 import { ColDef } from 'ag-grid-community';
 import { DoctorPickService } from '../shared/services/doctor-pick.service';
 
 @Component({
   selector: 'app-queue',
   standalone: true,
-  imports: [CommonModule, FormsModule, VitalsFormComponent, SharedTableComponent],
+  imports: [CommonModule, DatePipe, FormsModule, VitalsFormComponent, SharedTableComponent, ViewToggleComponent],
   template: `
     <div class="h-full bg-gray-50 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
       <div class="w-full">
-        <!-- Header -->
-        <div class="flex justify-between items-center mb-4">
-          <div class="flex items-center gap-4">
-            <button (click)="goBack()" class="btn btn-circle btn-ghost" aria-label="Back">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-            </button>
-            <div>
-              <h1 class="text-2xl font-bold text-gray-800">Patient Queue</h1>
-              <p class="text-gray-600">Actionable clinical triage and consultations</p>
+        <!-- Header: Queue is top-level nav (sidebar + breadcrumb), so no back
+             button. Subline is operational counts, not marketing copy. -->
+        <div class="flex flex-wrap items-end justify-between gap-2 mb-4">
+          <div>
+            <h1 class="text-2xl font-bold text-gray-800">Patient Queue</h1>
+            <p class="text-sm text-gray-500">{{ waitingCount() }} waiting · {{ inConsultCount() }} in consultation</p>
+          </div>
+          <div class="flex items-center gap-2 w-full sm:w-auto">
+            <div class="relative flex-1 sm:flex-none">
+              <input type="text" [(ngModel)]="searchTerm" placeholder="Search name, mobile, urgency…"
+                     aria-label="Search queue"
+                     class="w-full sm:w-64 pl-9 pr-3 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+              <span class="absolute left-2.5 top-2 text-gray-400">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
+              </span>
             </div>
+            <!-- Narrow-viewport view switch: cards for triage flow, grid for filter/sort -->
+            <app-view-toggle class="md:hidden" [value]="mobileView" (valueChange)="setMobileView($event)" label="Queue view"></app-view-toggle>
           </div>
         </div>
 
@@ -50,13 +59,46 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
             </button>
           </div>
         </div>
-        <div class="h-[calc(100vh-15rem)] min-h-[320px]">
-          <app-shared-table [rowData]="queue()" [columnDefs]="queueColumnDefs" [pagination]="false" [pageSize]="50">
+        <div class="h-[calc(100vh-15rem)] min-h-[320px]"
+             [ngClass]="mobileView === 'grid' ? 'block' : 'hidden md:block'">
+          <app-shared-table [rowData]="visibleQueue()" [columnDefs]="queueColumnDefs" [pagination]="false" [pageSize]="50">
             <div toolbar-left class="flex items-center gap-2">
-              <span class="text-xs text-gray-500">{{ queue().length }} in queue</span>
+              <span class="text-xs text-gray-500">{{ visibleQueue().length }} of {{ queue().length }} in queue</span>
             </div>
           </app-shared-table>
         </div>
+        <!-- Compact cards for narrow / LAN-phone viewports: same data and
+             actions, no horizontal grid scroll. -->
+        <div class="max-h-[calc(100vh-16rem)] overflow-y-auto space-y-2 pb-4"
+             [ngClass]="mobileView === 'cards' ? 'block md:hidden' : 'hidden'">
+          <div *ngIf="visibleQueue().length === 0" class="text-center text-sm text-gray-500 py-8">No patients match</div>
+          <div *ngFor="let item of visibleQueue()" class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+            <div class="flex items-center justify-between gap-2">
+              <span class="badge badge-sm font-bold uppercase tracking-wider {{ urgencyBadgeClass(getItemUrgency(item)) }}">{{ getItemUrgency(item) }}</span>
+              <span class="font-mono text-xs text-gray-500">{{ item.check_in_time ? (item.check_in_time | date:'shortTime') : '' }} · {{ getWaitTime(item.check_in_time) }} wait</span>
+            </div>
+            <div class="mt-1.5 font-bold text-gray-800">{{ item.patient_name }}</div>
+            <div class="text-xs text-gray-500">{{ item.age }} years • {{ item.gender }}</div>
+            <div *ngIf="item.has_abnormal_vitals" class="badge badge-error badge-outline gap-1 text-xs mt-1 font-semibold">Abnormal Vitals</div>
+            <div *ngIf="item.triage_notes" class="text-xs text-gray-500 italic mt-1">{{ item.triage_notes }}</div>
+            <div class="mt-2.5 flex items-center gap-1.5">
+              <button (click)="startConsult(item)" class="btn btn-primary btn-sm flex-1">{{ item.active_encounter_id ? 'Resume Consult' : 'Start Consult' }}</button>
+              <button (click)="openRowMenu(item, $event)" class="btn btn-ghost btn-sm btn-square border border-gray-200" [attr.aria-label]="'More actions for ' + item.patient_name">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row overflow menu: fixed overlay so grid row bounds never clip it -->
+      <div *ngIf="rowMenu" class="fixed inset-0 z-40" (click)="closeRowMenu()"></div>
+      <div *ngIf="rowMenu" role="menu" aria-label="Queue row actions"
+           class="fixed z-50 w-56 bg-white rounded-lg border border-gray-200 py-1"
+           [ngStyle]="{ left: rowMenu.x + 'px', top: rowMenu.y + 'px' }">
+        <button role="menuitem" (click)="menuAction('triage')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Triage reassessment</button>
+        <button role="menuitem" (click)="menuAction('vitals')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Record vitals</button>
+        <button *ngIf="rowMenu.item.status !== 'in-consult'" role="menuitem" (click)="menuAction('remove')" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Remove from queue</button>
       </div>
       
       <!-- Reassess Triage Modal -->
@@ -148,6 +190,29 @@ export class QueueComponent implements OnInit, OnDestroy {
   refreshIntervalId: any;
   private readonly startRequestIds = new Map<number, string>();
 
+  // Client-side search across identity + triage fields. One code path feeds
+  // both the grid and the compact cards, so narrow viewports filter the same.
+  searchTerm = '';
+  // Narrow-viewport layout override; desktop always uses the grid.
+  mobileView: CompactView = 'cards';
+  private static readonly MOBILE_VIEW_KEY = 'nalamdesk.queue.mobileView';
+
+  visibleQueue(): any[] {
+    const term = this.searchTerm.trim().toLowerCase();
+    if (!term) return this.queue();
+    return this.queue().filter((q: any) => [q?.patient_name, q?.mobile, q?.urgency, q?.status, q?.triage_notes]
+      .some((v: unknown) => String(v ?? '').toLowerCase().includes(term)));
+  }
+
+  setMobileView(view: CompactView): void {
+    this.mobileView = view;
+    persistCompactView(QueueComponent.MOBILE_VIEW_KEY, view);
+  }
+
+  private restoreMobileView(): void {
+    this.mobileView = restoreCompactView(QueueComponent.MOBILE_VIEW_KEY);
+  }
+
   private escHtml(value: unknown): string {
     const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
     return String(value ?? '').replace(/[&<>"']/g, (c) => map[c]);
@@ -155,8 +220,9 @@ export class QueueComponent implements OnInit, OnDestroy {
 
   // Standard AG Grid columns (shared-table). Same clinical chrome as the
   // previous hand table: urgency badges, patient identity with vitals alerts,
-  // check-in times, status, and per-row actions. All row buttons stay visible
-  // (no hover reveal) so touch and keyboard users get the same actions.
+  // check-in times, status, and one primary action plus an overflow menu.
+  // Secondary actions live in the fixed row menu so rows stay scannable and
+  // narrow viewports get the card layout instead of grid scroll.
   queueColumnDefs: ColDef[] = [
     {
       headerName: 'Urgency / Triage', flex: 1.2, minWidth: 150,
@@ -165,9 +231,7 @@ export class QueueComponent implements OnInit, OnDestroy {
       comparator: (a: any, b: any) => this.urgencyRank(a) - this.urgencyRank(b),
       cellRenderer: (params: any) => {
         const level = String(params.value || 'routine');
-        const badge = level === 'immediate' ? 'badge-error text-white animate-pulse'
-          : level === 'urgent' ? 'badge-warning'
-          : level === 'priority' ? 'badge-info' : 'badge-ghost text-gray-700';
+        const badge = this.urgencyBadgeClass(level);
         const notes = params.data?.triage_notes
           ? `<div class="text-xs text-gray-500 italic" title="${this.escHtml(params.data.triage_notes)}">${this.escHtml(params.data.triage_notes)}</div>`
           : '';
@@ -217,26 +281,23 @@ export class QueueComponent implements OnInit, OnDestroy {
       }
     },
     {
-      headerName: 'Actions', flex: 1.6, minWidth: 280, sortable: false, filter: false,
+      headerName: 'Actions', flex: 1.1, minWidth: 210, sortable: false, filter: false,
       cellRenderer: (params: any) => {
         const item = params.data;
         if (!item) return '';
         const consultLabel = item.active_encounter_id ? 'Resume Consult' : 'Start Consult';
-        const waiting = `<button data-action="triage" class="btn btn-warning btn-outline btn-sm">Triage</button>
-          <button data-action="vitals" class="btn btn-secondary btn-sm">Vitals</button>
-          <button data-action="consult" class="btn btn-primary btn-sm">${consultLabel}</button>
-          <button data-action="remove" class="btn btn-error btn-outline btn-sm">Remove</button>`;
-        const inConsult = `<button data-action="consult" class="btn btn-primary btn-sm">Resume Consult</button>`;
-        return `<div class="flex flex-wrap gap-1">${item.status === 'in-consult' ? inConsult : waiting}</div>`;
+        return `<div class="flex items-center gap-1">` +
+          `<button data-action="consult" class="btn btn-primary btn-sm">${consultLabel}</button>` +
+          `<button data-action="menu" aria-label="More actions" class="btn btn-ghost btn-sm btn-square border border-gray-200">` +
+          `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>` +
+          `</button></div>`;
       },
       onCellClicked: (params: any) => {
         const action = (params.event?.target as HTMLElement)?.closest?.('[data-action]')?.getAttribute('data-action');
         const item = params.data;
         if (!action || !item) return;
-        if (action === 'triage') this.openTriageModal(item);
-        else if (action === 'vitals') this.openVitals(item);
-        else if (action === 'consult') this.startConsult(item);
-        else if (action === 'remove') this.remove(item.id);
+        if (action === 'consult') this.startConsult(item);
+        else if (action === 'menu') this.openRowMenu(item, params.event);
       }
     }
   ];
@@ -250,6 +311,7 @@ export class QueueComponent implements OnInit, OnDestroy {
   ) { }
 
   ngOnInit() {
+    this.restoreMobileView();
     this.refreshQueue();
     this.refreshShareTokens();
     // Poll every 30 seconds
@@ -278,6 +340,10 @@ export class QueueComponent implements OnInit, OnDestroy {
 
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && this.rowMenu) {
+      this.closeRowMenu();
+      return;
+    }
     this.acceptFirstTokenIfIdle(event);
   }
 
@@ -325,8 +391,47 @@ export class QueueComponent implements OnInit, OnDestroy {
     }
   }
 
-  goBack() {
-    this.router.navigate(['/dashboard']);
+  waitingCount(): number {
+    return this.queue().filter((q: any) => q?.status === 'waiting').length;
+  }
+
+  inConsultCount(): number {
+    return this.queue().filter((q: any) => q?.status === 'in-consult').length;
+  }
+
+  urgencyBadgeClass(level: unknown): string {
+    switch (String(level || '').toLowerCase()) {
+      case 'immediate': return 'badge-error text-white animate-pulse';
+      case 'urgent': return 'badge-warning';
+      case 'priority': return 'badge-info';
+      default: return 'badge-ghost text-gray-700';
+    }
+  }
+
+  // Row overflow menu (fixed overlay; grid rows clip inner dropdowns).
+  rowMenu: { item: any; x: number; y: number } | null = null;
+  private static readonly ROW_MENU_WIDTH = 224;
+
+  openRowMenu(item: any, event?: Event): void {
+    const anchor = (event?.target as HTMLElement | undefined)?.closest?.('button');
+    const rect = anchor?.getBoundingClientRect();
+    const maxX = Math.max(8, window.innerWidth - QueueComponent.ROW_MENU_WIDTH - 8);
+    const x = Math.min(rect?.left ?? maxX, maxX);
+    const y = Math.min((rect?.bottom ?? 96) + 4, Math.max(8, window.innerHeight - 190));
+    this.rowMenu = { item, x: Math.max(8, x), y };
+  }
+
+  closeRowMenu(): void {
+    this.rowMenu = null;
+  }
+
+  menuAction(action: 'triage' | 'vitals' | 'remove'): void {
+    const item = this.rowMenu?.item;
+    this.closeRowMenu();
+    if (!item) return;
+    if (action === 'triage') this.openTriageModal(item);
+    else if (action === 'vitals') this.openVitals(item);
+    else if (action === 'remove') void this.remove(item.id);
   }
 
   getItemUrgency(item: any): string {
@@ -352,6 +457,8 @@ export class QueueComponent implements OnInit, OnDestroy {
       this.queue.set(data);
     } catch (e) {
       console.error('Failed to load queue', e);
+    } finally {
+      this.closeRowMenu();
     }
   }
 

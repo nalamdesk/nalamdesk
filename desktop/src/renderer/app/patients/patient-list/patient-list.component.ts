@@ -8,21 +8,25 @@ import { AuthService } from '../../services/auth.service';
 import { DialogService } from '../../shared/services/dialog.service';
 import { DatePickerComponent } from '../../shared/components/date-picker/date-picker.component';
 import { SharedTableComponent } from '../../shared/components/table/table.component';
+import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../../shared/components/view-toggle/view-toggle.component';
 import { PatientActionsRenderer } from './patient-actions.component';
 import { ColDef } from 'ag-grid-community';
 
 @Component({
   selector: 'app-patient-list',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, ViewToggleComponent],
   template: `
     <div class="h-full bg-gray-100 p-4 md:p-6 flex flex-col overflow-hidden">
       <div class="w-full">
         <div class="flex justify-between items-center mb-6">
           <h1 class="text-3xl font-bold text-gray-800">Patients</h1>
-          <button (click)="openAddModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition shadow-sm">
-            + Add Patient
-          </button>
+          <div class="flex items-center gap-2">
+            <app-view-toggle class="md:hidden" [value]="mobileView" (valueChange)="setMobileView($event)" label="Patients view"></app-view-toggle>
+            <button (click)="openAddModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition shadow-sm">
+              + Add Patient
+            </button>
+          </div>
         </div>
 
         <!-- Search Bar -->
@@ -40,7 +44,7 @@ import { ColDef } from 'ag-grid-community';
         </div>
 
         <!-- AG Grid Data Table -->
-        <div class="flex-1 h-[calc(100vh-200px)]">
+        <div class="flex-1 h-[calc(100vh-200px)]" [ngClass]="mobileView === 'grid' ? 'block' : 'hidden md:block'">
            <app-shared-table
               [rowData]="gridData"
               [columnDefs]="colDefs"
@@ -59,6 +63,31 @@ import { ColDef } from 'ag-grid-community';
                   </button>
               </div>
            </app-shared-table>
+        </div>
+        <!-- Compact cards for narrow viewports: server-filtered gridData, same actions -->
+        <div class="max-h-[calc(100vh-280px)] min-h-[200px] overflow-y-auto space-y-2 pb-4" [ngClass]="mobileView === 'cards' ? 'block md:hidden' : 'hidden'">
+          <div *ngIf="gridData.length === 0" class="text-center text-sm text-gray-500 py-8">No patients found</div>
+          <div *ngFor="let p of gridData" (click)="goToVisit(p)"
+               class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-full bg-neutral text-neutral-content flex items-center justify-center font-bold shrink-0">
+                {{ (p.name || '?').charAt(0).toUpperCase() }}
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-gray-800 truncate">{{ p.name }}</div>
+                <div class="text-xs text-gray-500">{{ p.mobile }} · {{ p.age }} / {{ p.gender }}</div>
+              </div>
+              <span *ngIf="p.inQueue" class="badge badge-sm badge-primary shrink-0">In Queue</span>
+            </div>
+            <div class="mt-2.5 flex items-center gap-1.5">
+              <button (click)="$event.stopPropagation(); addToQueue(p)" [disabled]="p.inQueue"
+                      class="btn btn-sm flex-1"
+                      [ngClass]="p.inQueue ? 'btn-ghost text-gray-400' : 'btn-primary'">
+                {{ p.inQueue ? 'In Queue' : 'Add to Queue' }}
+              </button>
+              <button (click)="$event.stopPropagation(); editPatient(p)" class="btn btn-sm btn-ghost border border-gray-200">Edit</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -258,6 +287,14 @@ export class PatientListComponent implements OnInit {
   loading = false;
   searchQuery = '';
   showModal = false;
+  // Narrow-viewport layout override; desktop always uses the grid.
+  mobileView: CompactView = 'cards';
+  private static readonly MOBILE_VIEW_KEY = 'nalamdesk.patients.mobileView';
+
+  setMobileView(view: CompactView): void {
+    this.mobileView = view;
+    persistCompactView(PatientListComponent.MOBILE_VIEW_KEY, view);
+  }
   // Additional details collapsed for rapid intake; expanded when editing.
   showAdditional = false;
 
@@ -360,6 +397,7 @@ export class PatientListComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.mobileView = restoreCompactView(PatientListComponent.MOBILE_VIEW_KEY);
     this.currentUser = this.authService.getUser();
     this.loadPatients();
     this.loadQueueStatus();

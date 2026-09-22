@@ -12147,6 +12147,10 @@ html:has(.drawer-toggle:checked) {
   top: 1rem;
 }
 
+.top-2 {
+  top: 0.5rem;
+}
+
 .z-10 {
   z-index: 10;
 }
@@ -12309,6 +12313,14 @@ html:has(.drawer-toggle:checked) {
   margin-top: 2rem;
 }
 
+.mt-1\.5 {
+  margin-top: 0.375rem;
+}
+
+.mt-2\.5 {
+  margin-top: 0.625rem;
+}
+
 .line-clamp-2 {
   overflow: hidden;
   display: -webkit-box;
@@ -12460,6 +12472,14 @@ html:has(.drawer-toggle:checked) {
   max-height: 95vh;
 }
 
+.max-h-\[calc\(100vh-16rem\)\] {
+  max-height: calc(100vh - 16rem);
+}
+
+.max-h-\[calc\(100vh-280px\)\] {
+  max-height: calc(100vh - 280px);
+}
+
 .min-h-0 {
   min-height: 0px;
 }
@@ -12486,6 +12506,10 @@ html:has(.drawer-toggle:checked) {
 
 .min-h-screen {
   min-height: 100vh;
+}
+
+.min-h-\[200px\] {
+  min-height: 200px;
 }
 
 .w-1\.5 {
@@ -13022,6 +13046,10 @@ html:has(.drawer-toggle:checked) {
 
 .border-t {
   border-top-width: 1px;
+}
+
+.border-l {
+  border-left-width: 1px;
 }
 
 .border-dashed {
@@ -13633,6 +13661,11 @@ html:has(.drawer-toggle:checked) {
   padding-bottom: 2rem;
 }
 
+.py-2\.5 {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+}
+
 .pb-1 {
   padding-bottom: 0.25rem;
 }
@@ -13695,6 +13728,10 @@ html:has(.drawer-toggle:checked) {
 
 .pt-8 {
   padding-top: 2rem;
+}
+
+.pl-9 {
+  padding-left: 2.25rem;
 }
 
 .text-left {
@@ -14920,8 +14957,16 @@ h6 {
     width: 100%;
   }
 
+  .sm\:w-64 {
+    width: 16rem;
+  }
+
   .sm\:max-w-lg {
     max-width: 32rem;
+  }
+
+  .sm\:flex-none {
+    flex: none;
   }
 
   .sm\:flex-row {

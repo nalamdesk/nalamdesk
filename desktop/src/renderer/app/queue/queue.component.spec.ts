@@ -422,10 +422,7 @@ describe('QueueComponent', () => {
         expect(component.getWaitTime(past2h)).toBe('2h 10m');
     });
 
-    it('navigates back and cleans up timer on destroy', () => {
-        component.goBack();
-        expect(mockRouter.navigate).toHaveBeenCalledWith(['/dashboard']);
-
+    it('cleans up timers on destroy', () => {
         component.refreshIntervalId = 12345;
         const clearSpy = vi.spyOn(globalThis, 'clearInterval');
         component.ngOnDestroy();
@@ -445,30 +442,90 @@ describe('QueueComponent', () => {
         expect(routine).toContain('badge-ghost');
     });
 
-    it('dispatches grid actions to the queue workflows', () => {
+    it('dispatches the primary consult action and opens the overflow menu', async () => {
         const actionsCol: any = component.queueColumnDefs[4];
         const item = { id: 1, patient_id: 11, status: 'waiting' };
-        const triageSpy = vi.spyOn(component, 'openTriageModal').mockImplementation(() => {});
-        const vitalsSpy = vi.spyOn(component, 'openVitals').mockImplementation(() => {});
-        const removeSpy = vi.spyOn(component, 'remove').mockResolvedValue(undefined);
+        const consultSpy = vi.spyOn(component, 'startConsult').mockResolvedValue(undefined);
+        const menuSpy = vi.spyOn(component, 'openRowMenu').mockImplementation(() => undefined);
         const click = (action: string) => actionsCol.onCellClicked({
             data: item,
             event: { target: { closest: () => ({ getAttribute: () => action }) } }
         });
 
-        click('triage');
+        click('consult');
+        expect(consultSpy).toHaveBeenCalledWith(item);
+        click('menu');
+        expect(menuSpy).toHaveBeenCalledWith(item, expect.anything());
+    });
+
+    it('routes overflow menu choices to the queue workflows', async () => {
+        const item = { id: 1, patient_id: 11, status: 'waiting' };
+        const triageSpy = vi.spyOn(component, 'openTriageModal').mockImplementation(() => Promise.resolve() as any);
+        const vitalsSpy = vi.spyOn(component, 'openVitals').mockImplementation(() => undefined);
+        const removeSpy = vi.spyOn(component, 'remove').mockResolvedValue(undefined);
+
+        component.rowMenu = { item, x: 0, y: 0 };
+        component.menuAction('triage');
         expect(triageSpy).toHaveBeenCalledWith(item);
-        click('vitals');
+        expect(component.rowMenu).toBeNull();
+
+        component.rowMenu = { item, x: 0, y: 0 };
+        component.menuAction('vitals');
         expect(vitalsSpy).toHaveBeenCalledWith(item);
-        click('remove');
+
+        component.rowMenu = { item, x: 0, y: 0 };
+        await component.menuAction('remove');
         expect(removeSpy).toHaveBeenCalledWith(1);
     });
 
-    it('shows resume wording for live consultations in the actions cell', () => {
+    it('closes the overflow menu on Escape', () => {
+        component.rowMenu = { item: { id: 1 }, x: 0, y: 0 };
+        component.onDocumentKeydown({ key: 'Escape' } as any);
+        expect(component.rowMenu).toBeNull();
+    });
+
+    it('summarises waiting and in-consult counts for the header', () => {
+        component.queue.set([
+            { status: 'waiting' }, { status: 'waiting' }, { status: 'in-consult' }, { status: 'completed' }
+        ] as any);
+        expect(component.waitingCount()).toBe(2);
+        expect(component.inConsultCount()).toBe(1);
+    });
+
+    it('filters the queue client-side across identity and triage fields', () => {
+        component.queue.set([
+            { patient_name: 'Ramesh Gupta', mobile: '9810012345', urgency: 'urgent', status: 'waiting', triage_notes: 'BP review' },
+            { patient_name: 'Arjun Karthik', mobile: '9655011122', urgency: 'immediate', status: 'waiting', triage_notes: 'Fever' }
+        ] as any);
+        expect(component.visibleQueue()).toHaveLength(2);
+        component.searchTerm = 'ramesh';
+        expect(component.visibleQueue()).toHaveLength(1);
+        component.searchTerm = '9655';
+        expect(component.visibleQueue()).toHaveLength(1);
+        component.searchTerm = 'fever';
+        expect(component.visibleQueue()).toHaveLength(1);
+        component.searchTerm = 'no-match-xyz';
+        expect(component.visibleQueue()).toHaveLength(0);
+    });
+
+    it('persists the narrow-viewport view override', () => {
+        component.setMobileView('grid');
+        expect(component.mobileView).toBe('grid');
+        const fresh = new QueueComponent(mockRouter, mockDataService, mockDialogService, mockAuthService);
+        fresh.ngOnInit();
+        expect(fresh.mobileView).toBe('grid');
+        fresh.setMobileView('cards');
+        expect(fresh.mobileView).toBe('cards');
+    });
+
+    it('shows resume wording plus overflow for live consultations in the actions cell', () => {
         const actionsCol: any = component.queueColumnDefs[4];
         const html = actionsCol.cellRenderer({ data: { id: 2, status: 'in-consult', active_encounter_id: 9 } });
         expect(html).toContain('Resume Consult');
-        expect(html).not.toContain('Triage');
+        expect(html).toContain('data-action="menu"');
+        expect(html).not.toContain('data-action="triage"');
+        expect(html).not.toContain('data-action="vitals"');
+        expect(html).not.toContain('data-action="remove"');
     });
 
     it('ranks urgency clinically rather than lexically', () => {

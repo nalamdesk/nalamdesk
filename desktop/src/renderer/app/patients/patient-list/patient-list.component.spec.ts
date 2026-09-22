@@ -160,8 +160,16 @@ describe('PatientListComponent', () => {
     });
 
     // Delete Tests (Batch)
-    it('should delete selected patients', async () => {
-        // Mock confirm
+    it('defaults to cards and persists the narrow-viewport view override', () => {
+        expect(component.mobileView).toBe('cards');
+        component.setMobileView('grid');
+        expect(component.mobileView).toBe('grid');
+        component.ngOnInit();
+        expect(component.mobileView).toBe('grid');
+        component.setMobileView('cards');
+    });
+
+    it('should delete selected patients', async () => {        // Mock confirm
         vi.spyOn(window, 'confirm').mockReturnValue(true);
 
         // Select a patient

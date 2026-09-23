@@ -135,7 +135,7 @@ interface Visit {
            </div>
 
            <div class="flex flex-wrap gap-2 items-center justify-end">
-              <button *ngIf="editingVisitId && !isViewMode" (click)="deleteVisit()" class="border border-red-200 text-red-600 bg-white hover:bg-red-50 px-3 py-1 rounded text-sm font-medium transition">Delete</button>
+              <button *ngIf="editingVisitId && !isViewMode && currentUser?.role === 'admin'" (click)="deleteVisit()" class="border border-red-200 text-red-600 bg-white hover:bg-red-50 px-3 py-1 rounded text-sm font-medium transition">Delete</button>
               <button *ngIf="editingVisitId && !isViewMode" (click)="resetForm()" class="border border-blue-200 text-blue-600 bg-white hover:bg-blue-50 px-3 py-1 rounded text-sm font-medium transition">New Visit</button>
               <div class="text-right flex items-center gap-2" *ngIf="isViewMode">
                   <div class="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs font-bold">VIEW</div>

@@ -46,6 +46,21 @@ describe('VisitListComponent layout', () => {
         component.setMobileView('cards');
     });
 
+    it('exposes batch delete only to admins', () => {
+        const bare = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        expect(bare.isAdmin).toBe(false);
+        const admin = new VisitListComponent(
+            { run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any,
+            undefined, { getUser: () => ({ role: 'admin' }) } as any
+        );
+        expect(admin.isAdmin).toBe(true);
+        const doctor = new VisitListComponent(
+            { run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any,
+            undefined, { getUser: () => ({ role: 'doctor' }) } as any
+        );
+        expect(doctor.isAdmin).toBe(false);
+    });
+
     it('filters visits client-side across patient, diagnosis, and doctor', () => {
         const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
         component.visits = [

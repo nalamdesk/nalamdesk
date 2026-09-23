@@ -98,7 +98,7 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
            [ngStyle]="{ left: rowMenu.x + 'px', top: rowMenu.y + 'px' }">
         <button role="menuitem" (click)="menuAction('triage')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Triage reassessment</button>
         <button role="menuitem" (click)="menuAction('vitals')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Record vitals</button>
-        <button *ngIf="rowMenu.item.status !== 'in-consult'" role="menuitem" (click)="menuAction('remove')" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Remove from queue</button>
+        <button *ngIf="rowMenu.item.status !== 'in-consult' && canRemoveFromQueue()" role="menuitem" (click)="menuAction('remove')" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Remove from queue</button>
       </div>
       
       <!-- Reassess Triage Modal -->
@@ -423,6 +423,19 @@ export class QueueComponent implements OnInit, OnDestroy {
 
   closeRowMenu(): void {
     this.rowMenu = null;
+  }
+
+  /**
+   * Queue removal is a granted desk action (doctor/receptionist/admin);
+   * nurses hold no removeFromQueue grant, so the menu hides it for them
+   * instead of serving a 403 dialog.
+   */
+  canRemoveFromQueue(): boolean {
+    try {
+      return this.authService?.getUser()?.role !== 'nurse';
+    } catch {
+      return true;
+    }
   }
 
   menuAction(action: 'triage' | 'vitals' | 'remove'): void {

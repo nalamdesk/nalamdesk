@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 23 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(24);
+        it('should have 25 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(25);
         });
     });
 
@@ -428,8 +428,7 @@ describe('Database Migrations', () => {
         });
     });
 
-    describe('Migration v21 (inbox LAN grants)', () => {
-        it('grants inbox methods to desk roles, reads only for nurses', () => {
+    describe('Migration v21 (inbox LAN grants)', () => {        it('grants inbox methods to desk roles, reads only for nurses', () => {
             const store: Record<string, string> = {
                 doctor: JSON.stringify(['getQueue']),
                 receptionist: JSON.stringify(['getQueue']),
@@ -452,6 +451,34 @@ describe('Database Migrations', () => {
             const nurse = JSON.parse(writes['nurse']);
             expect(nurse).toEqual(expect.arrayContaining(['abdmGetInbox']));
             expect(nurse).not.toContain('abdmAckInbox');
+        });
+    });
+
+    describe('Migration v25 (record deletes are admin-only)', () => {
+        it('strips record deletes from desk roles while leaving the rest intact', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue', 'deletePatient', 'deleteVisit']),
+                receptionist: JSON.stringify(['getQueue', 'deleteUser']),
+                nurse: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['deletePatient', 'deleteVisit', 'deleteUser'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sql: string) => {
+                if (sql.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 25)!.up(mockDb);
+
+            for (const role of ['doctor', 'receptionist', 'nurse']) {
+                const perms = JSON.parse(writes[role]);
+                expect(perms).toContain('getQueue');
+                expect(perms).not.toContain('deletePatient');
+                expect(perms).not.toContain('deleteVisit');
+                expect(perms).not.toContain('deleteUser');
+            }
+            expect(writes['admin']).toBeUndefined();
         });
     });
 });

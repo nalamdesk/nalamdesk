@@ -160,8 +160,7 @@ describe('PatientListComponent', () => {
     });
 
     // Delete Tests (Batch)
-    it('defaults to cards and persists the narrow-viewport view override', () => {
-        expect(component.mobileView).toBe('cards');
+    it('defaults to cards and persists the narrow-viewport view override', () => {        expect(component.mobileView).toBe('cards');
         component.setMobileView('grid');
         expect(component.mobileView).toBe('grid');
         component.ngOnInit();
@@ -192,5 +191,14 @@ describe('PatientListComponent', () => {
 
         expect(mockDataService.invoke).not.toHaveBeenCalledWith('deletePatient', expect.anything());
         expect(component.selectedPatients.length).toBe(1);
+    });
+
+    it('exposes batch delete only to admins', () => {
+        mockAuthService.getUser.mockReturnValue({ role: 'admin' });
+        component.ngOnInit();
+        expect(component.isAdmin).toBe(true);
+        mockAuthService.getUser.mockReturnValue({ role: 'doctor' });
+        component.ngOnInit();
+        expect(component.isAdmin).toBe(false);
     });
 });

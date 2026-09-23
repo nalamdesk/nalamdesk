@@ -495,6 +495,16 @@ describe('QueueComponent', () => {
         expect(component.rowMenu).toBeNull();
     });
 
+    it('hides queue removal from nurses without the grant', () => {
+        const nurse = new QueueComponent(mockRouter, mockDataService, mockDialogService,
+            { getUser: () => ({ role: 'nurse' }) } as any);
+        expect(nurse.canRemoveFromQueue()).toBe(false);
+        const receptionist = new QueueComponent(mockRouter, mockDataService, mockDialogService,
+            { getUser: () => ({ role: 'receptionist' }) } as any);
+        expect(receptionist.canRemoveFromQueue()).toBe(true);
+        expect(component.canRemoveFromQueue()).toBe(true);
+    });
+
     it('summarises waiting and in-consult counts for the header', () => {
         component.queue.set([
             { status: 'waiting' }, { status: 'waiting' }, { status: 'in-consult' }, { status: 'completed' }

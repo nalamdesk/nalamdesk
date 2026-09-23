@@ -21,16 +21,20 @@ describe('SetupComponent recovery acknowledgement', () => {
         component = new SetupComponent(authService as any, router as any, { run: (fn: () => void) => fn() } as any);
         component.password = 'admin-password';
         component.recoveryCode = 'AAAA-BBBB-CCCC-DDDD';
-        vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     });
 
     it('stays on setup when recovery acknowledgement fails', async () => {
         authService.acknowledgeRecoveryCode.mockResolvedValue({ success: false });
+        const dialog = { open: vi.fn().mockResolvedValue(undefined) };
+        (component as any).dialogService = dialog;
 
         await component.goToDashboard();
 
         expect(router.navigate).not.toHaveBeenCalled();
-        expect(window.alert).toHaveBeenCalledWith('Could not confirm the recovery code. Please try again.');
+        expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Confirmation failed',
+            type: 'error'
+        }));
     });
 
     it('opens the dashboard only after acknowledgement succeeds', async () => {

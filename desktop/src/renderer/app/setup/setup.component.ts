@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
+import { DialogService } from '../shared/services/dialog.service';
+import { ToastService } from '../shared/services/toast.service';
 import { jsPDF } from 'jspdf';
 
 @Component({
@@ -218,7 +220,7 @@ export class SetupComponent implements OnInit {
   restoreRecoveryCode = '';
   restoreError = '';
 
-  constructor(private authService: AuthService, private router: Router, private ngZone: NgZone) { }
+  constructor(private authService: AuthService, private router: Router, private ngZone: NgZone, private dialogService?: DialogService, private toastService?: ToastService) { }
 
   ngOnInit() {
     this.checkRecovery();
@@ -246,7 +248,14 @@ export class SetupComponent implements OnInit {
       this.restoreError = 'Enter the Recovery Code for this backup.';
       return;
     }
-    if (!confirm('The backup will be validated first. Your current vault will be snapshotted before replacement. Continue?')) return;
+    const confirmed = await this.dialogService?.open({
+      title: 'Restore this backup?',
+      message: 'The backup will be validated first. The current vault will be snapshotted before replacement.',
+      type: 'confirm',
+      confirmText: 'Restore',
+      cancelText: 'Cancel'
+    });
+    if (!confirmed) return;
 
     this.isRestoring = true;
     this.restoreError = '';
@@ -309,11 +318,19 @@ export class SetupComponent implements OnInit {
         this.step = 4;
       } else {
         console.error(result.error);
-        alert('Setup Failed: ' + result.error);
+        await this.dialogService?.open({
+          title: 'Setup failed',
+          message: result.error ? `Setup Failed: ${result.error}` : 'Setup Failed',
+          type: 'error'
+        });
       }
     } catch (e) {
       console.error(e);
-      alert('Setup Failed');
+      await this.dialogService?.open({
+        title: 'Setup failed',
+        message: 'Setup Failed',
+        type: 'error'
+      });
     } finally {
       this.isSubmitting = false;
     }
@@ -362,11 +379,19 @@ export class SetupComponent implements OnInit {
         if (acknowledgement.success) {
           this.router.navigate(['/dashboard']);
         } else {
-          alert('Could not confirm the recovery code. Please try again.');
+          await this.dialogService?.open({
+            title: 'Confirmation failed',
+            message: 'Could not confirm the recovery code. Please try again.',
+            type: 'error'
+          });
         }
       } catch (error) {
         console.error(error);
-        alert('Could not confirm the recovery code. Please try again.');
+        await this.dialogService?.open({
+          title: 'Confirmation failed',
+          message: 'Could not confirm the recovery code. Please try again.',
+          type: 'error'
+        });
       }
     } else {
       this.router.navigate(['/login']);

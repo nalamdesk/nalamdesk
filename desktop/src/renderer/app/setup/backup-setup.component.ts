@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DataService } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
+import { DialogService } from '../shared/services/dialog.service';
 
 @Component({
   selector: 'app-backup-setup',
@@ -126,7 +127,7 @@ export class BackupSetupComponent implements OnInit {
   private readonly dataService = inject(DataService);
   private readonly authService = inject(AuthService);
 
-  constructor(private ngZone: NgZone) { }
+  constructor(private ngZone: NgZone, private dialogService?: DialogService) { }
 
   async ngOnInit() {
     if (!this.isElectron) return;
@@ -221,7 +222,11 @@ export class BackupSetupComponent implements OnInit {
 
     } catch (e) {
       console.error(e);
-      alert('Failed to save settings');
+      await this.dialogService?.open({
+        title: 'Save failed',
+        message: 'Failed to save settings',
+        type: 'error'
+      });
     }
   }
 

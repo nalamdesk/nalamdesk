@@ -924,7 +924,8 @@ describe('VisitComponent', () => {
         expect(mockRouter.navigate).toHaveBeenCalledWith(['/queue']);
     });
 
-    it('reports blocked queue instead of empty when next finds nothing actionable', async () => {        component.patientId = 1;
+    it('reports blocked queue instead of empty when next finds nothing actionable', async () => {
+        component.patientId = 1;
         component.encounterId = 7;
         component.isConsulting = true;
         component.chartWritable = true;
@@ -938,11 +939,12 @@ describe('VisitComponent', () => {
             if (method === 'getQueue') return Promise.resolve([{ id: 9, patient_id: 3, status: 'waiting', active_encounter_id: 5 }]);
             return Promise.resolve(null);
         });
-        const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+        const toast = { info: vi.fn(), success: vi.fn(), warning: vi.fn(), error: vi.fn() };
+        (component as any).toastService = toast;
 
         await component.finishAndNext();
 
-        expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('still in queue'));
+        expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('still in queue'), 'Queue blocked');
         expect(mockRouter.navigate).toHaveBeenCalledWith(['/queue']);
     });
 

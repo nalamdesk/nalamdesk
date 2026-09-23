@@ -2,6 +2,7 @@ import { Component, NgZone, OnInit, Input, Output, EventEmitter } from '@angular
 import { CommonModule } from '@angular/common';
 import { AbstractControl, FormBuilder, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { DataService } from '../../services/api.service';
+import { DialogService } from '../../shared/services/dialog.service';
 import { DEFAULT_VITAL_UNITS, VITALS_PHYSIOLOGICAL_RANGES, fToC, cToF, kgToLbs, lbsToKg, toCanonicalUcumUnit } from '../../../../shared/vitals-validator';
 
 function isPresent(val: unknown): boolean {
@@ -204,7 +205,7 @@ export class VitalsFormComponent implements OnInit {
         return '';
     }
 
-    constructor(private fb: FormBuilder, private dataService: DataService, private ngZone: NgZone) {
+    constructor(private fb: FormBuilder, private dataService: DataService, private ngZone: NgZone, private dialogService?: DialogService) {
         const ranges = VITALS_PHYSIOLOGICAL_RANGES;
         this.vitalsForm = this.fb.group({
             height: [null, [Validators.min(ranges['height'].min), Validators.max(ranges['height'].max)]],
@@ -384,7 +385,11 @@ export class VitalsFormComponent implements OnInit {
                 this.submitting = false;
             });
             console.error('Failed to save vitals', e);
-            alert(e instanceof Error ? e.message : 'Failed to save vitals');
+            await this.dialogService?.open({
+              title: 'Vitals not saved',
+              message: e instanceof Error ? e.message : 'Failed to save vitals',
+              type: 'error'
+            });
         }
     }
 }

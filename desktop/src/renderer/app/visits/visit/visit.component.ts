@@ -8,6 +8,8 @@ import { PrescriptionComponent } from '../../visits/prescription/prescription.co
 import { CatalogTypeaheadComponent } from '../../shared/components/catalog-typeahead/catalog-typeahead.component';
 import { AuthService } from '../../services/auth.service';
 import { DataService } from '../../services/api.service';
+import { DialogService } from '../../shared/services/dialog.service';
+import { ToastService } from '../../shared/services/toast.service';
 import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { newRequestId } from '../../services/request-id';
 import { combineLatest } from 'rxjs';
@@ -472,7 +474,9 @@ export class VisitComponent implements OnInit {
     private pdfService: PdfService,
     private dataService: DataService,
     private authService: AuthService,
-    private doctorPick?: DoctorPickService
+    private doctorPick?: DoctorPickService,
+    private dialogService?: DialogService,
+    private toastService?: ToastService
   ) {
     const nav = this.router.getCurrentNavigation();
     const state = nav?.extras?.state || {};
@@ -532,7 +536,11 @@ export class VisitComponent implements OnInit {
     if (this.currentUser?.role !== 'admin') return undefined;
     const doctors = await this.dataService.invoke<any[]>('getDoctors').catch(() => []);
     if (!doctors || doctors.length === 0) {
-      alert('No active doctor on file. An admin consultation needs a licensed practitioner attached.');
+      await this.dialogService?.open({
+        title: 'No responsible doctor',
+        message: 'No active doctor on file. An admin consultation needs a licensed practitioner attached.',
+        type: 'warning'
+      });
       return null;
     }
     if (doctors.length === 1 || !this.doctorPick) return doctors[0]?.id ?? null;
@@ -894,17 +902,27 @@ export class VisitComponent implements OnInit {
 
   async deleteVisit() {
     if (!this.editingVisitId) return;
-    if (confirm('Are you sure you want to delete this visit?')) {
-      try {
-        await this.dataService.invoke('deleteVisit', this.editingVisitId);
-        this.ngZone.run(() => {
-          this.resetForm();
-          this.loadData();
-        });
-      } catch (e) {
-        console.error(e);
-        alert('Failed to delete visit');
-      }
+    const confirmed = await this.dialogService?.open({
+      title: 'Delete this visit?',
+      message: 'The visit record will be permanently removed.',
+      type: 'confirm',
+      confirmText: 'Delete',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
+    try {
+      await this.dataService.invoke('deleteVisit', this.editingVisitId);
+      this.ngZone.run(() => {
+        this.resetForm();
+        this.loadData();
+      });
+    } catch (e) {
+      console.error(e);
+      await this.dialogService?.open({
+        title: 'Delete failed',
+        message: 'The visit could not be deleted.',
+        type: 'error'
+      });
     }
   }
 
@@ -953,7 +971,11 @@ export class VisitComponent implements OnInit {
       }
     } catch (e) {
       console.error('Failed to start the next consultation', e);
-      alert('The current consultation is finished, but the next patient could not be opened. Retry to resume safely.');
+      await this.dialogService?.open({
+        title: 'Handoff failed',
+        message: 'The current consultation is finished, but the next patient could not be opened. Retry to resume safely.',
+        type: 'error'
+      });
     } finally {
       this.actionInFlight = false;
     }
@@ -991,24 +1013,28 @@ export class VisitComponent implements OnInit {
         const remaining = await this.dataService.invoke<any[]>('getQueue').catch(() => []);
         const waitingCount = (remaining || []).filter((q: any) => q.status === 'waiting').length;
         if (waitingCount > 0) {
-          alert(`${waitingCount} patient(s) still in queue, but each has an active consultation pending. Resume them from the queue.`);
+          this.toastService?.info(`${waitingCount} patient(s) still in queue, but each has an active consultation pending. Resume them from the queue.`, 'Queue blocked');
         } else if ((remaining || []).length > 0) {
-          alert('Consultations are still in progress elsewhere. The queue has nothing waiting to auto-start.');
+          this.toastService?.info('Consultations are still in progress elsewhere. The queue has nothing waiting to auto-start.', 'Nothing to start');
         } else {
-          alert('Queue is empty! Great job.');
+          this.toastService?.success('All consultations are complete.', 'Queue is empty');
         }
         this.router.navigate(['/queue']);
       }
     } catch (e) {
       console.error('Failed to start the next consultation', e);
-      alert('The current consultation is finished, but the next patient could not be opened. Retry to resume safely.');
+      await this.dialogService?.open({
+        title: 'Handoff failed',
+        message: 'The current consultation is finished, but the next patient could not be opened. Retry to resume safely.',
+        type: 'error'
+      });
     }
   }
 
   async completeConsult(manageActionLock = true): Promise<boolean> {
     if (this.visitForm.invalid) {
       this.visitForm.markAllAsTouched();
-      alert('Please complete diagnosis.');
+      this.toastService?.warning('Add a diagnosis before finishing the consultation.', 'Incomplete chart');
       return false;
     }
 
@@ -1028,7 +1054,11 @@ export class VisitComponent implements OnInit {
       return true;
     } catch (e) {
       console.error('Failed to end consult', e);
-      alert('Failed to finish consultation. Your encounter remains open.');
+      await this.dialogService?.open({
+        title: 'Finish failed',
+        message: 'The consultation could not be finished. Your encounter remains open.',
+        type: 'error'
+      });
       return false;
     } finally {
       if (manageActionLock) this.actionInFlight = false;
@@ -1059,7 +1089,11 @@ export class VisitComponent implements OnInit {
       this.router.navigate(['/queue']);
     } catch (e) {
       console.error(e);
-      alert('Failed to postpone consultation.');
+      await this.dialogService?.open({
+        title: 'Postpone failed',
+        message: 'The consultation could not be postponed.',
+        type: 'error'
+      });
     } finally {
       this.actionInFlight = false;
     }

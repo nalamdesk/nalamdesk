@@ -110,6 +110,42 @@ cloudflared tunnel --url http://127.0.0.1:3002
 Use a tunnel only for sandbox testing. Production callbacks must terminate on
 infrastructure the clinic controls, never on a developer laptop.
 
+## ABDM M2: HIP registry, care contexts, inbox, Fidelius transfer (#57, #61–#64)
+
+M2 makes the desktop a Health Information Provider (HIP) on top of the M1
+intake track. Schema arrives in migrations v19–v24 (v19 facility/practitioner
+registry, v20 care-context linking + callback inbox, v21 inbox LAN grants,
+v22 transfer endpoint + recipient key, v23 transfer grants + callback secret +
+per-doctor registry, v24 monotonic care-context sequence).
+
+- **Registry identity (#57):** `settings` carries `abdm_hip_id`,
+  `abdm_counter_id`, `abdm_hfr_id`, `abdm_hip_endpoint`,
+  `abdm_recipient_key`, `abdm_callback_secret`, plus per-user
+  `abdm_hpr_id`. Profile edits that omit registry IDs must not wipe them
+  (clearing goes through an explicit empty string); covered in
+  `ClinicalSafety.spec` ("preserves per-doctor registry IDs").
+- **FHIR foundation (#61, #62):** zero-dependency FHIR R4 types plus NRCeS
+  profile constants in `src/shared/fhir/`. `serializer.ts` builds two
+  documents from one encounter: the ABDM OPConsultRecord (ordered sections:
+  Complaints → Observations → Diagnosis → Prescription → Advice) and the
+  HL7 IPS (LOINC-coded sections). Live reconfirm TODOs mark the HPR/HFR
+  identifier system URLs — check them against current ABDM docs before
+  certification, don't guess.
+- **Care contexts + inbox (#63):** encounters get `OP-YYYY-XXXX` refs from
+  the `care_context_seq` counter (never reused after deletes).
+  `POST /abdm/v0.5/callbacks/:kind` queues gateway callbacks; the desk
+  acknowledges each exactly once (`abdmGetInbox` / `abdmAckInbox`; nurses
+  read-only). Callback shape is strict and, once a callback secret is set,
+  requests without it are rejected (open acceptance before that is for
+  sandbox testing only).
+- **Fidelius transfer (#64):** `FideliusService` does ECDH Curve25519
+  direct data-push (`abdmTransferBundle`): fresh ephemeral key per
+  transfer, tamper-rejecting envelopes, bounded timeouts. No endpoint
+  configured means a flagged loopback receipt, never a silent drop.
+- **Session hardening (follow-up fixes):** gateway token, mode, and URL are
+  pinned per operation with atomic session snapshots, so concurrent
+  callbacks cannot cross-contaminate sessions.
+
 ## Build & Distribution
 Output is `desktop/release/`.
 

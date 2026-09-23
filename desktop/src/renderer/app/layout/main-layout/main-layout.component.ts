@@ -4,6 +4,7 @@ import { NavigationEnd, NavigationStart, RouterOutlet, RouterModule, Router } fr
 import { Subscription } from 'rxjs';
 import { UniversalDialogComponent } from '../../shared/components/universal-dialog/universal-dialog.component';
 import { DialogService } from '../../shared/services/dialog.service';
+import { ToastService } from '../../shared/services/toast.service';
 import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { AuthService } from '../../services/auth.service';
 import { DataService } from '../../services/api.service';
@@ -194,6 +195,21 @@ import { RuntimeService } from '../../services/runtime.service';
         </div>
       </div>
     </div>
+
+    <!-- Toasts: fire-and-forget confirmations, bottom-right above content -->
+    <div *ngIf="toast && toast.toasts().length > 0" class="fixed bottom-4 right-4 z-[200] flex flex-col gap-2 w-80 max-w-[calc(100vw-2rem)]" role="status" aria-live="polite">
+      <div *ngFor="let t of toast.toasts()"
+           class="alert shadow-lg border text-sm py-2.5"
+           [ngClass]="t.type === 'success' ? 'alert-success' : t.type === 'error' ? 'alert-error' : t.type === 'warning' ? 'alert-warning' : 'alert-info'">
+        <div class="min-w-0 flex-1">
+          <div *ngIf="t.title" class="font-bold">{{ t.title }}</div>
+          <div class="truncate">{{ t.message }}</div>
+        </div>
+        <button (click)="toast.dismiss(t.id)" class="btn btn-ghost btn-xs shrink-0" aria-label="Dismiss notification">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+    </div>
   `,
   styles: [`
     .menu a {
@@ -226,7 +242,8 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     private ngZone: NgZone,
     public runtime: RuntimeService,
     public doctorPick?: DoctorPickService,
-    private dataService?: DataService
+    private dataService?: DataService,
+    public toast?: ToastService
   ) {
     this.currentUser = this.authService.getUser();
   }

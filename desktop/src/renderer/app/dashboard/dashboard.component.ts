@@ -7,6 +7,7 @@ import { AuthService } from '../services/auth.service';
 import { CloudService } from '../services/cloud.service';
 import { PatientService } from '../services/patient.service';
 import { DialogService } from '../shared/services/dialog.service';
+import { ToastService } from '../shared/services/toast.service';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -202,7 +203,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private cloudService: CloudService,
     private patientService: PatientService,
-    private dialogService?: DialogService
+    private dialogService?: DialogService,
+    private toastService?: ToastService
   ) { }
 
   async refresh() {
@@ -316,11 +318,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       // Update Appointment Status
       await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
 
-      await this.dialogService?.open({
-        title: 'Checked in',
-        message: `${appt.patient_name} is now in the live queue.`,
-        type: 'success'
-      });
+      this.toastService?.success(`${appt.patient_name} is now in the live queue.`, 'Checked in');
       this.loadData(); // Refresh list
     } catch (e: any) {
       console.error(e);

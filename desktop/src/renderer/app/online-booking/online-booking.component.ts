@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { CloudService } from '../services/cloud.service';
 import { PatientService } from '../services/patient.service';
 import { DialogService } from '../shared/services/dialog.service';
+import { ToastService } from '../shared/services/toast.service';
 
 @Component({
   selector: 'app-online-booking',
@@ -115,7 +116,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
   private refreshInterval: any;
 
-  constructor(public cloud: CloudService, private patientService: PatientService, private dialogService?: DialogService) {
+  constructor(public cloud: CloudService, private patientService: PatientService, private dialogService?: DialogService, private toastService?: ToastService) {
     this.generateTimeSlots();
     this.setCalendarLimits();
   }
@@ -222,11 +223,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
       // Explicitly tell server we are updating this date
       await this.cloud.publishSlots(slotsToPublish, [this.selectedDate]);
-      await this.dialogService?.open({
-        title: 'Availability updated',
-        message: `Slots for ${this.selectedDate} are now published.`,
-        type: 'success'
-      });
+      this.toastService?.success(`Slots for ${this.selectedDate} are now published.`, 'Availability updated');
 
       // Refresh state
       await this.onDateChange();
@@ -310,11 +307,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
         // 3. Update Request Status (Server Sync)
         await this.cloud.updateRequestStatus(req.id, 'accepted');
         await this.loadRequests();
-        await this.dialogService?.open({
-          title: 'Booking accepted',
-          message: `Appointment created for ${req.patient_name}.`,
-          type: 'success'
-        });
+        this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
       }
     } catch (e) {
       console.error('Accept flow failed', e);

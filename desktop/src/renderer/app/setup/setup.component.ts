@@ -16,7 +16,7 @@ import { jsPDF } from 'jspdf';
         <!-- Header -->
         <div class="bg-gray-800 p-6 border-b border-gray-700">
           <h2 class="text-2xl font-bold text-blue-400">NalamDesk Setup</h2>
-          <div class="flex mt-4 items-center gap-2 text-sm text-gray-400">
+          <div class="flex flex-wrap mt-4 items-center gap-x-2 gap-y-1 text-sm text-gray-400">
             <div [class.text-blue-500]="step >= 1" [class.font-bold]="step === 1">1. Welcome</div>
             <div>&rsaquo;</div>
             <div [class.text-blue-500]="step >= 2" [class.font-bold]="step === 2">2. Secure Vault</div>

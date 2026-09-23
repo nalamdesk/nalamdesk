@@ -10,8 +10,8 @@ import { RuntimeService } from '../services/runtime.service';
   standalone: true,
   imports: [CommonModule, FormsModule, RouterModule],
   template: `
-    <div class="min-h-screen flex items-center justify-center bg-gray-900 text-white">
-      <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-96 border border-gray-700">
+    <div class="min-h-screen flex items-center justify-center bg-gray-900 text-white p-4">
+      <div class="bg-gray-800 p-6 sm:p-8 rounded-lg shadow-xl w-full max-w-sm border border-gray-700">
         <h2 class="text-2xl font-bold mb-6 text-center text-blue-400">NalamDesk</h2>
         
         <div *ngIf="error" class="bg-red-900/50 border border-red-500 text-red-200 px-4 py-2 rounded mb-4 text-sm">

@@ -25,7 +25,9 @@
               "src/renderer/assets"
             ],
             "styles": [
-              "src/styles.css"
+              "src/styles.css",
+              "node_modules/@fontsource-variable/inter/index.css",
+              "node_modules/@fontsource-variable/plus-jakarta-sans/index.css"
             ],
             "scripts": []
           },

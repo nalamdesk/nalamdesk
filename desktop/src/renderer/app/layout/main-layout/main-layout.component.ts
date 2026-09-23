@@ -1,11 +1,12 @@
 import { Component, ViewChild, ElementRef, NgZone, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { NavigationStart, RouterOutlet, RouterModule, Router } from '@angular/router';
+import { NavigationEnd, NavigationStart, RouterOutlet, RouterModule, Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { UniversalDialogComponent } from '../../shared/components/universal-dialog/universal-dialog.component';
 import { DialogService } from '../../shared/services/dialog.service';
 import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { AuthService } from '../../services/auth.service';
+import { DataService } from '../../services/api.service';
 import { RuntimeService } from '../../services/runtime.service';
 
 @Component({
@@ -34,7 +35,6 @@ import { RuntimeService } from '../../services/runtime.service';
              </div>
             <div class="text-sm breadcrumbs">
               <ul>
-                <li><span class="opacity-50">App</span></li>
                 <li class="font-medium text-blue-800">{{ currentRouteName }}</li>
               </ul>
             </div>
@@ -213,7 +213,7 @@ import { RuntimeService } from '../../services/runtime.service';
   `]
 })
 export class MainLayoutComponent implements OnInit, OnDestroy {
-  queueCount = 0; // TODO: Connect to service
+  queueCount = 0;
   currentUser: any = null;
   private routerSub?: Subscription;
 
@@ -225,7 +225,8 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private ngZone: NgZone,
     public runtime: RuntimeService,
-    public doctorPick?: DoctorPickService
+    public doctorPick?: DoctorPickService,
+    private dataService?: DataService
   ) {
     this.currentUser = this.authService.getUser();
   }
@@ -234,11 +235,28 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     if (!!(globalThis as any).electron) {
       this.runtime.init();
     }
+    this.refreshQueueCount();
     this.routerSub = this.router.events.subscribe(event => {
       if (event instanceof NavigationStart) {
         this.dialogService.close();
       }
+      if (event instanceof NavigationEnd) {
+        this.refreshQueueCount();
+      }
     });
+  }
+
+  /** Sidebar badge: live count of active queue entries; 0 when signed out. */
+  async refreshQueueCount(): Promise<void> {
+    if (!this.dataService) return;
+    try {
+      const queue = await this.dataService.invoke<any[]>('getQueue');
+      this.ngZone.run(() => {
+        this.queueCount = (queue || []).filter((q: any) => q?.status !== 'completed').length;
+      });
+    } catch {
+      this.ngZone.run(() => { this.queueCount = 0; });
+    }
   }
 
   ngOnDestroy() {

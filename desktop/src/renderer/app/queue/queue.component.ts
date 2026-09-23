@@ -18,7 +18,7 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
   standalone: true,
   imports: [CommonModule, DatePipe, FormsModule, VitalsFormComponent, SharedTableComponent, ViewToggleComponent],
   template: `
-    <div class="h-full bg-gray-50 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
+    <div class="h-full bg-gray-100 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
       <div class="w-full">
         <!-- Header: Queue is top-level nav (sidebar + breadcrumb), so no back
              button. Subline is operational counts, not marketing copy. -->
@@ -517,20 +517,26 @@ export class QueueComponent implements OnInit, OnDestroy {
   }
 
   async remove(id: number) {
-    if (confirm('Remove from queue?')) {
-      try {
-        await this.dataService.invoke<any>('removeFromQueue', id);
-        this.refreshQueue();
-      } catch (e) {
-        console.error('Remove failed', e);
-        await this.dialogService.open({
-          title: 'Error',
-          message: e instanceof Error && e.message
-            ? `Failed to remove from queue: ${e.message}`
-            : 'Failed to remove from queue',
-          type: 'error'
-        });
-      }
+    const confirmed = await this.dialogService.open({
+      title: 'Remove from queue?',
+      message: 'The patient leaves the live queue. Triage history is preserved in the audit trail.',
+      type: 'confirm',
+      confirmText: 'Remove',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
+    try {
+      await this.dataService.invoke<any>('removeFromQueue', id);
+      this.refreshQueue();
+    } catch (e) {
+      console.error('Remove failed', e);
+      await this.dialogService.open({
+        title: 'Error',
+        message: e instanceof Error && e.message
+          ? `Failed to remove from queue: ${e.message}`
+          : 'Failed to remove from queue',
+        type: 'error'
+      });
     }
   }
 

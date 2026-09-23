@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
 import { DataService } from '../../services/api.service';
+import { DialogService } from '../../shared/services/dialog.service';
 import { SharedTableComponent } from '../../shared/components/table/table.component';
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../../shared/components/view-toggle/view-toggle.component';
 import { ColDef } from 'ag-grid-community';
@@ -15,7 +16,7 @@ import { ColDef } from 'ag-grid-community';
     <div class="h-full bg-gray-100 p-4 md:p-6 flex flex-col overflow-x-auto overflow-y-hidden">
       <div class="w-full">
         <div class="flex justify-between items-center mb-4">
-            <h1 class="text-3xl font-bold text-gray-800">Recent Visits</h1>
+            <h1 class="text-2xl font-bold text-gray-800">Recent Visits</h1>
             <div class="flex items-center gap-2">
               <app-view-toggle class="md:hidden" [value]="mobileView" (valueChange)="setMobileView($event)" label="Visits view"></app-view-toggle>
               <a routerLink="/patients" class="text-blue-600 hover:text-blue-800 font-medium">Find Patient →</a>
@@ -132,7 +133,8 @@ export class VisitListComponent implements OnInit {
 
   constructor(
     private ngZone: NgZone,
-    private router: Router
+    private router: Router,
+    private dialogService?: DialogService
   ) { }
 
   ngOnInit() {
@@ -156,7 +158,14 @@ export class VisitListComponent implements OnInit {
 
   async deleteSelectedVisits() {
     if (this.selectedVisits.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${this.selectedVisits.length} visits? This cannot be undone.`)) return;
+    const confirmed = await this.dialogService?.open({
+      title: `Delete ${this.selectedVisits.length} visits?`,
+      message: 'Visit records will be permanently removed. This cannot be undone.',
+      type: 'confirm',
+      confirmText: 'Delete',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
 
     try {
       for (const v of this.selectedVisits) {
@@ -168,7 +177,11 @@ export class VisitListComponent implements OnInit {
       });
     } catch (e) {
       console.error(e);
-      alert('Error deleting visits. Check console.');
+      await this.dialogService?.open({
+        title: 'Delete failed',
+        message: 'Visits could not be deleted. Check console.',
+        type: 'error'
+      });
     }
   }
 

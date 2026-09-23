@@ -6,6 +6,7 @@ import { DataService } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
 import { CloudService } from '../services/cloud.service';
 import { PatientService } from '../services/patient.service';
+import { DialogService } from '../shared/services/dialog.service';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -200,7 +201,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private dataService: DataService,
     private authService: AuthService,
     private cloudService: CloudService,
-    private patientService: PatientService
+    private patientService: PatientService,
+    private dialogService?: DialogService
   ) { }
 
   async refresh() {
@@ -276,7 +278,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async checkIn(appt: any) {
-    if (!confirm(`Check in ${appt.patient_name}?`)) return;
+    const confirmed = await this.dialogService?.open({
+      title: 'Check in patient?',
+      message: `${appt.patient_name} joins the live queue for today.`,
+      type: 'confirm',
+      confirmText: 'Check in',
+      cancelText: 'Cancel'
+    });
+    if (!confirmed) return;
 
     // Validate Patient
     // Map flatten appt fields to Patient object style for validation
@@ -292,7 +301,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
     };
 
     if (!this.patientService.isPatientComplete(patientObj as any)) {
-      alert('Patient details incomplete. Redirecting to update details...');
+      await this.dialogService?.open({
+        title: 'Details needed',
+        message: 'Some essentials are missing. Opened the patient chart to complete them before check-in.',
+        type: 'warning'
+      });
       this.router.navigate(['/patients'], { queryParams: { editId: appt.patient_id } });
       return;
     }
@@ -303,7 +316,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
       // Update Appointment Status
       await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
 
-      alert(`Checked in ${appt.patient_name}!`);
+      await this.dialogService?.open({
+        title: 'Checked in',
+        message: `${appt.patient_name} is now in the live queue.`,
+        type: 'success'
+      });
       this.loadData(); // Refresh list
     } catch (e: any) {
       console.error(e);
@@ -312,7 +329,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
         await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
         this.loadData();
       } else {
-        alert('Check-in failed: ' + e.message);
+        await this.dialogService?.open({
+          title: 'Check-in failed',
+          message: e.message ? `Could not check in: ${e.message}` : 'Could not check in.',
+          type: 'error'
+        });
       }
     }
   }

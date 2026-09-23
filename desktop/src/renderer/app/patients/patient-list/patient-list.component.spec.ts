@@ -169,8 +169,9 @@ describe('PatientListComponent', () => {
         component.setMobileView('cards');
     });
 
-    it('should delete selected patients', async () => {        // Mock confirm
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+    it('should delete selected patients', async () => {
+        // DialogService is injected via inject(); stub it for this flow
+        (component as any).dialogService = { open: vi.fn().mockResolvedValue(true) };
 
         // Select a patient
         const patient = { id: 1, name: 'John' };
@@ -181,5 +182,15 @@ describe('PatientListComponent', () => {
         expect(mockDataService.invoke).toHaveBeenCalledWith('deletePatient', 1);
         expect(component.selectedPatients.length).toBe(0);
         expect(mockPatientService.getPatients).toHaveBeenCalled();
+    });
+
+    it('should keep patients when deletion is cancelled', async () => {
+        (component as any).dialogService = { open: vi.fn().mockResolvedValue(false) };
+        component.selectedPatients = [{ id: 1, name: 'John' }];
+
+        await component.deleteSelectedPatients();
+
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('deletePatient', expect.anything());
+        expect(component.selectedPatients.length).toBe(1);
     });
 });

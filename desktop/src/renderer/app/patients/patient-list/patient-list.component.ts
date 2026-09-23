@@ -20,7 +20,7 @@ import { ColDef } from 'ag-grid-community';
     <div class="h-full bg-gray-100 p-4 md:p-6 flex flex-col overflow-hidden">
       <div class="w-full">
         <div class="flex justify-between items-center mb-6">
-          <h1 class="text-3xl font-bold text-gray-800">Patients</h1>
+          <h1 class="text-2xl font-bold text-gray-800">Patients</h1>
           <div class="flex items-center gap-2">
             <app-view-toggle class="md:hidden" [value]="mobileView" (valueChange)="setMobileView($event)" label="Patients view"></app-view-toggle>
             <button (click)="openAddModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition shadow-sm">
@@ -557,7 +557,14 @@ export class PatientListComponent implements OnInit {
 
   async deleteSelectedPatients() {
     if (this.selectedPatients.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${this.selectedPatients.length} patients? associated visits and records will effectively be orphaned or deleted.`)) return;
+    const confirmed = await this.dialogService.open({
+      title: `Delete ${this.selectedPatients.length} patients?`,
+      message: 'Associated visits and records will be deleted too. This cannot be undone.',
+      type: 'confirm',
+      confirmText: 'Delete',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
 
     try {
       for (const p of this.selectedPatients) {
@@ -572,7 +579,11 @@ export class PatientListComponent implements OnInit {
       });
     } catch (e) {
       console.error(e);
-      alert('Error deleting patients. Check console.');
+      await this.dialogService.open({
+        title: 'Delete failed',
+        message: 'Patients could not be deleted. Check console.',
+        type: 'error'
+      });
     }
   }
 }

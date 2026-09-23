@@ -228,7 +228,6 @@ describe('QueueComponent', () => {
     });
 
     it('surfaces remove-from-queue failures in the in-app dialog instead of alert', async () => {
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
         mockDataService.invoke.mockRejectedValue(new Error('Cannot remove a queue entry with an active encounter'));
         const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
         vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -237,10 +236,22 @@ describe('QueueComponent', () => {
 
         expect(alertSpy).not.toHaveBeenCalled();
         expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Remove from queue?',
+            type: 'confirm'
+        }));
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
             type: 'error',
             title: 'Error',
             message: expect.stringContaining('Failed to remove from queue')
         }));
+    });
+
+    it('keeps the patient when removal is cancelled', async () => {
+        mockDialogService.open.mockResolvedValue(false);
+
+        await component.remove(1);
+
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('removeFromQueue', expect.anything());
     });
 
     it('opens vitals modal with queue entry id and patient id', () => {

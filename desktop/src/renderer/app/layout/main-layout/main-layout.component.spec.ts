@@ -100,4 +100,39 @@ describe('MainLayoutComponent', () => {
         expect(mockDialogService.close).not.toHaveBeenCalled();
         layout.ngOnDestroy();
     });
+
+    it('reflects the live queue size in the sidebar badge', async () => {
+        const mockDataService = { invoke: vi.fn().mockResolvedValue([
+            { status: 'waiting' }, { status: 'in-consult' }, { status: 'completed' }
+        ]) };
+        const layout = new MainLayoutComponent(
+            mockRouter,
+            mockDialogService,
+            mockAuthService,
+            mockNgZone,
+            mockRuntimeService,
+            undefined,
+            mockDataService as any
+        );
+        await layout.refreshQueueCount();
+        expect(layout.queueCount).toBe(2);
+        layout.ngOnDestroy();
+    });
+
+    it('resets the badge when the queue cannot load', async () => {
+        const mockDataService = { invoke: vi.fn().mockRejectedValue(new Error('locked')) };
+        const layout = new MainLayoutComponent(
+            mockRouter,
+            mockDialogService,
+            mockAuthService,
+            mockNgZone,
+            mockRuntimeService,
+            undefined,
+            mockDataService as any
+        );
+        layout.queueCount = 5;
+        await layout.refreshQueueCount();
+        expect(layout.queueCount).toBe(0);
+        layout.ngOnDestroy();
+    });
 });

@@ -67,6 +67,13 @@ describe('SharedTableComponent', () => {
         expect(component.multiSelect).toBe(true);
     });
 
+    it('renders a checkbox column for multi-select and none for single', () => {
+        expect(component.selectionOptions).toMatchObject({ mode: 'singleRow', checkboxes: false });
+        component.multiSelect = true;
+        component.ngOnChanges({ multiSelect: {} } as any);
+        expect(component.selectionOptions).toMatchObject({ mode: 'multiRow', checkboxes: true, headerCheckbox: true });
+    });
+
     it('exposes a visible horizontal overflow cue so trailing columns are not clipped', () => {
         const gridWrap = fixture.nativeElement.querySelector('.flex-1.w-full');
         expect(gridWrap.className).toContain('overflow-x-auto');

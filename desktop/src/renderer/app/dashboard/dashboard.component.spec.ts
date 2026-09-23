@@ -84,4 +84,34 @@ describe('DashboardComponent', () => {
         expect(component.getTimeOfDay()).toBe('Evening');
         expect(component.getTimeOfDay()).not.toBe('Morning');
     });
+
+    it('checks in a confirmed appointment after dialog confirmation', async () => {
+        const dialog = { open: vi.fn().mockResolvedValue(true) };
+        const cloud = { saveAppointment: vi.fn().mockResolvedValue({}) };
+        const patients = { isPatientComplete: vi.fn().mockReturnValue(true) };
+        const full = new DashboardComponent(
+            mockRouter, mockNgZone, mockDataService, mockAuthService, cloud as any, patients as any, dialog as any
+        );
+        const appt = { id: 1, patient_id: 6, patient_name: 'Ramesh Gupta' };
+
+        await full.checkIn(appt);
+
+        expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ type: 'confirm', title: 'Check in patient?' }));
+        expect(mockDataService.invoke).toHaveBeenCalledWith('addToQueue', { patientId: 6, priority: 1 });
+        expect(cloud.saveAppointment).toHaveBeenCalledWith({ id: 1, status: 'CHECKED_IN' });
+    });
+
+    it('skips check-in when the dialog is cancelled', async () => {
+        const dialog = { open: vi.fn().mockResolvedValue(false) };
+        const cloud = { saveAppointment: vi.fn() };
+        const patients = { isPatientComplete: vi.fn().mockReturnValue(true) };
+        const full = new DashboardComponent(
+            mockRouter, mockNgZone, mockDataService, mockAuthService, cloud as any, patients as any, dialog as any
+        );
+
+        await full.checkIn({ id: 1, patient_id: 6, patient_name: 'Ramesh Gupta' });
+
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('addToQueue', expect.anything());
+        expect(cloud.saveAppointment).not.toHaveBeenCalled();
+    });
 });

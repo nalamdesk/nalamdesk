@@ -115,6 +115,23 @@ export function greetingForLocalHour(hour: number): string {
                 </div>
             </div>
         </div>
+
+        <!-- Today's Appointments: confirmed bookings waiting for check-in -->
+        <div class="card bg-base-100 shadow-sm border border-base-200 mb-8">
+            <div class="card-body">
+                <h2 class="card-title text-lg font-bold">Today's Appointments
+                    <span *ngIf="todayAppointments.length > 0" class="badge badge-primary badge-sm ml-1">{{ todayAppointments.length }}</span>
+                </h2>
+                <div *ngIf="todayAppointments.length === 0" class="text-gray-400 text-sm py-2">No confirmed appointments for today.</div>
+                <div *ngFor="let appt of todayAppointments" class="flex items-center justify-between gap-3 border-b border-base-200 py-2.5 last:border-0">
+                    <div class="min-w-0">
+                        <div class="font-bold truncate">{{ appt.patient_name }}</div>
+                        <div class="text-xs text-gray-500 font-mono">{{ appt.time }}</div>
+                    </div>
+                    <button (click)="checkIn(appt)" class="btn btn-sm btn-primary shrink-0">Check in</button>
+                </div>
+            </div>
+        </div>
         
         <!-- Recent Visits -->
         <div class="card bg-base-100 shadow-sm border border-base-200 mb-8">

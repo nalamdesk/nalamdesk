@@ -61,6 +61,22 @@ describe('VisitListComponent layout', () => {
         expect(doctor.isAdmin).toBe(false);
     });
 
+    it('selects cards in batch mode and navigates otherwise', () => {
+        const navigate = vi.fn();
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate } as any);
+        const v = { id: 13, patient_id: 6 };
+        component.onCardTap(v);
+        expect(navigate).toHaveBeenCalledWith(['/visit', 6], expect.objectContaining({
+            queryParams: expect.objectContaining({ visitId: 13 })
+        }));
+
+        component.toggleCardSelectMode();
+        component.onCardTap(v);
+        expect(component.isCardSelected(v)).toBe(true);
+        component.toggleCardSelectMode();
+        expect(component.selectedVisits).toHaveLength(0);
+    });
+
     it('filters visits client-side across patient, diagnosis, and doctor', () => {
         const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
         component.visits = [

@@ -201,4 +201,23 @@ describe('PatientListComponent', () => {
         component.ngOnInit();
         expect(component.isAdmin).toBe(false);
     });
+
+    it('selects cards in batch mode and navigates otherwise', () => {
+        const p = { id: 7, name: 'Lakshmi' };
+        component.onCardTap(p);
+        expect(mockRouter.navigate).toHaveBeenCalledWith(['/patients', 7]);
+
+        component.toggleCardSelectMode();
+        expect(component.cardSelectMode).toBe(true);
+        component.onCardTap(p);
+        expect(component.isCardSelected(p)).toBe(true);
+        expect(component.selectedPatients).toHaveLength(1);
+        component.onCardTap(p);
+        expect(component.isCardSelected(p)).toBe(false);
+
+        component.onCardTap(p);
+        component.toggleCardSelectMode();
+        expect(component.cardSelectMode).toBe(false);
+        expect(component.selectedPatients).toHaveLength(0);
+    });
 });

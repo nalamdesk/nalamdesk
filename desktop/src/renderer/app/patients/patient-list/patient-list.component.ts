@@ -66,10 +66,21 @@ import { ColDef } from 'ag-grid-community';
         </div>
         <!-- Compact cards for narrow viewports: server-filtered gridData, same actions -->
         <div class="max-h-[calc(100vh-280px)] min-h-[200px] overflow-y-auto space-y-2 pb-4" [ngClass]="mobileView === 'cards' ? 'block md:hidden' : 'hidden'">
+          <div *ngIf="isAdmin" class="flex items-center justify-between px-1">
+            <button (click)="toggleCardSelectMode()" class="text-xs font-semibold text-blue-600 hover:text-blue-800">
+              {{ cardSelectMode ? 'Cancel' : 'Select' }}
+            </button>
+            <span *ngIf="cardSelectMode" class="text-xs text-gray-500">{{ selectedPatients.length }} selected</span>
+          </div>
           <div *ngIf="gridData.length === 0" class="text-center text-sm text-gray-500 py-8">No patients found</div>
-          <div *ngFor="let p of gridData" (click)="goToVisit(p)"
-               class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+          <div *ngFor="let p of gridData" (click)="onCardTap(p)"
+               class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm"
+               [ngClass]="isCardSelected(p) ? 'ring-2 ring-blue-500 border-blue-500' : ''">
             <div class="flex items-center gap-3">
+              <div *ngIf="cardSelectMode" class="shrink-0 w-5 h-5 rounded border flex items-center justify-center"
+                   [ngClass]="isCardSelected(p) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white'">
+                <svg *ngIf="isCardSelected(p)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+              </div>
               <div class="w-10 h-10 rounded-full bg-neutral text-neutral-content flex items-center justify-center font-bold shrink-0">
                 {{ (p.name || '?').charAt(0).toUpperCase() }}
               </div>
@@ -79,7 +90,7 @@ import { ColDef } from 'ag-grid-community';
               </div>
               <span *ngIf="p.inQueue" class="badge badge-sm badge-primary shrink-0">In Queue</span>
             </div>
-            <div class="mt-2.5 flex items-center gap-1.5">
+            <div *ngIf="!cardSelectMode" class="mt-2.5 flex items-center gap-1.5">
               <button (click)="$event.stopPropagation(); addToQueue(p)" [disabled]="p.inQueue"
                       class="btn btn-sm flex-1"
                       [ngClass]="p.inQueue ? 'btn-ghost text-gray-400' : 'btn-primary'">
@@ -87,6 +98,10 @@ import { ColDef } from 'ag-grid-community';
               </button>
               <button (click)="$event.stopPropagation(); editPatient(p)" class="btn btn-sm btn-ghost border border-gray-200">Edit</button>
             </div>
+          </div>
+          <div *ngIf="cardSelectMode && selectedPatients.length > 0" class="sticky bottom-0 flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-2 shadow-lg">
+            <button (click)="deleteSelectedPatients()" class="btn btn-sm btn-error flex-1 text-white">Delete ({{ selectedPatients.length }})</button>
+            <button (click)="toggleCardSelectMode()" class="btn btn-sm btn-ghost border border-gray-200">Done</button>
           </div>
         </div>
       </div>
@@ -341,6 +356,31 @@ export class PatientListComponent implements OnInit {
     return this.currentUser?.role === 'admin';
   }
 
+  // Card batch-select (narrow viewports): mirrors grid multi-select for admins.
+  cardSelectMode = false;
+
+  toggleCardSelectMode(): void {
+    this.cardSelectMode = !this.cardSelectMode;
+    if (!this.cardSelectMode) this.selectedPatients = [];
+  }
+
+  isCardSelected(patient: any): boolean {
+    return this.selectedPatients.some((p: any) => p?.id === patient?.id);
+  }
+
+  onCardTap(patient: any): void {
+    if (this.cardSelectMode) this.toggleCardSelection(patient);
+    else this.goToVisit(patient);
+  }
+
+  toggleCardSelection(patient: any): void {
+    if (this.isCardSelected(patient)) {
+      this.selectedPatients = this.selectedPatients.filter((p: any) => p?.id !== patient?.id);
+    } else {
+      this.selectedPatients = [...this.selectedPatients, patient];
+    }
+  }
+
   private dataService: DataService = inject(DataService);
   private authService: AuthService = inject(AuthService);
   currentUser: any = null;
@@ -580,6 +620,7 @@ export class PatientListComponent implements OnInit {
       }
       this.ngZone.run(() => {
         this.selectedPatients = [];
+        this.cardSelectMode = false;
         this.loadPatients();
       });
     } catch (e) {

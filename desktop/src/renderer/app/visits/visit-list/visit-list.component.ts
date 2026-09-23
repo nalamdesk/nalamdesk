@@ -59,18 +59,35 @@ import { ColDef } from 'ag-grid-community';
         </div>
         <!-- Compact cards for narrow viewports: same filtered rows, tap opens the visit -->
         <div class="max-h-[calc(100vh-280px)] min-h-[200px] overflow-y-auto space-y-2 pb-4" [ngClass]="mobileView === 'cards' ? 'block md:hidden' : 'hidden'">
+          <div *ngIf="isAdmin" class="flex items-center justify-between px-1">
+            <button (click)="toggleCardSelectMode()" class="text-xs font-semibold text-blue-600 hover:text-blue-800">
+              {{ cardSelectMode ? 'Cancel' : 'Select' }}
+            </button>
+            <span *ngIf="cardSelectMode" class="text-xs text-gray-500">{{ selectedVisits.length }} selected</span>
+          </div>
           <div *ngIf="visibleVisits().length === 0" class="text-center text-sm text-gray-500 py-8">No visits found</div>
-          <div *ngFor="let v of visibleVisits()" (click)="goToVisit(v)"
-               class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-bold text-gray-800 truncate">{{ v.patient_name }}</span>
-              <span class="text-xs text-gray-500 font-mono shrink-0">{{ v.date ? (v.date | date:'short') : '' }}</span>
+          <div *ngFor="let v of visibleVisits()" (click)="onCardTap(v)"
+               class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm"
+               [ngClass]="isCardSelected(v) ? 'ring-2 ring-blue-500 border-blue-500' : ''">
+            <div class="flex items-center gap-2">
+              <div *ngIf="cardSelectMode" class="shrink-0 w-5 h-5 rounded border flex items-center justify-center"
+                   [ngClass]="isCardSelected(v) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white'">
+                <svg *ngIf="isCardSelected(v)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-gray-800 truncate">{{ v.patient_name }}</div>
+                <div class="text-xs text-gray-500 font-mono">{{ v.date ? (v.date | date:'short') : '' }}</div>
+              </div>
             </div>
             <div class="text-sm text-gray-600 mt-0.5 line-clamp-2">{{ v.diagnosis || 'No diagnosis recorded' }}</div>
             <div class="mt-1.5 flex items-center justify-between gap-2 text-xs text-gray-500">
               <span class="truncate">{{ v.doctor_name || '—' }}</span>
               <span class="font-semibold text-gray-700 shrink-0">₹{{ v.amount_paid || 0 }}</span>
             </div>
+          </div>
+          <div *ngIf="cardSelectMode && selectedVisits.length > 0" class="sticky bottom-0 flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-2 shadow-lg">
+            <button (click)="deleteSelectedVisits()" class="btn btn-sm btn-error flex-1 text-white">Delete ({{ selectedVisits.length }})</button>
+            <button (click)="toggleCardSelectMode()" class="btn btn-sm btn-ghost border border-gray-200">Done</button>
           </div>
         </div>
       </div>
@@ -184,6 +201,7 @@ export class VisitListComponent implements OnInit {
       }
       this.ngZone.run(() => {
         this.selectedVisits = [];
+        this.cardSelectMode = false;
         this.loadVisits();
       });
     } catch (e) {
@@ -193,6 +211,31 @@ export class VisitListComponent implements OnInit {
         message: 'Visits could not be deleted. Check console.',
         type: 'error'
       });
+    }
+  }
+
+  // Card batch-select (narrow viewports): mirrors grid multi-select for admins.
+  cardSelectMode = false;
+
+  toggleCardSelectMode(): void {
+    this.cardSelectMode = !this.cardSelectMode;
+    if (!this.cardSelectMode) this.selectedVisits = [];
+  }
+
+  isCardSelected(visit: any): boolean {
+    return this.selectedVisits.some((v: any) => v?.id === visit?.id);
+  }
+
+  onCardTap(visit: any): void {
+    if (this.cardSelectMode) this.toggleCardSelection(visit);
+    else this.goToVisit(visit);
+  }
+
+  toggleCardSelection(visit: any): void {
+    if (this.isCardSelected(visit)) {
+      this.selectedVisits = this.selectedVisits.filter((v: any) => v?.id !== visit?.id);
+    } else {
+      this.selectedVisits = [...this.selectedVisits, visit];
     }
   }
 

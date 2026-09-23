@@ -10,6 +10,7 @@ import { newRequestId } from '../services/request-id';
 import { DialogService } from '../shared/services/dialog.service';
 import { SharedTableComponent } from '../shared/components/table/table.component';
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../shared/components/view-toggle/view-toggle.component';
+import { QueueCountService } from '../shared/services/queue-count.service';
 import { ColDef } from 'ag-grid-community';
 import { DoctorPickService } from '../shared/services/doctor-pick.service';
 
@@ -18,7 +19,7 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
   standalone: true,
   imports: [CommonModule, DatePipe, FormsModule, VitalsFormComponent, SharedTableComponent, ViewToggleComponent],
   template: `
-    <div class="h-full bg-gray-50 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
+    <div class="h-full bg-gray-100 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
       <div class="w-full">
         <!-- Header: Queue is top-level nav (sidebar + breadcrumb), so no back
              button. Subline is operational counts, not marketing copy. -->
@@ -98,7 +99,7 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
            [ngStyle]="{ left: rowMenu.x + 'px', top: rowMenu.y + 'px' }">
         <button role="menuitem" (click)="menuAction('triage')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Triage reassessment</button>
         <button role="menuitem" (click)="menuAction('vitals')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Record vitals</button>
-        <button *ngIf="rowMenu.item.status !== 'in-consult'" role="menuitem" (click)="menuAction('remove')" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Remove from queue</button>
+        <button *ngIf="rowMenu.item.status !== 'in-consult' && canRemoveFromQueue()" role="menuitem" (click)="menuAction('remove')" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Remove from queue</button>
       </div>
       
       <!-- Reassess Triage Modal -->
@@ -307,7 +308,8 @@ export class QueueComponent implements OnInit, OnDestroy {
     private dataService: DataService,
     private dialogService: DialogService,
     private authService?: AuthService,
-    private doctorPick?: DoctorPickService
+    private doctorPick?: DoctorPickService,
+    private queueCountService?: QueueCountService
   ) { }
 
   ngOnInit() {
@@ -425,6 +427,19 @@ export class QueueComponent implements OnInit, OnDestroy {
     this.rowMenu = null;
   }
 
+  /**
+   * Queue removal is a granted desk action (doctor/receptionist/admin);
+   * nurses hold no removeFromQueue grant, so the menu hides it for them
+   * instead of serving a 403 dialog.
+   */
+  canRemoveFromQueue(): boolean {
+    try {
+      return this.authService?.getUser()?.role !== 'nurse';
+    } catch {
+      return true;
+    }
+  }
+
   menuAction(action: 'triage' | 'vitals' | 'remove'): void {
     const item = this.rowMenu?.item;
     this.closeRowMenu();
@@ -455,6 +470,7 @@ export class QueueComponent implements OnInit, OnDestroy {
     try {
       const data = await this.dataService.invoke<any>('getQueue');
       this.queue.set(data);
+      this.queueCountService?.updateFrom(data);
     } catch (e) {
       console.error('Failed to load queue', e);
     } finally {
@@ -517,20 +533,26 @@ export class QueueComponent implements OnInit, OnDestroy {
   }
 
   async remove(id: number) {
-    if (confirm('Remove from queue?')) {
-      try {
-        await this.dataService.invoke<any>('removeFromQueue', id);
-        this.refreshQueue();
-      } catch (e) {
-        console.error('Remove failed', e);
-        await this.dialogService.open({
-          title: 'Error',
-          message: e instanceof Error && e.message
-            ? `Failed to remove from queue: ${e.message}`
-            : 'Failed to remove from queue',
-          type: 'error'
-        });
-      }
+    const confirmed = await this.dialogService.open({
+      title: 'Remove from queue?',
+      message: 'The patient leaves the live queue. Triage history is preserved in the audit trail.',
+      type: 'confirm',
+      confirmText: 'Remove',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
+    try {
+      await this.dataService.invoke<any>('removeFromQueue', id);
+      this.refreshQueue();
+    } catch (e) {
+      console.error('Remove failed', e);
+      await this.dialogService.open({
+        title: 'Error',
+        message: e instanceof Error && e.message
+          ? `Failed to remove from queue: ${e.message}`
+          : 'Failed to remove from queue',
+        type: 'error'
+      });
     }
   }
 

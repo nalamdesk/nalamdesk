@@ -1,17 +1,17 @@
 import { Component, ViewChild, ElementRef, NgZone, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { NavigationStart, RouterOutlet, RouterModule, Router } from '@angular/router';
+import { NavigationEnd, NavigationStart, RouterOutlet, RouterModule, Router } from '@angular/router';
 import { Subscription } from 'rxjs';
-import { UniversalDialogComponent } from '../../shared/components/universal-dialog/universal-dialog.component';
 import { DialogService } from '../../shared/services/dialog.service';
 import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { AuthService } from '../../services/auth.service';
+import { QueueCountService } from '../../shared/services/queue-count.service';
 import { RuntimeService } from '../../services/runtime.service';
 
 @Component({
   selector: 'app-main-layout',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterModule, UniversalDialogComponent],
+  imports: [CommonModule, RouterOutlet, RouterModule],
   template: `
     <div class="drawer lg:drawer-open font-sans">
       <input #drawerCheckbox id="main-drawer" type="checkbox" class="drawer-toggle" />
@@ -34,7 +34,6 @@ import { RuntimeService } from '../../services/runtime.service';
              </div>
             <div class="text-sm breadcrumbs">
               <ul>
-                <li><span class="opacity-50">App</span></li>
                 <li class="font-medium text-blue-800">{{ currentRouteName }}</li>
               </ul>
             </div>
@@ -68,6 +67,7 @@ import { RuntimeService } from '../../services/runtime.service';
     
                     <!-- Add closeDrawer() to dropdown links too just in case -->
                     <ul tabindex="0" class="mt-3 z-[1] p-2 shadow-menu menu menu-sm dropdown-content bg-white rounded-box w-52">
+                      <li><a routerLink="/profile" (click)="closeDrawer()">Change password</a></li>
                       <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Manage Profile</a></li>
                       <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Settings</a></li>
                       <li><a class="text-red-600" (click)="logout()">Logout</a></li>
@@ -114,10 +114,11 @@ import { RuntimeService } from '../../services/runtime.service';
           <li class="menu-title px-2 uppercase tracking-wider font-bold text-[11px] opacity-50 mt-4">Patient Management</li>
 
           <li>
-            <a routerLink="/queue" routerLinkActive="active" class="group" (click)="closeDrawer()">
+            <a routerLink="/queue" routerLinkActive="active" #queueRla="routerLinkActive" class="group" (click)="closeDrawer()">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
               Queue
-              <span class="badge badge-sm badge-secondary ml-auto" *ngIf="queueCount > 0">{{ queueCount }}</span>
+              <span *ngIf="queueCount > 0" class="badge badge-sm ml-auto border-0 font-bold"
+                    [ngClass]="queueRla.isActive ? 'bg-white/25 text-white' : 'bg-blue-100 text-blue-700'">{{ queueCount }}</span>
             </a>
           </li>
           <li>
@@ -151,27 +152,6 @@ import { RuntimeService } from '../../services/runtime.service';
       </div>
     </div>
     
-    <app-universal-dialog
-      [isOpen]="dialogService.isOpen()"
-      [title]="dialogService.options().title"
-      [message]="dialogService.options().message"
-      [icon]="dialogService.options().icon ?? true"
-      [type]="dialogService.options().type ?? 'info'"
-      (confirmDialog)="dialogService.confirm()"
-      (cancelDialog)="dialogService.close()"
-      (isOpenChange)="!$event ? dialogService.close() : null">
-      
-      <div actions #actions class="flex gap-2 w-full justify-end">
-         <button *ngIf="dialogService.options().type === 'confirm'" 
-                 class="px-4 py-2 rounded text-blue-600 border border-blue-200 hover:bg-blue-50 transition" (click)="dialogService.close()">
-           {{ dialogService.options().cancelText }}
-         </button>
-         <button class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 font-medium transition shadow-sm" (click)="dialogService.confirm()">
-           {{ dialogService.options().confirmText }}
-         </button>
-      </div>
-    </app-universal-dialog>
-
     <!-- Attending-doctor picker for admin-initiated consultations -->
     <div *ngIf="doctorPick?.open()" class="fixed inset-0 z-[100] flex items-center justify-center p-4"
          role="dialog" aria-modal="true" aria-label="Select responsible doctor">
@@ -194,6 +174,7 @@ import { RuntimeService } from '../../services/runtime.service';
         </div>
       </div>
     </div>
+
   `,
   styles: [`
     .menu a {
@@ -213,7 +194,14 @@ import { RuntimeService } from '../../services/runtime.service';
   `]
 })
 export class MainLayoutComponent implements OnInit, OnDestroy {
-  queueCount = 0; // TODO: Connect to service
+  /** Sidebar badge: live count served by QueueCountService (0 pre-login). */
+  get queueCount(): number {
+    try {
+      return this.queueCountService?.count() ?? 0;
+    } catch {
+      return 0;
+    }
+  }
   currentUser: any = null;
   private routerSub?: Subscription;
 
@@ -225,23 +213,33 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private ngZone: NgZone,
     public runtime: RuntimeService,
-    public doctorPick?: DoctorPickService
+    public doctorPick?: DoctorPickService,
+    private queueCountService?: QueueCountService
   ) {
     this.currentUser = this.authService.getUser();
   }
+
+  private badgeRefreshId: any;
 
   ngOnInit() {
     if (!!(globalThis as any).electron) {
       this.runtime.init();
     }
+    void this.queueCountService?.refresh();
+    // Backup cadence for mutations that don't navigate (same 30s as the queue page).
+    this.badgeRefreshId = setInterval(() => void this.queueCountService?.refresh(), 30000);
     this.routerSub = this.router.events.subscribe(event => {
       if (event instanceof NavigationStart) {
         this.dialogService.close();
+      }
+      if (event instanceof NavigationEnd) {
+        void this.queueCountService?.refresh();
       }
     });
   }
 
   ngOnDestroy() {
+    if (this.badgeRefreshId) clearInterval(this.badgeRefreshId);
     this.routerSub?.unsubscribe();
   }
 

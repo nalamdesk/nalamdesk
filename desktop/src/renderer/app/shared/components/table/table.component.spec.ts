@@ -14,6 +14,7 @@ class MockAgGridAngular {
     @Input() rowData: any;
     @Input() columnDefs: any;
     @Input() defaultColDef: any;
+    @Input() getRowId: any;
     @Input() theme: any;
     @Input() paginationPageSize: any;
     @Input() paginationPageSizeSelector: any;
@@ -65,6 +66,17 @@ describe('SharedTableComponent', () => {
     it('should accept multiSelect input', () => {
         component.multiSelect = true;
         expect(component.multiSelect).toBe(true);
+    });
+
+    it('renders a checkbox column for multi-select and none for single', () => {
+        expect(component.selectionOptions).toMatchObject({ mode: 'singleRow', checkboxes: false });
+        component.multiSelect = true;
+        component.ngOnChanges({ multiSelect: {} } as any);
+        expect(component.selectionOptions).toMatchObject({ mode: 'multiRow', checkboxes: true, headerCheckbox: true, selectAll: 'filtered' });
+    });
+
+    it('keys grid rows by record id', () => {
+        expect(component.getRowId({ data: { id: 42 } })).toBe('42');
     });
 
     it('exposes a visible horizontal overflow cue so trailing columns are not clipped', () => {

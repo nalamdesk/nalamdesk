@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CloudService } from '../services/cloud.service';
 import { PatientService } from '../services/patient.service';
+import { DialogService } from '../shared/services/dialog.service';
+import { ToastService } from '../shared/services/toast.service';
 
 @Component({
   selector: 'app-online-booking',
@@ -114,7 +116,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
   private refreshInterval: any;
 
-  constructor(public cloud: CloudService, private patientService: PatientService) {
+  constructor(public cloud: CloudService, private patientService: PatientService, private dialogService?: DialogService, private toastService?: ToastService) {
     this.generateTimeSlots();
     this.setCalendarLimits();
   }
@@ -221,13 +223,17 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
       // Explicitly tell server we are updating this date
       await this.cloud.publishSlots(slotsToPublish, [this.selectedDate]);
-      alert('Availability updated successfully!');
+      this.toastService?.success(`Slots for ${this.selectedDate} are now published.`, 'Availability updated');
 
       // Refresh state
       await this.onDateChange();
     } catch (e) {
       console.error(e);
-      alert('Failed to publish slots');
+      await this.dialogService?.open({
+        title: 'Publish failed',
+        message: 'Availability could not be updated. Please retry.',
+        type: 'error'
+      });
     }
   }
 
@@ -258,55 +264,71 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
 
   async accept(req: any) {
-    if (confirm(`Accept booking for ${req.patient_name}?`)) {
-      try {
-        // 1. Find or Create Patient
-        let patientId;
-        const existingPatients = await this.patientService.getPatients(req.phone);
-        const found = existingPatients.find(p => p.mobile === req.phone);
+    const confirmed = await this.dialogService?.open({
+      title: 'Accept booking?',
+      message: `${req.patient_name} gets a confirmed appointment for ${req.date} at ${req.time}.`,
+      type: 'confirm',
+      confirmText: 'Accept',
+      cancelText: 'Cancel'
+    });
+    if (!confirmed) return;
+    try {
+      // 1. Find or Create Patient
+      let patientId;
+      const existingPatients = await this.patientService.getPatients(req.phone);
+      const found = existingPatients.find(p => p.mobile === req.phone);
 
-        if (found) {
-          patientId = found.id;
-        } else {
-          // Create new "Lite" Patient
-          const newPatient = {
-            name: req.patient_name,
-            mobile: req.phone,
-            age: 0, // Incomplete
-            gender: 'Unknown',
-            address: '',
-            uuid: crypto.randomUUID()
-          };
-          const res = await this.patientService.savePatient(newPatient);
-          patientId = res.lastInsertRowid;
-        }
-
-        // 2. Create Appointment
-        if (patientId) {
-          await this.cloud.saveAppointment({
-            patient_id: patientId,
-            date: req.date,
-            time: req.time,
-            reason: req.reason,
-            status: 'CONFIRMED'
-          });
-
-          // 3. Update Request Status (Server Sync)
-          await this.cloud.updateRequestStatus(req.id, 'accepted');
-          await this.loadRequests();
-          alert('Booking Accepted & Appointment Created!');
-        }
-      } catch (e) {
-        console.error('Accept flow failed', e);
-        alert('Failed to accept booking');
+      if (found) {
+        patientId = found.id;
+      } else {
+        // Create new "Lite" Patient
+        const newPatient = {
+          name: req.patient_name,
+          mobile: req.phone,
+          age: 0, // Incomplete
+          gender: 'Unknown',
+          address: '',
+          uuid: crypto.randomUUID()
+        };
+        const res = await this.patientService.savePatient(newPatient);
+        patientId = res.lastInsertRowid;
       }
+
+      // 2. Create Appointment
+      if (patientId) {
+        await this.cloud.saveAppointment({
+          patient_id: patientId,
+          date: req.date,
+          time: req.time,
+          reason: req.reason,
+          status: 'CONFIRMED'
+        });
+
+        // 3. Update Request Status (Server Sync)
+        await this.cloud.updateRequestStatus(req.id, 'accepted');
+        await this.loadRequests();
+        this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
+      }
+    } catch (e) {
+      console.error('Accept flow failed', e);
+      await this.dialogService?.open({
+        title: 'Accept failed',
+        message: 'The booking could not be accepted. Please retry.',
+        type: 'error'
+      });
     }
   }
 
   async reject(req: any) {
-    if (confirm(`Reject booking for ${req.patient_name}?`)) {
-      await this.cloud.updateRequestStatus(req.id, 'rejected');
-      this.loadRequests();
-    }
+    const confirmed = await this.dialogService?.open({
+      title: 'Reject booking?',
+      message: `${req.patient_name}'s request for ${req.date} at ${req.time} will be declined.`,
+      type: 'confirm',
+      confirmText: 'Reject',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
+    await this.cloud.updateRequestStatus(req.id, 'rejected');
+    this.loadRequests();
   }
 }

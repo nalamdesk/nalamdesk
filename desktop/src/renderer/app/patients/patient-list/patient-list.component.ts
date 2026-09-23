@@ -9,6 +9,7 @@ import { DialogService } from '../../shared/services/dialog.service';
 import { DatePickerComponent } from '../../shared/components/date-picker/date-picker.component';
 import { SharedTableComponent } from '../../shared/components/table/table.component';
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../../shared/components/view-toggle/view-toggle.component';
+import { QueueCountService } from '../../shared/services/queue-count.service';
 import { PatientActionsRenderer } from './patient-actions.component';
 import { ColDef } from 'ag-grid-community';
 
@@ -20,7 +21,7 @@ import { ColDef } from 'ag-grid-community';
     <div class="h-full bg-gray-100 p-4 md:p-6 flex flex-col overflow-hidden">
       <div class="w-full">
         <div class="flex justify-between items-center mb-6">
-          <h1 class="text-3xl font-bold text-gray-800">Patients</h1>
+          <h1 class="text-2xl font-bold text-gray-800">Patients</h1>
           <div class="flex items-center gap-2">
             <app-view-toggle class="md:hidden" [value]="mobileView" (valueChange)="setMobileView($event)" label="Patients view"></app-view-toggle>
             <button (click)="openAddModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition shadow-sm">
@@ -49,12 +50,12 @@ import { ColDef } from 'ag-grid-community';
               [rowData]="gridData"
               [columnDefs]="colDefs"
               [loading]="loading"
-              [multiSelect]="true"
+              [multiSelect]="isAdmin"
               (selectionChanged)="selectedPatients = $event"
               (rowClick)="onRowClick($event)"
            >
               <div toolbar-left>
-                  <button *ngIf="selectedPatients.length > 0" (click)="deleteSelectedPatients()" 
+                  <button *ngIf="isAdmin && selectedPatients.length > 0" (click)="deleteSelectedPatients()" 
                           class="bg-red-50 text-red-600 px-3 py-1.5 rounded-md text-xs font-medium border border-red-200 hover:bg-red-100 flex items-center gap-2 animate-in fade-in zoom-in duration-200">
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
@@ -66,10 +67,21 @@ import { ColDef } from 'ag-grid-community';
         </div>
         <!-- Compact cards for narrow viewports: server-filtered gridData, same actions -->
         <div class="max-h-[calc(100vh-280px)] min-h-[200px] overflow-y-auto space-y-2 pb-4" [ngClass]="mobileView === 'cards' ? 'block md:hidden' : 'hidden'">
+          <div *ngIf="isAdmin" class="flex items-center justify-between px-1">
+            <button (click)="toggleCardSelectMode()" class="text-xs font-semibold text-blue-600 hover:text-blue-800">
+              {{ cardSelectMode ? 'Cancel' : 'Select' }}
+            </button>
+            <span *ngIf="cardSelectMode" class="text-xs text-gray-500">{{ selectedPatients.length }} selected</span>
+          </div>
           <div *ngIf="gridData.length === 0" class="text-center text-sm text-gray-500 py-8">No patients found</div>
-          <div *ngFor="let p of gridData" (click)="goToVisit(p)"
-               class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+          <div *ngFor="let p of gridData" (click)="onCardTap(p)"
+               class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm"
+               [ngClass]="isCardSelected(p) ? 'ring-2 ring-blue-500 border-blue-500' : ''">
             <div class="flex items-center gap-3">
+              <div *ngIf="cardSelectMode" class="shrink-0 w-5 h-5 rounded border flex items-center justify-center"
+                   [ngClass]="isCardSelected(p) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white'">
+                <svg *ngIf="isCardSelected(p)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+              </div>
               <div class="w-10 h-10 rounded-full bg-neutral text-neutral-content flex items-center justify-center font-bold shrink-0">
                 {{ (p.name || '?').charAt(0).toUpperCase() }}
               </div>
@@ -79,7 +91,7 @@ import { ColDef } from 'ag-grid-community';
               </div>
               <span *ngIf="p.inQueue" class="badge badge-sm badge-primary shrink-0">In Queue</span>
             </div>
-            <div class="mt-2.5 flex items-center gap-1.5">
+            <div *ngIf="!cardSelectMode" class="mt-2.5 flex items-center gap-1.5">
               <button (click)="$event.stopPropagation(); addToQueue(p)" [disabled]="p.inQueue"
                       class="btn btn-sm flex-1"
                       [ngClass]="p.inQueue ? 'btn-ghost text-gray-400' : 'btn-primary'">
@@ -87,6 +99,10 @@ import { ColDef } from 'ag-grid-community';
               </button>
               <button (click)="$event.stopPropagation(); editPatient(p)" class="btn btn-sm btn-ghost border border-gray-200">Edit</button>
             </div>
+          </div>
+          <div *ngIf="cardSelectMode && selectedPatients.length > 0" class="sticky bottom-0 flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-2 shadow-lg">
+            <button (click)="deleteSelectedPatients()" class="btn btn-sm btn-error flex-1 text-white">Delete ({{ selectedPatients.length }})</button>
+            <button (click)="toggleCardSelectMode()" class="btn btn-sm btn-ghost border border-gray-200">Done</button>
           </div>
         </div>
       </div>
@@ -336,8 +352,39 @@ export class PatientListComponent implements OnInit {
     return !!this.patientForm.get('id')?.value;
   }
 
+  /** Destructive batch deletes are admin-only (server 403s the rest). */
+  get isAdmin(): boolean {
+    return this.currentUser?.role === 'admin';
+  }
+
+  // Card batch-select (narrow viewports): mirrors grid multi-select for admins.
+  cardSelectMode = false;
+
+  toggleCardSelectMode(): void {
+    this.cardSelectMode = !this.cardSelectMode;
+    if (!this.cardSelectMode) this.selectedPatients = [];
+  }
+
+  isCardSelected(patient: any): boolean {
+    return this.selectedPatients.some((p: any) => p?.id === patient?.id);
+  }
+
+  onCardTap(patient: any): void {
+    if (this.cardSelectMode) this.toggleCardSelection(patient);
+    else this.goToVisit(patient);
+  }
+
+  toggleCardSelection(patient: any): void {
+    if (this.isCardSelected(patient)) {
+      this.selectedPatients = this.selectedPatients.filter((p: any) => p?.id !== patient?.id);
+    } else {
+      this.selectedPatients = [...this.selectedPatients, patient];
+    }
+  }
+
   private dataService: DataService = inject(DataService);
   private authService: AuthService = inject(AuthService);
+  private queueCountService: QueueCountService | null = inject(QueueCountService, { optional: true });
   currentUser: any = null;
   private dialogService = inject(DialogService);
 
@@ -451,6 +498,10 @@ export class PatientListComponent implements OnInit {
       ...p,
       inQueue: this.enqueuedPatientIds.has(p.id!)
     }));
+    // Drop selections that are no longer visible: a batch delete must only
+    // ever cover records the admin can currently see.
+    const visible = new Set(this.gridData.map((p: any) => p?.id));
+    this.selectedPatients = this.selectedPatients.filter((p: any) => visible.has(p?.id));
   }
 
   onSearch() {
@@ -525,6 +576,7 @@ export class PatientListComponent implements OnInit {
         this.updateGridData();
         this.cdr.detectChanges();
       });
+      void this.queueCountService?.refresh();
     } catch (e: any) {
       console.error(e);
       this.ngZone.run(async () => {
@@ -557,7 +609,14 @@ export class PatientListComponent implements OnInit {
 
   async deleteSelectedPatients() {
     if (this.selectedPatients.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${this.selectedPatients.length} patients? associated visits and records will effectively be orphaned or deleted.`)) return;
+    const confirmed = await this.dialogService.open({
+      title: `Delete ${this.selectedPatients.length} patients?`,
+      message: 'Associated visits and records will be deleted too. This cannot be undone.',
+      type: 'confirm',
+      confirmText: 'Delete',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
 
     try {
       for (const p of this.selectedPatients) {
@@ -568,11 +627,16 @@ export class PatientListComponent implements OnInit {
       }
       this.ngZone.run(() => {
         this.selectedPatients = [];
+        this.cardSelectMode = false;
         this.loadPatients();
       });
     } catch (e) {
       console.error(e);
-      alert('Error deleting patients. Check console.');
+      await this.dialogService.open({
+        title: 'Delete failed',
+        message: 'Patients could not be deleted. Check console.',
+        type: 'error'
+      });
     }
   }
 }

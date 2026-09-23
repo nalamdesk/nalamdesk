@@ -77,6 +77,13 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
         *   **Validation:** If it's a new patient, you will be prompted to verify/fill missing details (Age/Gender).
         *   **Queue:** Once validated, the patient is added to the **Live Queue** and status updates to "Checked In".
 
+### 5. ABDM Integration (India)
+*   **One-time setup (Settings → ABDM):** Enter the facility IDs issued to the clinic — HIP ID, counter ID, HFR (facility) ID and the doctors' HPR (practitioner) IDs. Each doctor keeps their own HPR ID even when other profile fields are edited. Until credentials are configured the gateway stays in mock mode and everything keeps working offline.
+*   **Scan & Share counter:** The ABDM tab shows a counter QR encoding the clinic identity (no patient data). Print it and display it at reception. When a patient scans it at the counter, their token appears in the **Incoming Scans** dock on the Queue page — press Space or tap the token for 1-click check-in. If details are incomplete the patient chart opens to finish them and the token stays pending.
+*   **Care contexts:** Every completed encounter automatically gets a yearly reference like `OP-2026-0001`, visible on the visit. References never repeat, even if an encounter is deleted.
+*   **Callback inbox:** Messages arriving from the ABDM gateway land in the inbox and are acknowledged exactly once. The queue reflects them within seconds.
+*   **Secure transfer:** From the patient chart you can push an encrypted bundle to the configured hospital endpoint (Fidelius end-to-end encryption). With no endpoint configured the transfer runs as a local loopback receipt for testing.
+
 ---
 
 ## ⚙️ Settings

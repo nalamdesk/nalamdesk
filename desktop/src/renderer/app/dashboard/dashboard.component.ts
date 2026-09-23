@@ -6,6 +6,9 @@ import { DataService } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
 import { CloudService } from '../services/cloud.service';
 import { PatientService } from '../services/patient.service';
+import { DialogService } from '../shared/services/dialog.service';
+import { ToastService } from '../shared/services/toast.service';
+import { QueueCountService } from '../shared/services/queue-count.service';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -113,6 +116,23 @@ export function greetingForLocalHour(hour: number): string {
                 </div>
             </div>
         </div>
+
+        <!-- Today's Appointments: confirmed bookings waiting for check-in -->
+        <div class="card bg-base-100 shadow-sm border border-base-200 mb-8">
+            <div class="card-body">
+                <h2 class="card-title text-lg font-bold">Today's Appointments
+                    <span *ngIf="todayAppointments.length > 0" class="badge badge-primary badge-sm ml-1">{{ todayAppointments.length }}</span>
+                </h2>
+                <div *ngIf="todayAppointments.length === 0" class="text-gray-400 text-sm py-2">No confirmed appointments for today.</div>
+                <div *ngFor="let appt of todayAppointments" class="flex items-center justify-between gap-3 border-b border-base-200 py-2.5 last:border-0">
+                    <div class="min-w-0">
+                        <div class="font-bold truncate">{{ appt.patient_name }}</div>
+                        <div class="text-xs text-gray-500 font-mono">{{ appt.time }}</div>
+                    </div>
+                    <button (click)="checkIn(appt)" class="btn btn-sm btn-primary shrink-0">Check in</button>
+                </div>
+            </div>
+        </div>
         
         <!-- Recent Visits -->
         <div class="card bg-base-100 shadow-sm border border-base-200 mb-8">
@@ -200,7 +220,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private dataService: DataService,
     private authService: AuthService,
     private cloudService: CloudService,
-    private patientService: PatientService
+    private patientService: PatientService,
+    private dialogService?: DialogService,
+    private toastService?: ToastService,
+    private queueCountService?: QueueCountService
   ) { }
 
   async refresh() {
@@ -276,7 +299,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async checkIn(appt: any) {
-    if (!confirm(`Check in ${appt.patient_name}?`)) return;
+    const confirmed = await this.dialogService?.open({
+      title: 'Check in patient?',
+      message: `${appt.patient_name} joins the live queue for today.`,
+      type: 'confirm',
+      confirmText: 'Check in',
+      cancelText: 'Cancel'
+    });
+    if (!confirmed) return;
 
     // Validate Patient
     // Map flatten appt fields to Patient object style for validation
@@ -292,7 +322,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
     };
 
     if (!this.patientService.isPatientComplete(patientObj as any)) {
-      alert('Patient details incomplete. Redirecting to update details...');
+      await this.dialogService?.open({
+        title: 'Details needed',
+        message: 'Some essentials are missing. Opened the patient chart to complete them before check-in.',
+        type: 'warning'
+      });
       this.router.navigate(['/patients'], { queryParams: { editId: appt.patient_id } });
       return;
     }
@@ -303,7 +337,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
       // Update Appointment Status
       await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
 
-      alert(`Checked in ${appt.patient_name}!`);
+      this.toastService?.success(`${appt.patient_name} is now in the live queue.`, 'Checked in');
+      void this.queueCountService?.refresh();
       this.loadData(); // Refresh list
     } catch (e: any) {
       console.error(e);
@@ -312,7 +347,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
         await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
         this.loadData();
       } else {
-        alert('Check-in failed: ' + e.message);
+        await this.dialogService?.open({
+          title: 'Check-in failed',
+          message: e.message ? `Could not check in: ${e.message}` : 'Could not check in.',
+          type: 'error'
+        });
       }
     }
   }

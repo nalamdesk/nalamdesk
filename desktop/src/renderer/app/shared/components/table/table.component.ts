@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, Output, ElementRef, NgZone, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, EventEmitter, Input, Output, ElementRef, NgZone, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AgGridAngular } from 'ag-grid-angular';
@@ -68,9 +68,10 @@ import { ColDef, GridOptions } from 'ag-grid-community';
             [rowData]="rowData"
             [columnDefs]="columnDefs"
             [defaultColDef]="defaultColDef"
+            [getRowId]="getRowId"
             [paginationPageSize]="pageSize"
             [paginationPageSizeSelector]="[10, 20, 50, 100]"
-            [rowSelection]="multiSelect ? 'multiple' : 'single'"
+            [rowSelection]="selectionOptions"
             [rowHeight]="rowHeight"
             [overlayNoRowsTemplate]="noRowsTemplate"
             [animateRows]="true"
@@ -94,7 +95,7 @@ import { ColDef, GridOptions } from 'ag-grid-community';
     }
   `]
 })
-export class SharedTableComponent implements OnDestroy, OnChanges {
+export class SharedTableComponent implements OnInit, OnDestroy, OnChanges {
   @Input() rowData: any[] = [];
   @Input() columnDefs: ColDef[] = [];
   @Input() pagination = true;
@@ -110,6 +111,25 @@ export class SharedTableComponent implements OnDestroy, OnChanges {
   @Output() selectionChanged = new EventEmitter<any[]>();
 
   private gridApi: any;
+
+  /**
+   * AG Grid 32 selection model. Multi-select renders an explicit checkbox
+   * column (row + header) so batch actions are discoverable; single-select
+   * stays click-to-select with no checkbox chrome. Set once per
+   * multiSelect change: a template-literal object would reset selection on
+   * every change-detection cycle.
+   */
+  selectionOptions: any = { mode: 'singleRow', checkboxes: false, enableClickSelection: true };
+
+  ngOnInit() {
+    this.applySelectionOptions();
+  }
+
+  private applySelectionOptions(): void {
+    this.selectionOptions = this.multiSelect
+      ? { mode: 'multiRow', checkboxes: true, headerCheckbox: true, enableClickSelection: true, selectAll: 'filtered' }
+      : { mode: 'singleRow', checkboxes: false, enableClickSelection: true };
+  }
 
   toolsState = { showCols: false };
   toggleableColumns: { colId: string, headerName: string, visible: boolean }[] = [];
@@ -137,6 +157,10 @@ export class SharedTableComponent implements OnDestroy, OnChanges {
     autoHeaderHeight: false // Disable auto header height
   };
 
+  // Identity tracking by record id (every consumer's rows carry one), so grid
+  // selection follows records across refreshes instead of row indexes.
+  getRowId = (params: any): string => String(params.data?.id ?? '');
+
   private resizeObserver: ResizeObserver | undefined;
 
   constructor(private elementRef: ElementRef<HTMLElement>, private ngZone: NgZone) { }
@@ -145,6 +169,9 @@ export class SharedTableComponent implements OnDestroy, OnChanges {
     // Apply Quick Filter when quickFilterText changes
     if (changes['quickFilterText'] && this.gridApi) {
       this.gridApi.setGridOption('quickFilterText', this.quickFilterText);
+    }
+    if (changes['multiSelect']) {
+      this.applySelectionOptions();
     }
   }
 

@@ -6,7 +6,7 @@ import { CommonModule } from '@angular/common';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div *ngIf="isOpen" class="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overflow-x-hidden p-4 sm:p-6"
+    <div *ngIf="isOpen" class="fixed inset-0 z-[300] flex items-center justify-center overflow-y-auto overflow-x-hidden p-4 sm:p-6"
          role="dialog" aria-modal="true" aria-labelledby="modal-title">
       
       <!-- Backdrop -->

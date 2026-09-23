@@ -1003,5 +1003,26 @@ export const MIGRATIONS = [
                 `);
             } catch (e) { }
         }
+    },
+    {
+        version: 25,
+        up: (db: any) => {
+            console.log('Running Migration v25 (record deletes are admin-only)...');
+            // Destructive record deletes must never sit on desk-role grants.
+            // No shipped seed grants them today; this strips them wherever a
+            // dirty roles row carries them, so the server 403s non-admins.
+            const recordDeletes = ['deletePatient', 'deleteVisit', 'deleteUser'];
+            ['doctor', 'nurse', 'receptionist'].forEach(roleName => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        recordDeletes.forEach(p => permissions.delete(p));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

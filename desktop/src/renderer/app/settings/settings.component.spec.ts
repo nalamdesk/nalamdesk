@@ -135,7 +135,7 @@ describe('SettingsComponent Validation', () => {
         component.restoreBundle = { path: '/external/clinic.ndbackup', name: 'clinic.ndbackup' };
         component.restoreRecoveryCode = 'AAAA-BBBB-CCCC-DDDD';
         component.restoreAdminPassword = 'admin-secret';
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        (component as any).dialogService = { open: vi.fn().mockResolvedValue(true) };
         const restoreSystemBackup = vi.fn(async () => ({ success: true, restartRequired: true }));
         (window as any).electron = { restoreSystemBackup };
         await component.restoreLocalBackup();
@@ -153,7 +153,7 @@ describe('SettingsComponent Validation', () => {
         component.restoreBundle = { path: '/external/clinic.ndbackup', name: 'clinic.ndbackup' };
         component.restoreRecoveryCode = 'CODE';
         component.restoreAdminPassword = 'secret';
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        (component as any).dialogService = { open: vi.fn().mockResolvedValue(true) };
         const restoreSystemBackup = vi.fn(async () => ({ success: false, error: 'INVALID_ADMIN_CREDENTIAL' }));
         (window as any).electron = {
             restoreSystemBackup,

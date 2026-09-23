@@ -160,8 +160,7 @@ describe('PatientListComponent', () => {
     });
 
     // Delete Tests (Batch)
-    it('defaults to cards and persists the narrow-viewport view override', () => {
-        expect(component.mobileView).toBe('cards');
+    it('defaults to cards and persists the narrow-viewport view override', () => {        expect(component.mobileView).toBe('cards');
         component.setMobileView('grid');
         expect(component.mobileView).toBe('grid');
         component.ngOnInit();
@@ -169,8 +168,9 @@ describe('PatientListComponent', () => {
         component.setMobileView('cards');
     });
 
-    it('should delete selected patients', async () => {        // Mock confirm
-        vi.spyOn(window, 'confirm').mockReturnValue(true);
+    it('should delete selected patients', async () => {
+        // DialogService is injected via inject(); stub it for this flow
+        (component as any).dialogService = { open: vi.fn().mockResolvedValue(true) };
 
         // Select a patient
         const patient = { id: 1, name: 'John' };
@@ -181,5 +181,51 @@ describe('PatientListComponent', () => {
         expect(mockDataService.invoke).toHaveBeenCalledWith('deletePatient', 1);
         expect(component.selectedPatients.length).toBe(0);
         expect(mockPatientService.getPatients).toHaveBeenCalled();
+    });
+
+    it('should keep patients when deletion is cancelled', async () => {
+        (component as any).dialogService = { open: vi.fn().mockResolvedValue(false) };
+        component.selectedPatients = [{ id: 1, name: 'John' }];
+
+        await component.deleteSelectedPatients();
+
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('deletePatient', expect.anything());
+        expect(component.selectedPatients.length).toBe(1);
+    });
+
+    it('exposes batch delete only to admins', () => {
+        mockAuthService.getUser.mockReturnValue({ role: 'admin' });
+        component.ngOnInit();
+        expect(component.isAdmin).toBe(true);
+        mockAuthService.getUser.mockReturnValue({ role: 'doctor' });
+        component.ngOnInit();
+        expect(component.isAdmin).toBe(false);
+    });
+
+    it('selects cards in batch mode and navigates otherwise', () => {
+        const p = { id: 7, name: 'Lakshmi' };
+        component.onCardTap(p);
+        expect(mockRouter.navigate).toHaveBeenCalledWith(['/patients', 7]);
+
+        component.toggleCardSelectMode();
+        expect(component.cardSelectMode).toBe(true);
+        component.onCardTap(p);
+        expect(component.isCardSelected(p)).toBe(true);
+        expect(component.selectedPatients).toHaveLength(1);
+        component.onCardTap(p);
+        expect(component.isCardSelected(p)).toBe(false);
+
+        component.onCardTap(p);
+        component.toggleCardSelectMode();
+        expect(component.cardSelectMode).toBe(false);
+        expect(component.selectedPatients).toHaveLength(0);
+    });
+
+    it('drops selections hidden by a data refresh', () => {
+        component.selectedPatients = [{ id: 7 }, { id: 9 }] as any;
+        component.patients = [{ id: 9, name: 'Kept' }] as any;
+        component.enqueuedPatientIds = new Set();
+        component.updateGridData();
+        expect(component.selectedPatients.map((p: any) => p.id)).toEqual([9]);
     });
 });

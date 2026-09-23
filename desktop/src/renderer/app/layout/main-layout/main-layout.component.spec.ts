@@ -100,4 +100,25 @@ describe('MainLayoutComponent', () => {
         expect(mockDialogService.close).not.toHaveBeenCalled();
         layout.ngOnDestroy();
     });
+
+    it('reflects the live queue count from the badge service', async () => {
+        const mockCount = { count: () => 3, refresh: vi.fn().mockResolvedValue(undefined) };
+        const layout = new MainLayoutComponent(
+            mockRouter,
+            mockDialogService,
+            mockAuthService,
+            mockNgZone,
+            mockRuntimeService,
+            undefined,
+            mockCount as any
+        );
+        expect(layout.queueCount).toBe(3);
+        layout.ngOnInit();
+        expect(mockCount.refresh).toHaveBeenCalled();
+        layout.ngOnDestroy();
+    });
+
+    it('shows zero badge without the service', () => {
+        expect(component.queueCount).toBe(0);
+    });
 });

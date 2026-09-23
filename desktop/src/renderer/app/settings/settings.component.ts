@@ -9,6 +9,8 @@ import { ActionRendererComponent } from '../shared/components/table/renderers/ac
 import { ColDef, ValueGetterParams } from 'ag-grid-community';
 import { DatePickerComponent } from '../shared/components/date-picker/date-picker.component';
 import { CatalogSettingsComponent } from './catalog-settings.component';
+import { DialogService } from '../shared/services/dialog.service';
+import { ToastService } from '../shared/services/toast.service';
 import { AppUpdateService } from '../services/update.service';
 
 @Component({
@@ -287,7 +289,7 @@ export class SettingsComponent implements OnInit {
   private authService = inject(AuthService);
   private router = inject(Router);
   private updates = inject(AppUpdateService, { optional: true });
-  constructor(private ngZone: NgZone) { }
+  constructor(private ngZone: NgZone, private dialogService?: DialogService, private toastService?: ToastService) { }
 
   ngOnInit() {
     this.currentUser = this.authService.getUser();
@@ -557,7 +559,11 @@ export class SettingsComponent implements OnInit {
 
     const errors = this.validateUser(this.editingUser);
     if (errors.length > 0) {
-      alert(errors.join('\\n'));
+      await this.dialogService?.open({
+        title: 'Check user details',
+        message: errors.join(' '),
+        type: 'warning'
+      });
       return;
     }
 
@@ -566,15 +572,23 @@ export class SettingsComponent implements OnInit {
       this.ngZone.run(() => {
         this.editingUser = null;
         this.loadUsers();
-        alert('Profile Saved');
+        this.toastService?.success('User profile saved.', 'Profile Saved');
       });
     } catch (e: any) {
       console.error(e);
       const msg = e.toString();
       if (msg.includes('UNIQUE constraint failed: users.username')) {
-        alert('Username already exists. Please choose another.');
+        await this.dialogService?.open({
+          title: 'Username taken',
+          message: 'Username already exists. Please choose another.',
+          type: 'warning'
+        });
       } else {
-        alert('Error saving user: ' + msg);
+        await this.dialogService?.open({
+          title: 'Save failed',
+          message: 'Error saving user: ' + msg,
+          type: 'error'
+        });
       }
     }
   }
@@ -596,10 +610,18 @@ export class SettingsComponent implements OnInit {
       );
       if (result.success) {
         this.showLoginPasswordModal = false;
-        alert('Administrator login password changed. Vault and recovery keys were not changed.');
-      } else alert(result.error || 'Failed to change login password');
+        this.toastService?.success('Vault and recovery keys were not changed.', 'Login password changed');
+      } else await this.dialogService?.open({
+        title: 'Change failed',
+        message: result.error || 'Failed to change login password',
+        type: 'error'
+      });
     } catch (error: any) {
-      alert(error?.message || 'Failed to change login password');
+      await this.dialogService?.open({
+        title: 'Change failed',
+        message: error?.message || 'Failed to change login password',
+        type: 'error'
+      });
     } finally {
       this.currentLoginPassword = '';
       this.newLoginPassword = '';
@@ -627,10 +649,18 @@ export class SettingsComponent implements OnInit {
       if (result.success) {
         this.showUserResetModal = false;
         this.editingUser = null;
-        alert('Temporary login password set. The user must change it after signing in.');
-      } else alert(result.error || 'Failed to reset login password');
+        this.toastService?.success('The user must change it after signing in.', 'Temporary password set');
+      } else await this.dialogService?.open({
+        title: 'Reset failed',
+        message: result.error || 'Failed to reset login password',
+        type: 'error'
+      });
     } catch (error: any) {
-      alert(error?.message || 'Failed to reset login password');
+      await this.dialogService?.open({
+        title: 'Reset failed',
+        message: error?.message || 'Failed to reset login password',
+        type: 'error'
+      });
     } finally {
       this.resetAdminPassword = '';
       this.resetTemporaryPassword = '';
@@ -651,10 +681,18 @@ export class SettingsComponent implements OnInit {
       const result = await this.authService.rotateDeviceEnvelope(this.currentDevicePassword);
       if (result.success) {
         this.showDeviceRotationModal = false;
-        alert('This device key envelope was rotated. Login passwords and recovery code were not changed.');
-      } else alert(result.error || 'Failed to rotate this device key envelope');
+        this.toastService?.success('Login passwords and recovery code were not changed.', 'Device key rotated');
+      } else await this.dialogService?.open({
+        title: 'Rotation failed',
+        message: result.error || 'Failed to rotate this device key envelope',
+        type: 'error'
+      });
     } catch (error: any) {
-      alert(error?.message || 'Failed to rotate this device key envelope');
+      await this.dialogService?.open({
+        title: 'Rotation failed',
+        message: error?.message || 'Failed to rotate this device key envelope',
+        type: 'error'
+      });
     } finally {
       this.currentDevicePassword = '';
       this.isLoading = false;
@@ -662,7 +700,14 @@ export class SettingsComponent implements OnInit {
   }
 
   async deleteUser(id: number) {
-    if (!confirm('Are you sure? This will remove access for this user.')) return;
+    const confirmed = await this.dialogService?.open({
+      title: 'Remove user access?',
+      message: 'This will remove access for this user.',
+      type: 'confirm',
+      confirmText: 'Remove',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
     try {
       await this.dataService.invoke('deleteUser', id);
       this.ngZone.run(() => this.loadUsers());
@@ -674,10 +719,18 @@ export class SettingsComponent implements OnInit {
 
   async deleteSelectedUsers() {
     if (this.selectedUsers.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${this.selectedUsers.length} users? This cannot be undone.`)) return;
+    const confirmed = await this.dialogService?.open({
+      title: `Delete ${this.selectedUsers.length} users?`,
+      message: 'Their access will be removed. This cannot be undone.',
+      type: 'confirm',
+      confirmText: 'Delete',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
 
+    const count = this.selectedUsers.length;
     try {
-      // Execute in parallel or sequential? 
+      // Execute in parallel or sequential?
       // SQLite handles concurrency poorly if not managed, but dataService.invoke should handle it.
       // Better to do sequential to avoid locking if the main process handles one by one.
       for (const user of this.selectedUsers) {
@@ -686,9 +739,16 @@ export class SettingsComponent implements OnInit {
       this.ngZone.run(() => {
         this.selectedUsers = [];
         this.loadUsers();
-        alert('Users deleted successfully');
+        this.toastService?.success(`${count} user${count === 1 ? '' : 's'} removed.`, 'Users deleted');
       });
-    } catch (e) { console.error(e); alert('Error deleting users'); }
+    } catch (e) {
+      console.error(e);
+      await this.dialogService?.open({
+        title: 'Delete failed',
+        message: 'Users could not be deleted.',
+        type: 'error'
+      });
+    }
   }
 
   async loadAuditLogs() {
@@ -714,7 +774,11 @@ export class SettingsComponent implements OnInit {
       this.newRecoveryCode = null;
       this.showRecoveryModal = false;
     } catch (error: any) {
-      alert(error?.message || 'Could not confirm the recovery code. It will be shown again after the next administrator login.');
+      await this.dialogService?.open({
+        title: 'Confirmation failed',
+        message: error?.message || 'Could not confirm the recovery code. It will be shown again after the next administrator login.',
+        type: 'error'
+      });
     } finally {
       this.isLoading = false;
     }
@@ -726,10 +790,18 @@ export class SettingsComponent implements OnInit {
       const res = await this.authService.regenerateRecoveryCode(this.confirmPassword) as any;
       this.ngZone.run(() => {
         if (res.success && res.recoveryCode) this.newRecoveryCode = res.recoveryCode;
-        else alert(res.error || 'Failed');
+        else void this.dialogService?.open({
+          title: 'Rotation failed',
+          message: res.error || 'Failed',
+          type: 'error'
+        });
       });
     } catch (error: any) {
-      alert(error?.message || 'Failed to rotate recovery code');
+      await this.dialogService?.open({
+        title: 'Rotation failed',
+        message: error?.message || 'Failed to rotate recovery code',
+        type: 'error'
+      });
     } finally {
       this.confirmPassword = '';
       this.isLoading = false;
@@ -773,7 +845,14 @@ export class SettingsComponent implements OnInit {
   }
 
   async disconnectDrive() {
-    if (!confirm('Are you sure you want to disconnect Google Drive? Automated backups will stop.')) return;
+    const confirmed = await this.dialogService?.open({
+      title: 'Disconnect Google Drive?',
+      message: 'Automated backups will stop.',
+      type: 'confirm',
+      confirmText: 'Disconnect',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
     // We should probably have a backend method to clear tokens, but for now we can just clear local state 
     // and maybe save empty tokens to settings? 
     // Ideally, we should add a drive:disconnect IPC. 
@@ -805,13 +884,26 @@ export class SettingsComponent implements OnInit {
       const res = await window.electron.drive.backup() as any;
       this.ngZone.run(() => {
         this.isBackupLoading = false;
-        if (res.success) { alert('Backup Complete'); this.listBackups(); }
-        else alert('Failed: ' + res.error);
+        if (res.success) {
+          this.toastService?.success('Drive backup finished.', 'Backup Complete');
+          this.listBackups();
+        } else void this.dialogService?.open({
+          title: 'Backup failed',
+          message: 'Failed: ' + res.error,
+          type: 'error'
+        });
       });
     } catch { this.isBackupLoading = false; }
   }
   async restore(id: string) {
-    if (!confirm('OVERWRITE WARNING: This will replace your current database with the backup. This action cannot be undone. Are you sure?')) return;
+    const confirmed = await this.dialogService?.open({
+      title: 'Restore this backup?',
+      message: 'OVERWRITE WARNING: this replaces the current database with the backup. This cannot be undone.',
+      type: 'confirm',
+      confirmText: 'Restore',
+      cancelText: 'Cancel'
+    });
+    if (!confirmed) return;
 
     this.isBackupLoading = true; // Use existing loading flag or add new one
     this.message = 'Restoring backup... The app will restart automatically.';
@@ -820,19 +912,27 @@ export class SettingsComponent implements OnInit {
       const res = await window.electron.drive.restore(id);
       if (res.success && res.restartRequired) {
         this.ngZone.run(() => {
-          alert('Restore Successful! The application will now restart.');
+          this.toastService?.success('The application will now restart.', 'Restore Successful');
           // In case main process doesn't kill it immediately (though it should)
         });
       } else {
         this.ngZone.run(() => {
           this.isBackupLoading = false;
-          alert('Restore Failed: ' + (res.error || 'Unknown Error'));
+          void this.dialogService?.open({
+            title: 'Restore failed',
+            message: 'Restore Failed: ' + (res.error || 'Unknown Error'),
+            type: 'error'
+          });
         });
       }
     } catch (e: any) {
       this.ngZone.run(() => {
         this.isBackupLoading = false;
-        alert('Restore Error: ' + e.message);
+        void this.dialogService?.open({
+          title: 'Restore failed',
+          message: 'Restore Error: ' + e.message,
+          type: 'error'
+        });
       });
     }
   }
@@ -870,7 +970,14 @@ export class SettingsComponent implements OnInit {
       this.restoreError = 'Enter the current administrator password.';
       return;
     }
-    if (!confirm('The backup will be validated first. Your current vault will be snapshotted before replacement. Continue?')) return;
+    const confirmed = await this.dialogService?.open({
+      title: 'Restore this backup?',
+      message: 'The backup will be validated first. The current vault will be snapshotted before replacement.',
+      type: 'confirm',
+      confirmText: 'Restore',
+      cancelText: 'Cancel'
+    });
+    if (!confirmed) return;
 
     this.isRestoring = true;
     this.restoreError = '';

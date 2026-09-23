@@ -18,12 +18,12 @@ describe('VisitListComponent layout', () => {
         expect(amount?.minWidth).toBeGreaterThanOrEqual(110);
         const minSum = component.colDefs.reduce((sum, col) => sum + (col.minWidth || 0), 0);
         // 1024px − lg sidebar (288) − md:p-6 padding (48) = 688. Visit list sets
-        // [multiSelect]="true", which SharedTable maps to string rowSelection
-        // 'multiple'. AG Grid 32 only injects the controls column (library
-        // maxWidth 50) for object rowSelection / selectionColumnDef — neither
-        // is configured — so extra selection width is 0.
-        const selectionColumnWidth = 0;
-        expect(minSum).toBeLessThanOrEqual(1024 - 288 - 48 - selectionColumnWidth);
+        // [multiSelect]="true", which SharedTable maps to object rowSelection
+        // { mode: 'multiRow', checkboxes: true, headerCheckbox: true }. AG Grid 32
+        // injects the checkbox controls column (library maxWidth 50) for that
+        // configuration, so it counts against the width budget.
+        const selectionColumnWidth = 50;
+        expect(minSum + selectionColumnWidth).toBeLessThanOrEqual(1024 - 288 - 48);
     });
 
     it('opens a finished visit in view mode with visitId', () => {
@@ -44,6 +44,48 @@ describe('VisitListComponent layout', () => {
         component.ngOnInit();
         expect(component.mobileView).toBe('grid');
         component.setMobileView('cards');
+    });
+
+    it('exposes batch delete only to admins', () => {
+        const bare = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        expect(bare.isAdmin).toBe(false);
+        const admin = new VisitListComponent(
+            { run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any,
+            undefined, { getUser: () => ({ role: 'admin' }) } as any
+        );
+        expect(admin.isAdmin).toBe(true);
+        const doctor = new VisitListComponent(
+            { run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any,
+            undefined, { getUser: () => ({ role: 'doctor' }) } as any
+        );
+        expect(doctor.isAdmin).toBe(false);
+    });
+
+    it('selects cards in batch mode and navigates otherwise', () => {
+        const navigate = vi.fn();
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate } as any);
+        const v = { id: 13, patient_id: 6 };
+        component.onCardTap(v);
+        expect(navigate).toHaveBeenCalledWith(['/visit', 6], expect.objectContaining({
+            queryParams: expect.objectContaining({ visitId: 13 })
+        }));
+
+        component.toggleCardSelectMode();
+        component.onCardTap(v);
+        expect(component.isCardSelected(v)).toBe(true);
+        component.toggleCardSelectMode();
+        expect(component.selectedVisits).toHaveLength(0);
+    });
+
+    it('drops selections hidden by search', () => {
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        component.visits = [
+            { id: 1, patient_name: 'Ramesh Gupta' },
+            { id: 2, patient_name: 'Arjun Karthik' }
+        ] as any;
+        component.selectedVisits = [{ id: 1 }, { id: 2 }] as any;
+        component.searchTerm = 'arjun';
+        expect(component.selectedVisits.map((v: any) => v.id)).toEqual([2]);
     });
 
     it('filters visits client-side across patient, diagnosis, and doctor', () => {

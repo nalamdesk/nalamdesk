@@ -10,6 +10,7 @@ import { newRequestId } from '../services/request-id';
 import { DialogService } from '../shared/services/dialog.service';
 import { SharedTableComponent } from '../shared/components/table/table.component';
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../shared/components/view-toggle/view-toggle.component';
+import { QueueCountService } from '../shared/services/queue-count.service';
 import { ColDef } from 'ag-grid-community';
 import { DoctorPickService } from '../shared/services/doctor-pick.service';
 
@@ -307,7 +308,8 @@ export class QueueComponent implements OnInit, OnDestroy {
     private dataService: DataService,
     private dialogService: DialogService,
     private authService?: AuthService,
-    private doctorPick?: DoctorPickService
+    private doctorPick?: DoctorPickService,
+    private queueCountService?: QueueCountService
   ) { }
 
   ngOnInit() {
@@ -468,6 +470,7 @@ export class QueueComponent implements OnInit, OnDestroy {
     try {
       const data = await this.dataService.invoke<any>('getQueue');
       this.queue.set(data);
+      this.queueCountService?.updateFrom(data);
     } catch (e) {
       console.error('Failed to load queue', e);
     } finally {

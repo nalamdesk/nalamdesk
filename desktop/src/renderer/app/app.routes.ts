@@ -23,6 +23,7 @@ export const routes: Routes = [
             { path: 'visit/:id', loadComponent: () => import('./visits/visit/visit.component').then(m => m.VisitComponent) },
             { path: 'online-booking', loadComponent: () => import('./online-booking/online-booking.component').then(m => m.OnlineBookingComponent) },
             { path: 'settings', loadComponent: () => import('./settings/settings.component').then(m => m.SettingsComponent), canActivate: [adminGuard] },
+            { path: 'profile', loadComponent: () => import('./profile/profile.component').then(m => m.ProfileComponent) },
             { path: 'queue', loadComponent: () => import('./queue/queue.component').then(m => m.QueueComponent) }
         ]
     }

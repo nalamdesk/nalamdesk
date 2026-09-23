@@ -220,4 +220,12 @@ describe('PatientListComponent', () => {
         expect(component.cardSelectMode).toBe(false);
         expect(component.selectedPatients).toHaveLength(0);
     });
+
+    it('drops selections hidden by a data refresh', () => {
+        component.selectedPatients = [{ id: 7 }, { id: 9 }] as any;
+        component.patients = [{ id: 9, name: 'Kept' }] as any;
+        component.enqueuedPatientIds = new Set();
+        component.updateGridData();
+        expect(component.selectedPatients.map((p: any) => p.id)).toEqual([9]);
+    });
 });

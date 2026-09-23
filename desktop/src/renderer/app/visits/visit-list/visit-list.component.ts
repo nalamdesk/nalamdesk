@@ -98,7 +98,20 @@ export class VisitListComponent implements OnInit {
   visits: any[] = [];
   loading = false;
   selectedVisits: any[] = [];
-  searchTerm = '';
+  private _searchTerm = '';
+  get searchTerm(): string {
+    return this._searchTerm;
+  }
+  set searchTerm(value: string) {
+    this._searchTerm = value;
+    this.pruneHiddenSelections();
+  }
+
+  /** Batch delete must only cover visits currently visible. */
+  private pruneHiddenSelections(): void {
+    const visible = new Set(this.visibleVisits().map((v: any) => v?.id));
+    this.selectedVisits = this.selectedVisits.filter((v: any) => visible.has(v?.id));
+  }
   // Narrow-viewport layout override; desktop always uses the grid.
   mobileView: CompactView = 'cards';
   private static readonly MOBILE_VIEW_KEY = 'nalamdesk.visits.mobileView';
@@ -176,6 +189,7 @@ export class VisitListComponent implements OnInit {
       const data = await this.dataService.invoke<any>('getAllVisits', 100);
       this.ngZone.run(() => {
         this.visits = data;
+        this.pruneHiddenSelections();
         this.loading = false;
       });
     } catch (e) {

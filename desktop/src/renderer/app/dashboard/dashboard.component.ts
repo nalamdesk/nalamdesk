@@ -8,6 +8,7 @@ import { CloudService } from '../services/cloud.service';
 import { PatientService } from '../services/patient.service';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
+import { QueueCountService } from '../shared/services/queue-count.service';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -221,7 +222,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private cloudService: CloudService,
     private patientService: PatientService,
     private dialogService?: DialogService,
-    private toastService?: ToastService
+    private toastService?: ToastService,
+    private queueCountService?: QueueCountService
   ) { }
 
   async refresh() {
@@ -336,6 +338,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
 
       this.toastService?.success(`${appt.patient_name} is now in the live queue.`, 'Checked in');
+      void this.queueCountService?.refresh();
       this.loadData(); // Refresh list
     } catch (e: any) {
       console.error(e);

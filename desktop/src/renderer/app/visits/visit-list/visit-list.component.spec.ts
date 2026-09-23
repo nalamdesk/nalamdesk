@@ -77,6 +77,17 @@ describe('VisitListComponent layout', () => {
         expect(component.selectedVisits).toHaveLength(0);
     });
 
+    it('drops selections hidden by search', () => {
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        component.visits = [
+            { id: 1, patient_name: 'Ramesh Gupta' },
+            { id: 2, patient_name: 'Arjun Karthik' }
+        ] as any;
+        component.selectedVisits = [{ id: 1 }, { id: 2 }] as any;
+        component.searchTerm = 'arjun';
+        expect(component.selectedVisits.map((v: any) => v.id)).toEqual([2]);
+    });
+
     it('filters visits client-side across patient, diagnosis, and doctor', () => {
         const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
         component.visits = [

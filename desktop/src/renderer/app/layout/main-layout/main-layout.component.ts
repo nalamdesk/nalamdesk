@@ -5,7 +5,7 @@ import { Subscription } from 'rxjs';
 import { DialogService } from '../../shared/services/dialog.service';
 import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { AuthService } from '../../services/auth.service';
-import { DataService } from '../../services/api.service';
+import { QueueCountService } from '../../shared/services/queue-count.service';
 import { RuntimeService } from '../../services/runtime.service';
 
 @Component({
@@ -67,6 +67,7 @@ import { RuntimeService } from '../../services/runtime.service';
     
                     <!-- Add closeDrawer() to dropdown links too just in case -->
                     <ul tabindex="0" class="mt-3 z-[1] p-2 shadow-menu menu menu-sm dropdown-content bg-white rounded-box w-52">
+                      <li><a routerLink="/profile" (click)="closeDrawer()">Change password</a></li>
                       <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Manage Profile</a></li>
                       <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Settings</a></li>
                       <li><a class="text-red-600" (click)="logout()">Logout</a></li>
@@ -192,7 +193,14 @@ import { RuntimeService } from '../../services/runtime.service';
   `]
 })
 export class MainLayoutComponent implements OnInit, OnDestroy {
-  queueCount = 0;
+  /** Sidebar badge: live count served by QueueCountService (0 pre-login). */
+  get queueCount(): number {
+    try {
+      return this.queueCountService?.count() ?? 0;
+    } catch {
+      return 0;
+    }
+  }
   currentUser: any = null;
   private routerSub?: Subscription;
 
@@ -205,40 +213,32 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     private ngZone: NgZone,
     public runtime: RuntimeService,
     public doctorPick?: DoctorPickService,
-    private dataService?: DataService
+    private queueCountService?: QueueCountService
   ) {
     this.currentUser = this.authService.getUser();
   }
+
+  private badgeRefreshId: any;
 
   ngOnInit() {
     if (!!(globalThis as any).electron) {
       this.runtime.init();
     }
-    this.refreshQueueCount();
+    void this.queueCountService?.refresh();
+    // Backup cadence for mutations that don't navigate (same 30s as the queue page).
+    this.badgeRefreshId = setInterval(() => void this.queueCountService?.refresh(), 30000);
     this.routerSub = this.router.events.subscribe(event => {
       if (event instanceof NavigationStart) {
         this.dialogService.close();
       }
       if (event instanceof NavigationEnd) {
-        this.refreshQueueCount();
+        void this.queueCountService?.refresh();
       }
     });
   }
 
-  /** Sidebar badge: live count of active queue entries; 0 when signed out. */
-  async refreshQueueCount(): Promise<void> {
-    if (!this.dataService) return;
-    try {
-      const queue = await this.dataService.invoke<any[]>('getQueue');
-      this.ngZone.run(() => {
-        this.queueCount = (queue || []).filter((q: any) => q?.status !== 'completed').length;
-      });
-    } catch {
-      this.ngZone.run(() => { this.queueCount = 0; });
-    }
-  }
-
   ngOnDestroy() {
+    if (this.badgeRefreshId) clearInterval(this.badgeRefreshId);
     this.routerSub?.unsubscribe();
   }
 

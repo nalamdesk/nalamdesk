@@ -68,6 +68,7 @@ import { ColDef, GridOptions } from 'ag-grid-community';
             [rowData]="rowData"
             [columnDefs]="columnDefs"
             [defaultColDef]="defaultColDef"
+            [getRowId]="getRowId"
             [paginationPageSize]="pageSize"
             [paginationPageSizeSelector]="[10, 20, 50, 100]"
             [rowSelection]="selectionOptions"
@@ -126,7 +127,7 @@ export class SharedTableComponent implements OnInit, OnDestroy, OnChanges {
 
   private applySelectionOptions(): void {
     this.selectionOptions = this.multiSelect
-      ? { mode: 'multiRow', checkboxes: true, headerCheckbox: true, enableClickSelection: true }
+      ? { mode: 'multiRow', checkboxes: true, headerCheckbox: true, enableClickSelection: true, selectAll: 'filtered' }
       : { mode: 'singleRow', checkboxes: false, enableClickSelection: true };
   }
 
@@ -155,6 +156,10 @@ export class SharedTableComponent implements OnInit, OnDestroy, OnChanges {
     wrapHeaderText: false, // FORCE single line headers
     autoHeaderHeight: false // Disable auto header height
   };
+
+  // Identity tracking by record id (every consumer's rows carry one), so grid
+  // selection follows records across refreshes instead of row indexes.
+  getRowId = (params: any): string => String(params.data?.id ?? '');
 
   private resizeObserver: ResizeObserver | undefined;
 

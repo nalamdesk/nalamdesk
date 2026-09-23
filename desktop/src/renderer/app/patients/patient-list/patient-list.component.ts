@@ -9,6 +9,7 @@ import { DialogService } from '../../shared/services/dialog.service';
 import { DatePickerComponent } from '../../shared/components/date-picker/date-picker.component';
 import { SharedTableComponent } from '../../shared/components/table/table.component';
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../../shared/components/view-toggle/view-toggle.component';
+import { QueueCountService } from '../../shared/services/queue-count.service';
 import { PatientActionsRenderer } from './patient-actions.component';
 import { ColDef } from 'ag-grid-community';
 
@@ -383,6 +384,7 @@ export class PatientListComponent implements OnInit {
 
   private dataService: DataService = inject(DataService);
   private authService: AuthService = inject(AuthService);
+  private queueCountService: QueueCountService | null = inject(QueueCountService, { optional: true });
   currentUser: any = null;
   private dialogService = inject(DialogService);
 
@@ -496,6 +498,10 @@ export class PatientListComponent implements OnInit {
       ...p,
       inQueue: this.enqueuedPatientIds.has(p.id!)
     }));
+    // Drop selections that are no longer visible: a batch delete must only
+    // ever cover records the admin can currently see.
+    const visible = new Set(this.gridData.map((p: any) => p?.id));
+    this.selectedPatients = this.selectedPatients.filter((p: any) => visible.has(p?.id));
   }
 
   onSearch() {
@@ -570,6 +576,7 @@ export class PatientListComponent implements OnInit {
         this.updateGridData();
         this.cdr.detectChanges();
       });
+      void this.queueCountService?.refresh();
     } catch (e: any) {
       console.error(e);
       this.ngZone.run(async () => {

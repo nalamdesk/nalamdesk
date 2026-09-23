@@ -101,10 +101,8 @@ describe('MainLayoutComponent', () => {
         layout.ngOnDestroy();
     });
 
-    it('reflects the live queue size in the sidebar badge', async () => {
-        const mockDataService = { invoke: vi.fn().mockResolvedValue([
-            { status: 'waiting' }, { status: 'in-consult' }, { status: 'completed' }
-        ]) };
+    it('reflects the live queue count from the badge service', async () => {
+        const mockCount = { count: () => 3, refresh: vi.fn().mockResolvedValue(undefined) };
         const layout = new MainLayoutComponent(
             mockRouter,
             mockDialogService,
@@ -112,27 +110,15 @@ describe('MainLayoutComponent', () => {
             mockNgZone,
             mockRuntimeService,
             undefined,
-            mockDataService as any
+            mockCount as any
         );
-        await layout.refreshQueueCount();
-        expect(layout.queueCount).toBe(2);
+        expect(layout.queueCount).toBe(3);
+        layout.ngOnInit();
+        expect(mockCount.refresh).toHaveBeenCalled();
         layout.ngOnDestroy();
     });
 
-    it('resets the badge when the queue cannot load', async () => {
-        const mockDataService = { invoke: vi.fn().mockRejectedValue(new Error('locked')) };
-        const layout = new MainLayoutComponent(
-            mockRouter,
-            mockDialogService,
-            mockAuthService,
-            mockNgZone,
-            mockRuntimeService,
-            undefined,
-            mockDataService as any
-        );
-        layout.queueCount = 5;
-        await layout.refreshQueueCount();
-        expect(layout.queueCount).toBe(0);
-        layout.ngOnDestroy();
+    it('shows zero badge without the service', () => {
+        expect(component.queueCount).toBe(0);
     });
 });

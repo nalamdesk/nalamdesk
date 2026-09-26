@@ -1048,5 +1048,62 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 27,
+        up: (db: any) => {
+            console.log('Running Migration v27 (HIU consent store and keypair)...');
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_consents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    patient_id INTEGER,
+                    abha_address TEXT NOT NULL,
+                    hi_types TEXT NOT NULL DEFAULT '[]',
+                    date_from TEXT,
+                    date_to TEXT,
+                    status TEXT NOT NULL DEFAULT 'requested',
+                    gateway_request_id TEXT UNIQUE,
+                    consent_handle TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_fetched_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    consent_id INTEGER REFERENCES abdm_consents(id),
+                    patient_id INTEGER,
+                    care_context_ref TEXT,
+                    bundle_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'cached',
+                    fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    expires_at DATETIME
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_consents_patient ON abdm_consents(patient_id, status);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_fetched_patient ON abdm_fetched_records(patient_id, status);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_fetched_expiry ON abdm_fetched_records(expires_at);`);
+            ['abdm_hiu_private_protected TEXT', 'abdm_hiu_public_key TEXT'].forEach(col => {
+                try { db.exec(`ALTER TABLE settings ADD COLUMN ${col}`); } catch (e) { }
+            });
+            // LAN sessions enforce DB role permissions; the HIU public key is
+            // needed wherever intake runs (desk roles), never secret.
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmHiuGetPublicKey'],
+                receptionist: ['abdmHiuGetPublicKey'],
+                admin: ['abdmHiuGetPublicKey']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

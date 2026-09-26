@@ -172,15 +172,11 @@ notify dedupe + flow grants, v29 read/clear grants, v30 import grant).
   error per-record instead of failing the read.
 - **Retention:** expired rows sweep at startup, daily at 03:00, and before
   every read; per-patient explicit wipe is audited (`abdmHiuClearExternalRecords`).
-- **Chart import:** the External tab (patient chart) hosts request, fetch,
-  read, and 1-click medication import. Import runs the prescription
+- **Chart surface:** the External tab on the patient chart hosts request,
+  fetch, read, and 1-click medication import. Import runs the prescription
   allergy gate server-side (`importExternalMedication`): conflicts need an
   explicit override recorded in audit; active duplicates return as-is.
   Request/fetch/import are doctor/admin; reads follow the inbox split.
-- **Chart refactor (same change):** the patient chart's record-type tabs
-  (Allergies/Problems/Medications grids) became a Summary page — persistent
-  allergy banner, active problems/meds sections with the same add/remove
-  affordances, recent visits — plus Visits and External tabs.
 
 ## Build & Distribution
 Output is `desktop/release/`.

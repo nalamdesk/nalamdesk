@@ -681,25 +681,8 @@ describe('PatientDetailsComponent', () => {
         }));
     });
 
-    it('opens on the summary with active-only helpers', () => {
-        expect(component.activeTab).toBe('summary');
-        component.allergies = [
-            { id: 1, substance: 'Penicillin', status: 'active' },
-            { id: 2, substance: 'Old', status: 'inactive' }
-        ];
-        component.conditions = [
-            { id: 1, condition_name: 'HTN', clinical_status: 'active' },
-            { id: 2, condition_name: 'Resolved', clinical_status: 'resolved' }
-        ];
-        component.medications = [
-            { id: 1, medicine_name: 'Amlodipine', status: 'active' },
-            { id: 2, medicine_name: 'Stopped', status: 'completed' }
-        ];
-        component.visits = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
-        expect(component.activeAllergiesList().map((a: any) => a.id)).toEqual([1]);
-        expect(component.activeConditionsList().map((c: any) => c.id)).toEqual([1]);
-        expect(component.activeMedicationsList().map((m: any) => m.id)).toEqual([1]);
-        expect(component.recentVisits()).toHaveLength(3);
+    it('opens on the visits tab with record grids intact', () => {
+        expect(component.activeTab).toBe('visits');
     });
 
     it('loads external consents and records on tab open', async () => {

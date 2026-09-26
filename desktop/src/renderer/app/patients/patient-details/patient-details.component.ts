@@ -234,6 +234,18 @@ import { newRequestId } from '../../services/request-id';
                                 class="px-3 py-1.5 rounded-lg text-sm transition">
                             Medications ({{ medications.length }})
                         </button>
+                        <button type="button" (click)="openExternalTab()"
+                                [class.bg-white]="activeTab === 'external'"
+                                [class.shadow-sm]="activeTab === 'external'"
+                                [class.text-blue-600]="activeTab === 'external'"
+                                [class.font-bold]="activeTab === 'external'"
+                                [class.text-gray-600]="activeTab !== 'external'"
+                                class="px-3 py-1.5 rounded-lg text-sm transition flex items-center gap-1.5">
+                            <span>External</span>
+                            <span *ngIf="externalRecords.length" class="text-[10px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded-full">
+                                {{ externalRecords.length }}
+                            </span>
+                        </button>
                     </div>
 
                     <!-- Right Actions depending on tab -->
@@ -285,6 +297,96 @@ import { newRequestId } from '../../services/request-id';
                             </button>
                         </div>
                     </app-shared-table>
+                </div>
+
+                <!-- TAB: EXTERNAL RECORDS (M3 HIU) -->
+                <div *ngIf="activeTab === 'external'" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-4">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs text-gray-500">{{ externalRecords.length }} outside record(s)</span>
+                        <div class="flex items-center gap-2">
+                            <button *ngIf="canMutateSafety" (click)="showConsentForm = !showConsentForm" class="text-xs bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 font-bold px-2.5 py-1.5 rounded transition">Request records</button>
+                            <button *ngIf="canMutateSafety && externalRecords.length > 0" (click)="clearExternalCache()" class="text-xs text-gray-500 hover:text-red-600 border border-gray-200 hover:border-red-200 px-2.5 py-1.5 rounded transition">Clear cache</button>
+                        </div>
+                    </div>
+
+                    <div *ngIf="showConsentForm" class="rounded-lg border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+                        <label class="block text-xs font-semibold text-gray-700">Health ID address
+                            <input [(ngModel)]="consentForm.abhaAddress" placeholder="name@abdm" class="mt-1 w-full border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono">
+                        </label>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-700 mb-1.5">Record types</div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button *ngFor="let t of HI_TYPES" type="button" (click)="toggleHiType(t)"
+                                        class="px-2.5 py-1 rounded-full border text-xs font-medium transition"
+                                        [ngClass]="consentForm.hiTypes.includes(t) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'">{{ t }}</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="block text-xs font-semibold text-gray-700">From (optional)
+                                <input [(ngModel)]="consentForm.dateFrom" type="date" class="mt-1 w-full border p-2 rounded text-sm outline-none">
+                            </label>
+                            <label class="block text-xs font-semibold text-gray-700">To (optional)
+                                <input [(ngModel)]="consentForm.dateTo" type="date" class="mt-1 w-full border p-2 rounded text-sm outline-none">
+                            </label>
+                        </div>
+                        <p *ngIf="consentError" class="text-xs text-red-600">{{ consentError }}</p>
+                        <div class="flex justify-end gap-2">
+                            <button (click)="showConsentForm = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded border bg-white transition-colors">Cancel</button>
+                            <button (click)="requestExternalConsent()" [disabled]="consentBusy" class="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                                {{ consentBusy ? 'Requesting...' : 'Send request' }}
+                            </button>
+                        </div>
+                        <p class="text-[11px] text-gray-500">The patient approves this in their health app. Records appear here once granted and fetched.</p>
+                    </div>
+
+                    <div *ngIf="externalConsents.length > 0" class="space-y-2">
+                        <div *ngFor="let c of externalConsents" class="flex items-center justify-between gap-2 rounded-lg border border-gray-200 p-2.5 text-xs">
+                            <div class="min-w-0">
+                                <div class="font-mono font-semibold text-gray-800 truncate">{{ c.abha_address }}</div>
+                                <div class="text-gray-500 truncate">{{ consentTypesText(c) }}{{ c.date_from ? ' • ' + c.date_from + ' → ' + (c.date_to || 'now') : '' }}</div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span class="px-2 py-0.5 rounded uppercase text-[10px] font-bold" [ngClass]="consentChipClass(c.status)">{{ c.status }}</span>
+                                <button *ngIf="c.status === 'granted' && canMutateSafety" (click)="fetchExternal(c.id)" class="text-blue-600 border border-blue-200 hover:border-blue-400 bg-blue-50 px-2.5 py-1 rounded font-semibold">Fetch</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div *ngIf="!loadingExternal && externalRecords.length === 0 && externalConsents.length === 0" class="text-center text-sm text-gray-500 py-8">
+                        No outside records yet. Request them from another facility with patient consent.
+                    </div>
+                    <div *ngIf="loadingExternal" class="text-center text-sm text-gray-500 py-8">Loading outside records...</div>
+
+                    <div *ngFor="let rec of externalRecords" class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="font-bold text-gray-800 text-sm">{{ rec.parsed?.title || 'Outside record' }}</div>
+                            <div class="text-[11px] text-gray-400 font-mono shrink-0">{{ rec.fetchedAt ? (rec.fetchedAt | date:'shortDate') : '' }}</div>
+                        </div>
+                        <p *ngIf="rec.error" class="text-xs text-amber-700 mt-1">This record could not be read: {{ rec.error }}</p>
+                        <div *ngIf="rec.parsed?.diagnoses?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Diagnoses</div>
+                            <div *ngFor="let d of rec.parsed.diagnoses" class="text-sm text-gray-700">• {{ d.text }}{{ d.code ? ' (' + d.code + ')' : '' }}</div>
+                        </div>
+                        <div *ngIf="rec.parsed?.medications?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Medications</div>
+                            <div *ngFor="let m of rec.parsed.medications" class="flex items-center justify-between gap-2 py-1 border-b border-gray-50 last:border-0">
+                                <div class="text-sm text-gray-700 min-w-0">
+                                    <span class="font-semibold">{{ m.name }}</span>
+                                    <span class="text-gray-500 text-xs"> {{ m.dosage || '' }}{{ m.dosage && m.frequency ? ' • ' : '' }}{{ m.frequency || '' }}</span>
+                                </div>
+                                <button *ngIf="canMutateSafety" (click)="importExternalMed(rec.id, m)" class="text-xs text-blue-700 border border-blue-200 hover:bg-blue-50 px-2 py-1 rounded shrink-0">Import</button>
+                            </div>
+                        </div>
+                        <div *ngIf="rec.parsed?.observations?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Observations</div>
+                            <div *ngFor="let o of rec.parsed.observations" class="text-sm text-gray-700">• {{ o.text }}{{ o.value ? ': ' + o.value : '' }}</div>
+                        </div>
+                        <div *ngIf="rec.parsed?.allergies?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Allergies noted outside</div>
+                            <div *ngFor="let a of rec.parsed.allergies" class="text-sm text-red-700">• {{ a.substance }}</div>
+                        </div>
+                    </div>
+                    <p *ngIf="externalError" class="text-xs text-red-600">{{ externalError }}</p>
                 </div>
 
              </div>
@@ -725,11 +827,185 @@ export class PatientDetailsComponent implements OnInit {
     currentUser: any;
 
     // Clinical Safety & Longitudinal Records
-    activeTab: 'visits' | 'allergies' | 'conditions' | 'medications' = 'visits';
+    activeTab: 'visits' | 'allergies' | 'conditions' | 'medications' | 'external' = 'visits';
     safetyContext: any = null;
     allergies: any[] = [];
     conditions: any[] = [];
     medications: any[] = [];
+
+    // M3 HIU External Records
+    readonly HI_TYPES = ['Prescription', 'DiagnosticReport', 'DischargeSummary', 'OPConsultation', 'ImmunizationRecord', 'WellnessRecord'];
+    externalRecords: any[] = [];
+    externalConsents: any[] = [];
+    loadingExternal = false;
+    externalError = '';
+    showConsentForm = false;
+    consentBusy = false;
+    consentError = '';
+    consentForm = { abhaAddress: '', hiTypes: ['Prescription', 'DiagnosticReport'] as string[], dateFrom: '', dateTo: '' };
+
+    consentChipClass(status: unknown): string {
+        switch (String(status || '').toLowerCase()) {
+            case 'granted': return 'bg-green-100 text-green-700';
+            case 'denied': return 'bg-red-100 text-red-700';
+            case 'expired': return 'bg-gray-100 text-gray-500';
+            default: return 'bg-amber-100 text-amber-800';
+        }
+    }
+
+    consentTypesText(consent: any): string {
+        try {
+            const types = typeof consent?.hi_types === 'string' ? JSON.parse(consent.hi_types) : consent?.hi_types;
+            return Array.isArray(types) ? types.join(', ') : '';
+        } catch {
+            return '';
+        }
+    }
+
+    async openExternalTab(): Promise<void> {
+        this.activeTab = 'external';
+        await this.loadExternal();
+    }
+
+    async loadExternal(): Promise<void> {
+        if (!this.patientId) return;
+        this.loadingExternal = true;
+        this.externalError = '';
+        try {
+            const [consents, records] = await Promise.all([
+                this.dataService.invoke<any[]>('abdmHiuGetConsents', { patientId: this.patientId }).catch(() => []),
+                this.dataService.invoke<any[]>('abdmHiuGetExternalRecords', { patientId: this.patientId }).catch(() => [])
+            ]);
+            this.ngZone.run(() => {
+                this.externalConsents = consents || [];
+                this.externalRecords = records || [];
+                this.loadingExternal = false;
+            });
+        } catch (e) {
+            this.ngZone.run(() => {
+                this.loadingExternal = false;
+                this.externalError = e instanceof Error ? e.message : 'Could not load outside records.';
+            });
+        }
+    }
+
+    toggleHiType(type: string): void {
+        const selected = this.consentForm.hiTypes;
+        this.consentForm.hiTypes = selected.includes(type)
+            ? selected.filter((t) => t !== type)
+            : [...selected, type];
+    }
+
+    async requestExternalConsent(): Promise<void> {
+        this.consentError = '';
+        const address = this.consentForm.abhaAddress.trim() || this.patient?.abha_address || '';
+        if (!address) {
+            this.consentError = 'A health ID address is required.';
+            return;
+        }
+        if (this.consentForm.hiTypes.length === 0) {
+            this.consentError = 'Select at least one record type.';
+            return;
+        }
+        this.consentBusy = true;
+        try {
+            await this.dataService.invoke('abdmHiuRequestConsent', {
+                patientId: this.patientId,
+                abhaAddress: address,
+                hiTypes: this.consentForm.hiTypes,
+                dateFrom: this.consentForm.dateFrom || null,
+                dateTo: this.consentForm.dateTo || null
+            });
+            this.ngZone.run(() => {
+                this.showConsentForm = false;
+                this.consentForm = { abhaAddress: '', hiTypes: ['Prescription', 'DiagnosticReport'], dateFrom: '', dateTo: '' };
+                this.consentBusy = false;
+            });
+            await this.loadExternal();
+        } catch (e) {
+            this.ngZone.run(() => {
+                this.consentBusy = false;
+                this.consentError = e instanceof Error ? e.message : 'Could not send the request.';
+            });
+        }
+    }
+
+    async fetchExternal(consentId: number): Promise<void> {
+        this.externalError = '';
+        try {
+            await this.dataService.invoke('abdmHiuFetchRecords', { consentId });
+            await this.loadExternal();
+        } catch (e) {
+            this.externalError = e instanceof Error ? e.message : 'Could not fetch records.';
+        }
+    }
+
+    async clearExternalCache(): Promise<void> {
+        const confirmed = await this.dialogService.open({
+            title: 'Clear outside records?',
+            message: 'Cached records from other facilities will be permanently removed from this device.',
+            type: 'confirm',
+            confirmText: 'Clear',
+            cancelText: 'Keep'
+        });
+        if (!confirmed) return;
+        try {
+            await this.dataService.invoke('abdmHiuClearExternalRecords', { patientId: this.patientId });
+            await this.loadExternal();
+        } catch (e) {
+            await this.dialogService.open({
+                title: 'Clear failed',
+                message: e instanceof Error ? e.message : 'Could not clear the cache.',
+                type: 'error'
+            });
+        }
+    }
+
+    /**
+     * Imports one outside medication into the active list through the same
+     * allergy-conflict gate as prescribing: a conflict needs an explicit
+     * override, recorded in the audit trail.
+     */
+    async importExternalMed(recordId: number, med: any): Promise<void> {
+        const name = String(med?.name || '').trim();
+        if (!name) return;
+        const attempt = async (overrideReason?: string) => this.dataService.invoke('abdmHiuImportMedication', {
+            patientId: this.patientId,
+            medicine_name: name,
+            dosage: med?.dosage || '',
+            frequency: med?.frequency || '',
+            source: `Outside record #${recordId}`,
+            ...(overrideReason ? { overrideReason } : {})
+        });
+        try {
+            await attempt();
+            await this.loadData();
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Could not import the medication.';
+            if (!message.includes('conflicting')) {
+                await this.dialogService.open({ title: 'Import failed', message, type: 'error' });
+                return;
+            }
+            const confirmed = await this.dialogService.open({
+                title: 'Allergy conflict',
+                message: `${message} Import anyway? The override will be recorded.`,
+                type: 'confirm',
+                confirmText: 'Import with override',
+                cancelText: 'Cancel'
+            });
+            if (!confirmed) return;
+            try {
+                await attempt(`Clinician override on import despite known allergy`);
+                await this.loadData();
+            } catch (retryError) {
+                await this.dialogService.open({
+                    title: 'Import failed',
+                    message: retryError instanceof Error ? retryError.message : 'Could not import.',
+                    type: 'error'
+                });
+            }
+        }
+    }
 
     // Modal State
     showVisitModal = false;
@@ -823,6 +1099,7 @@ export class PatientDetailsComponent implements OnInit {
             }
         }
     ];
+
 
     allergyColumnDefs: ColDef[] = [
         {
@@ -935,6 +1212,7 @@ export class PatientDetailsComponent implements OnInit {
             onCellClicked: (params: any) => { if (!this.denySafetyMutation()) this.deleteMedication(params.data.id); }
         }
     ];
+
 
     constructor(
         private route: ActivatedRoute,

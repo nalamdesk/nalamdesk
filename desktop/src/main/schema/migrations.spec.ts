@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 29 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(29);
+        it('should have 30 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(30);
         });
     });
 
@@ -570,6 +570,32 @@ describe('Database Migrations', () => {
             }
             expect(JSON.parse(writes['receptionist'])).not.toContain('abdmHiuClearExternalRecords');
             expect(JSON.parse(writes['nurse'])).not.toContain('abdmHiuClearExternalRecords');
+        });
+    });
+
+    describe('Migration v30 (external medication import grant)', () => {
+        it('grants importing to clinical roles only', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 30)!.up(mockDb);
+
+            for (const role of ['doctor', 'admin']) {
+                expect(JSON.parse(writes[role])).toEqual(
+                    expect.arrayContaining(['abdmHiuImportMedication']));
+            }
+            expect(writes['receptionist']).toBeUndefined();
+            expect(writes['nurse']).toBeUndefined();
         });
     });
 });

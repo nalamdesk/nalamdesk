@@ -554,6 +554,26 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         expect(db.clearFetchedRecords).toHaveBeenCalledWith(1, expect.anything());
     });
 
+    it('imports outside medications over LAN through the safety gate', async () => {
+        db.getPermissions.mockImplementation((role: string) => role === 'admin'
+            ? []
+            : ['abdmHiuGetExternalRecords']);
+        const denied = await postIpc('abdmHiuImportMedication', [{ patientId: 1, medicine_name: 'Amlodipine' }], 'receptionist');
+        expect(denied.statusCode).toBe(403);
+
+        db.importExternalMedication = vi.fn().mockReturnValue({ id: 31, medicine_name: 'Amlodipine' });
+        db.getPermissions.mockImplementation((role: string) => role === 'admin'
+            ? []
+            : ['abdmHiuImportMedication']);
+        const allowed = await postIpc('abdmHiuImportMedication', [{
+            patientId: 1, medicine_name: 'Amlodipine', dosage: '5mg', frequency: '1-0-0', source: 'Outside record #4'
+        }], 'doctor');
+        expect(allowed.statusCode).toBe(200);
+        expect(db.importExternalMedication).toHaveBeenCalledWith(1, expect.objectContaining({
+            medicine_name: 'Amlodipine', source: 'Outside record #4'
+        }), null, expect.anything());
+    });
+
     it('transfers bundles over LAN without exposing the recipient key', async () => {
         const { generateKeyPairSync } = await import('node:crypto');
         const { publicKey } = generateKeyPairSync('x25519', {

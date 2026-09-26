@@ -147,6 +147,37 @@ per-doctor registry, v24 monotonic care-context sequence).
   pinned per operation with atomic session snapshots, so concurrent
   callbacks cannot cross-contaminate sessions.
 
+## ABDM M3: HIU consent, inbound records, chart import (#66)
+
+M3 makes the desktop a Health Information User (HIU): with patient consent,
+doctors pull outside history into the chart. Schema arrives in migrations
+v27–v30 (v27 consent/record tables + HIU keypair columns + key grants, v28
+notify dedupe + flow grants, v29 read/clear grants, v30 import grant).
+
+- **HIU identity (`HiuService`):** one-time X25519 keypair per device; the
+  private half is keychain-wrapped under the client-secret contract (never
+  in reads, IPC, or LAN). The public half is shareable for incoming pushes.
+- **Consent flow:** `abdmHiuRequestConsent` records the request locally
+  (mock gateway returns a mock id end-to-end; live calls refuse explicitly
+  until gateway certification — never a guessed shape). Gateway
+  notifications land on the existing inbox channel with enumerated kinds
+  (`consent-granted/denied/expired`, `data-ready`) and `requestId` dedupe
+  (including the lost-race path); bookkeeping auto-applies, clinical data
+  never does.
+- **Inbound pipeline:** `POST /abdm/hiu/data/transfer` (256KB cap, rate
+  limit, secret gate) decrypts each envelope with the HIU key into the
+  SQLCipher-encrypted cache with 30-day expiry. `FhirParser`
+  (`shared/fhir/parser.ts`) turns document Bundles into the display model;
+  foreign profiles degrade to text/warnings, and unreadable single records
+  error per-record instead of failing the read.
+- **Retention:** expired rows sweep at startup, daily at 03:00, and before
+  every read; per-patient explicit wipe is audited (`abdmHiuClearExternalRecords`).
+- **Chart surface:** the External tab on the patient chart hosts request,
+  fetch, read, and 1-click medication import. Import runs the prescription
+  allergy gate server-side (`importExternalMedication`): conflicts need an
+  explicit override recorded in audit; active duplicates return as-is.
+  Request/fetch/import are doctor/admin; reads follow the inbox split.
+
 ## Build & Distribution
 Output is `desktop/release/`.
 

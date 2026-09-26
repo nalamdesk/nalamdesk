@@ -2156,6 +2156,46 @@ export class DatabaseService {
         return result;
     }
 
+    /**
+     * Imports one outside medication into the active list (M3). Runs the
+     * same allergy-conflict gate as prescribing: a conflicting import needs
+     * an explicit override reason, which is recorded in the audit trail.
+     * Already-active duplicates are returned, never duplicated.
+     */
+    importExternalMedication(patientId: number, med: {
+        medicine_name?: string; name?: string; dosage?: string; frequency?: string; source?: string | null;
+    }, overrideReason?: string | null, actingUserId?: number) {
+        const pId = Number(patientId);
+        if (!Number.isInteger(pId) || pId <= 0) throw new Error('patient_id is required.');
+        const medName = String(med?.medicine_name || med?.name || '').trim();
+        if (!medName) throw new Error('medicine_name is required.');
+        const activeAllergies = this.db.prepare(
+            "SELECT id, substance, reaction, severity FROM patient_allergies WHERE patient_id = ? AND status = 'active'"
+        ).all(pId) as any[];
+        const conflict = this.isAllergyConflict(medName.toLowerCase(), activeAllergies || []);
+        if (conflict && !String(overrideReason || '').trim()) {
+            throw new Error(`Cannot import '${medName}': conflicting with active allergy ` +
+                `'${conflict.substance}'${conflict.reaction ? ` (${conflict.reaction})` : ''}. ` +
+                `An explicit override reason is required.`);
+        }
+        const existing = this.db.prepare(
+            `SELECT *, medicine_name as medication_name FROM patient_medications
+             WHERE patient_id = ? AND LOWER(medicine_name) = LOWER(?) AND status = 'active'`
+        ).get(pId, medName) as any;
+        if (existing) return existing;
+        const notes = String(med?.source || 'Imported from outside record').slice(0, 500);
+        const result = this.db.prepare(`
+            INSERT INTO patient_medications (
+                patient_id, medicine_name, dosage, frequency, status, start_date, recorder_id, recorded_at, notes
+            ) VALUES (?, ?, ?, ?, 'active', CURRENT_DATE, ?, CURRENT_TIMESTAMP, ?)
+        `).run(pId, medName, String(med?.dosage || ''), String(med?.frequency || ''),
+            actingUserId ?? null, overrideReason?.trim() ? `${notes} [override: ${overrideReason.trim().slice(0, 200)}]` : notes);
+        this.logAudit('INSERT', 'patient_medications', Number(result.lastInsertRowid), actingUserId,
+            `Imported outside medication ${medName}`);
+        return this.db.prepare('SELECT *, medicine_name as medication_name FROM patient_medications WHERE id = ?')
+            .get(Number(result.lastInsertRowid));
+    }
+
     // Patient Clinical Safety Context
     getPatientSafetyContext(patientId: number) {
         const pId = Number(patientId);

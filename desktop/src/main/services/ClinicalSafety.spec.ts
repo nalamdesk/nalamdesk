@@ -847,6 +847,41 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getFetchedRecords(2, true)).toHaveLength(0);
         });
 
+        it('imports outside medications through the allergy gate', () => {
+            service.saveAllergy({
+                patient_id: 2, substance: 'Penicillin',
+                criticality: 'high', severity: 'severe', reaction: 'Anaphylaxis'
+            }, 10);
+            expect(() => service.importExternalMedication(2, {
+                medicine_name: 'Penicillin-V', dosage: '250mg', frequency: '1-1-1'
+            }, null, 10)).toThrow('conflicting with active allergy');
+            expect(() => service.importExternalMedication(0, {
+                medicine_name: 'Amlodipine'
+            }, null, 10)).toThrow('patient_id is required');
+            expect(() => service.importExternalMedication(2, {
+                medicine_name: ''
+            }, null, 10)).toThrow('medicine_name is required');
+
+            const imported: any = service.importExternalMedication(2, {
+                medicine_name: 'Penicillin-V', dosage: '250mg', frequency: '1-1-1'
+            }, 'Clinician override after review', 10);
+            expect(imported.medicine_name).toBe('Penicillin-V');
+            expect(imported.notes).toContain('override');
+            expect(service.getMedications(2).filter((m: any) => m.status === 'active')).toHaveLength(1);
+
+            // Re-importing the same active medicine returns it without duplicating.
+            const again: any = service.importExternalMedication(2, {
+                medicine_name: 'penicillin-v'
+            }, 'override', 10);
+            expect(again.id).toBe(imported.id);
+            expect(service.getMedications(2).filter((m: any) => m.status === 'active')).toHaveLength(1);
+
+            const clean: any = service.importExternalMedication(2, {
+                medicine_name: 'Amlodipine', dosage: '5mg', frequency: '1-0-0'
+            }, null, 10);
+            expect(clean.medicine_name).toBe('Amlodipine');
+        });
+
         it('writes both HIU keypair halves atomically', () => {
             service.saveHiuKeypair('PUBKEY', 'WRAPPED');
             const settings: any = service.getSettings();

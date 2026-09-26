@@ -680,5 +680,93 @@ describe('PatientDetailsComponent', () => {
             title: 'Test transfer complete'
         }));
     });
+
+    it('opens on the summary with active-only helpers', () => {
+        expect(component.activeTab).toBe('summary');
+        component.allergies = [
+            { id: 1, substance: 'Penicillin', status: 'active' },
+            { id: 2, substance: 'Old', status: 'inactive' }
+        ];
+        component.conditions = [
+            { id: 1, condition_name: 'HTN', clinical_status: 'active' },
+            { id: 2, condition_name: 'Resolved', clinical_status: 'resolved' }
+        ];
+        component.medications = [
+            { id: 1, medicine_name: 'Amlodipine', status: 'active' },
+            { id: 2, medicine_name: 'Stopped', status: 'completed' }
+        ];
+        component.visits = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+        expect(component.activeAllergiesList().map((a: any) => a.id)).toEqual([1]);
+        expect(component.activeConditionsList().map((c: any) => c.id)).toEqual([1]);
+        expect(component.activeMedicationsList().map((m: any) => m.id)).toEqual([1]);
+        expect(component.recentVisits()).toHaveLength(3);
+    });
+
+    it('loads external consents and records on tab open', async () => {
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmHiuGetConsents') return Promise.resolve([{ id: 1, status: 'granted' }]);
+            if (method === 'abdmHiuGetExternalRecords') return Promise.resolve([{ id: 9, parsed: { title: 'X' } }]);
+            return Promise.resolve(null);
+        });
+        component.patientId = 123;
+        await component.openExternalTab();
+        expect(component.activeTab).toBe('external');
+        expect(component.externalConsents).toHaveLength(1);
+        expect(component.externalRecords).toHaveLength(1);
+        expect(component.loadingExternal).toBe(false);
+    });
+
+    it('requests outside records with validation', async () => {
+        component.patientId = 123;
+        await component.requestExternalConsent();
+        expect(component.consentError).toContain('health ID');
+
+        component.consentForm = { abhaAddress: 'asha@sbx', hiTypes: [], dateFrom: '', dateTo: '' };
+        await component.requestExternalConsent();
+        expect(component.consentError).toContain('record type');
+
+        component.consentForm = { abhaAddress: 'asha@sbx', hiTypes: ['Prescription'], dateFrom: '', dateTo: '' };
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmHiuRequestConsent') return Promise.resolve({ id: 4, status: 'requested' });
+            if (method === 'abdmHiuGetConsents') return Promise.resolve([]);
+            if (method === 'abdmHiuGetExternalRecords') return Promise.resolve([]);
+            return Promise.resolve(null);
+        });
+        await component.requestExternalConsent();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmHiuRequestConsent', expect.objectContaining({
+            patientId: 123, abhaAddress: 'asha@sbx', hiTypes: ['Prescription']
+        }));
+        expect(component.showConsentForm).toBe(false);
+    });
+
+    it('fetches granted consents and clears the cache on confirm', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockResolvedValue([]);
+        await component.fetchExternal(2);
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmHiuFetchRecords', { consentId: 2 });
+
+        await component.clearExternalCache();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmHiuClearExternalRecords', { patientId: 123 });
+    });
+
+    it('imports outside meds through the allergy gate with override', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockImplementation((method: string, input: any) => {
+            if (method === 'abdmHiuImportMedication' && !input.overrideReason) {
+                return Promise.reject(new Error(`Cannot import 'Penicillin-V': conflicting with active allergy 'Penicillin'. An explicit override reason is required.`));
+            }
+            if (method === 'abdmHiuImportMedication') return Promise.resolve({ id: 31 });
+            if (method === 'getPatientById') return Promise.resolve({ id: 123 });
+            if (method === 'getVisits') return Promise.resolve([]);
+            if (method === 'getVitals') return Promise.resolve(null);
+            if (method === 'getPatientSafetyContext') return Promise.resolve(null);
+            return Promise.resolve(null);
+        });
+        await component.importExternalMed(9, { name: 'Penicillin-V', dosage: '250mg', frequency: '1-1-1' });
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Allergy conflict' }));
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmHiuImportMedication', expect.objectContaining({
+            patientId: 123, medicine_name: 'Penicillin-V', overrideReason: expect.stringContaining('override')
+        }));
+    });
 });
 

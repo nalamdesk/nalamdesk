@@ -83,6 +83,7 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
 *   **Care contexts:** Every completed encounter automatically gets a yearly reference like `OP-2026-0001`, visible on the visit. References never repeat, even if an encounter is deleted.
 *   **Callback inbox:** Messages arriving from the ABDM gateway land in the inbox and are acknowledged exactly once. The queue reflects them within seconds.
 *   **Secure transfer:** From the patient chart you can push an encrypted bundle to the configured hospital endpoint (Fidelius end-to-end encryption). With no endpoint configured the transfer runs as a local loopback receipt for testing.
+*   **Outside records (consent-based):** From the patient chart, open the **External** tab and request records from another facility — pick the record types and date range, and the patient approves the request in their own health app. Once granted, fetch the records into the clinic vault: diagnoses, medications, observations, and allergies noted outside appear on the tab. A medication can be imported into the active list with one tap; conflicting imports are blocked unless the doctor records an explicit override, exactly like prescribing. Cached outside records expire after 30 days and can be cleared at any time.
 
 ---
 

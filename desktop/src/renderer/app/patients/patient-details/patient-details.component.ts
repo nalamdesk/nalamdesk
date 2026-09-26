@@ -162,21 +162,21 @@ import { newRequestId } from '../../services/request-id';
                 <div class="space-y-2 text-xs">
                     <div class="p-2.5 rounded-lg border flex items-center justify-between cursor-pointer hover:bg-gray-50 transition"
                          [ngClass]="safetyContext?.has_active_allergies ? 'bg-red-50/70 border-red-200' : 'bg-gray-50 border-gray-100'"
-                         (click)="activeTab = 'allergies'">
+                         (click)="activeTab = 'summary'">
                         <span class="font-medium text-gray-600">Allergies</span>
                         <span class="font-bold" [ngClass]="safetyContext?.has_active_allergies ? 'text-red-700' : 'text-gray-500'">
                             {{ safetyContext?.active_allergies?.length || 0 }} Active
                         </span>
                     </div>
                     <div class="p-2.5 rounded-lg border bg-gray-50 border-gray-100 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition"
-                         (click)="activeTab = 'conditions'">
+                         (click)="activeTab = 'summary'">
                         <span class="font-medium text-gray-600">Active Problems</span>
                         <span class="font-bold text-gray-700">
                             {{ safetyContext?.active_conditions?.length || 0 }}
                         </span>
                     </div>
                     <div class="p-2.5 rounded-lg border bg-gray-50 border-gray-100 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition"
-                         (click)="activeTab = 'medications'">
+                         (click)="activeTab = 'summary'">
                         <span class="font-medium text-gray-600">Active Medications</span>
                         <span class="font-bold text-gray-700">
                             {{ safetyContext?.active_medications?.length || 0 }}
@@ -192,6 +192,15 @@ import { newRequestId } from '../../services/request-id';
                 <div class="px-6 py-3 border-b flex flex-wrap justify-between items-center bg-gray-50/50 rounded-t-lg gap-2">
                     <!-- Tabs -->
                     <div class="flex items-center gap-2">
+                        <button type="button" (click)="activeTab = 'summary'"
+                                [class.bg-white]="activeTab === 'summary'"
+                                [class.shadow-sm]="activeTab === 'summary'"
+                                [class.text-blue-600]="activeTab === 'summary'"
+                                [class.font-bold]="activeTab === 'summary'"
+                                [class.text-gray-600]="activeTab !== 'summary'"
+                                class="px-3 py-1.5 rounded-lg text-sm transition">
+                            Summary
+                        </button>
                         <button type="button" (click)="activeTab = 'visits'"
                                 [class.bg-white]="activeTab === 'visits'"
                                 [class.shadow-sm]="activeTab === 'visits'"
@@ -201,38 +210,17 @@ import { newRequestId } from '../../services/request-id';
                                 class="px-3 py-1.5 rounded-lg text-sm transition">
                             Visits ({{ visits.length }})
                         </button>
-                        <button type="button" (click)="activeTab = 'allergies'"
-                                [class.bg-white]="activeTab === 'allergies'"
-                                [class.shadow-sm]="activeTab === 'allergies'"
-                                [class.text-red-600]="activeTab === 'allergies'"
-                                [class.font-bold]="activeTab === 'allergies'"
-                                [class.text-gray-600]="activeTab !== 'allergies'"
+                        <button type="button" (click)="openExternalTab()"
+                                [class.bg-white]="activeTab === 'external'"
+                                [class.shadow-sm]="activeTab === 'external'"
+                                [class.text-blue-600]="activeTab === 'external'"
+                                [class.font-bold]="activeTab === 'external'"
+                                [class.text-gray-600]="activeTab !== 'external'"
                                 class="px-3 py-1.5 rounded-lg text-sm transition flex items-center gap-1.5">
-                            <span>Allergies</span>
-                            <span *ngIf="safetyContext?.active_allergies?.length" class="text-[10px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded-full">
-                                {{ safetyContext.active_allergies.length }}
+                            <span>External</span>
+                            <span *ngIf="externalRecords.length" class="text-[10px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded-full">
+                                {{ externalRecords.length }}
                             </span>
-                            <span *ngIf="!safetyContext?.active_allergies?.length" class="text-[10px] text-gray-500">
-                                ({{ allergies.length }})
-                            </span>
-                        </button>
-                        <button type="button" (click)="activeTab = 'conditions'"
-                                [class.bg-white]="activeTab === 'conditions'"
-                                [class.shadow-sm]="activeTab === 'conditions'"
-                                [class.text-amber-600]="activeTab === 'conditions'"
-                                [class.font-bold]="activeTab === 'conditions'"
-                                [class.text-gray-600]="activeTab !== 'conditions'"
-                                class="px-3 py-1.5 rounded-lg text-sm transition">
-                            Problems ({{ conditions.length }})
-                        </button>
-                        <button type="button" (click)="activeTab = 'medications'"
-                                [class.bg-white]="activeTab === 'medications'"
-                                [class.shadow-sm]="activeTab === 'medications'"
-                                [class.text-green-600]="activeTab === 'medications'"
-                                [class.font-bold]="activeTab === 'medications'"
-                                [class.text-gray-600]="activeTab !== 'medications'"
-                                class="px-3 py-1.5 rounded-lg text-sm transition">
-                            Medications ({{ medications.length }})
                         </button>
                     </div>
 
@@ -251,40 +239,159 @@ import { newRequestId } from '../../services/request-id';
                     </app-shared-table>
                 </div>
 
-                <!-- TAB: ALLERGIES (standard AG Grid) -->
-                <div *ngIf="activeTab === 'allergies'" class="flex-1 min-h-0 overflow-hidden">
-                    <app-shared-table [rowData]="allergies" [columnDefs]="allergyColumnDefs" [pagination]="true" [pageSize]="10">
-                        <div toolbar-left class="flex items-center gap-2">
-                            <span class="text-xs text-gray-500">{{ allergies.length }} recorded</span>
-                            <button *ngIf="canMutateSafety" (click)="openAddAllergyModal()" class="text-xs bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 font-bold px-2.5 py-1.5 rounded flex items-center gap-1 transition">
-                                <span>+</span> Add Allergy
-                            </button>
+                <!-- TAB: SUMMARY -->
+                <div *ngIf="activeTab === 'summary'" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-4">
+                    <div *ngIf="activeAllergiesList().length > 0" class="rounded-lg border border-red-200 bg-red-50 p-3">
+                        <div class="text-xs font-bold uppercase tracking-wider text-red-700 mb-1.5">
+                            Active allergies ({{ activeAllergiesList().length }})
                         </div>
-                    </app-shared-table>
+                        <div class="flex flex-wrap gap-1.5">
+                            <span *ngFor="let a of activeAllergiesList()"
+                                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-200 bg-white text-xs font-semibold text-red-800">
+                                {{ a.substance }}
+                                <span *ngIf="a.criticality" class="font-normal text-red-500 uppercase">{{ a.criticality }}</span>
+                            </span>
+                        </div>
+                    </div>
+                    <div *ngIf="activeAllergiesList().length === 0" class="text-xs text-gray-500 flex items-center gap-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5 text-green-600"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                        <span>No known allergies recorded.</span>
+                    </div>
+
+                    <section>
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="text-sm font-bold text-gray-800">Active Problems ({{ activeConditionsList().length }})</h3>
+                            <button *ngIf="canMutateSafety" (click)="openAddConditionModal()" class="text-xs bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 font-bold px-2.5 py-1.5 rounded transition">+ Add Problem</button>
+                        </div>
+                        <div *ngIf="activeConditionsList().length === 0" class="text-xs text-gray-400 italic">No active problems recorded.</div>
+                        <div *ngFor="let c of activeConditionsList()" class="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
+                            <div class="min-w-0">
+                                <div class="text-sm font-semibold text-gray-800 truncate">{{ c.condition_name || c.name }}</div>
+                                <div class="text-xs text-gray-500">{{ c.code || c.icd10_code || '' }}{{ (c.code || c.icd10_code) && c.onset_date ? ' • ' : '' }}{{ c.onset_date || '' }}</div>
+                            </div>
+                            <button *ngIf="canMutateSafety" (click)="removeSafetyRecord('condition', c.id)" class="text-gray-400 hover:text-red-600 text-xs hover:bg-red-50 p-1.5 rounded shrink-0" aria-label="Remove problem">✕</button>
+                        </div>
+                    </section>
+
+                    <section>
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="text-sm font-bold text-gray-800">Active Medications ({{ activeMedicationsList().length }})</h3>
+                            <button *ngIf="canMutateSafety" (click)="openAddMedicationModal()" class="text-xs bg-green-50 text-green-800 border border-green-200 hover:bg-green-100 font-bold px-2.5 py-1.5 rounded transition">+ Add Medication</button>
+                        </div>
+                        <div *ngIf="activeMedicationsList().length === 0" class="text-xs text-gray-400 italic">No active medications recorded.</div>
+                        <div *ngFor="let m of activeMedicationsList()" class="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
+                            <div class="min-w-0">
+                                <div class="text-sm font-semibold text-gray-800 truncate">{{ m.medicine_name || m.medication_name || m.name }}</div>
+                                <div class="text-xs text-gray-500">{{ m.dosage || '' }}{{ m.dosage && m.frequency ? ' • ' : '' }}{{ m.frequency || '' }}</div>
+                            </div>
+                            <button *ngIf="canMutateSafety" (click)="removeSafetyRecord('medication', m.id)" class="text-gray-400 hover:text-red-600 text-xs hover:bg-red-50 p-1.5 rounded shrink-0" aria-label="Remove medication">✕</button>
+                        </div>
+                    </section>
+
+                    <section>
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="text-sm font-bold text-gray-800">Recent Visits</h3>
+                            <button (click)="activeTab = 'visits'" class="text-xs text-blue-600 hover:underline">View all ({{ visits.length }})</button>
+                        </div>
+                        <div *ngIf="visits.length === 0" class="text-xs text-gray-400 italic">No visits recorded yet.</div>
+                        <div *ngFor="let v of recentVisits()" class="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
+                            <div class="min-w-0">
+                                <div class="text-sm font-semibold text-gray-800 truncate">{{ v.diagnosis || 'No diagnosis' }}</div>
+                                <div class="text-xs text-gray-500">{{ v.date ? (v.date | date:'mediumDate') : '' }}</div>
+                            </div>
+                            <button (click)="viewVisit(v)" class="text-xs text-blue-600 border border-blue-200 hover:border-blue-400 bg-blue-50 px-3 py-1 rounded shrink-0">View</button>
+                        </div>
+                    </section>
                 </div>
 
-                <!-- TAB: CONDITIONS / PROBLEMS (standard AG Grid) -->
-                <div *ngIf="activeTab === 'conditions'" class="flex-1 min-h-0 overflow-hidden">
-                    <app-shared-table [rowData]="conditions" [columnDefs]="conditionColumnDefs" [pagination]="true" [pageSize]="10">
-                        <div toolbar-left class="flex items-center gap-2">
-                            <span class="text-xs text-gray-500">{{ conditions.length }} recorded</span>
-                            <button *ngIf="canMutateSafety" (click)="openAddConditionModal()" class="text-xs bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 font-bold px-2.5 py-1.5 rounded flex items-center gap-1 transition">
-                                <span>+</span> Add Problem
-                            </button>
+                <!-- TAB: EXTERNAL RECORDS (M3 HIU) -->
+                <div *ngIf="activeTab === 'external'" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-4">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs text-gray-500">{{ externalRecords.length }} outside record(s)</span>
+                        <div class="flex items-center gap-2">
+                            <button *ngIf="canMutateSafety" (click)="showConsentForm = !showConsentForm" class="text-xs bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 font-bold px-2.5 py-1.5 rounded transition">Request records</button>
+                            <button *ngIf="canMutateSafety && externalRecords.length > 0" (click)="clearExternalCache()" class="text-xs text-gray-500 hover:text-red-600 border border-gray-200 hover:border-red-200 px-2.5 py-1.5 rounded transition">Clear cache</button>
                         </div>
-                    </app-shared-table>
-                </div>
+                    </div>
 
-                <!-- TAB: MEDICATIONS (standard AG Grid) -->
-                <div *ngIf="activeTab === 'medications'" class="flex-1 min-h-0 overflow-hidden">
-                    <app-shared-table [rowData]="medications" [columnDefs]="medicationColumnDefs" [pagination]="true" [pageSize]="10">
-                        <div toolbar-left class="flex items-center gap-2">
-                            <span class="text-xs text-gray-500">{{ medications.length }} recorded</span>
-                            <button *ngIf="canMutateSafety" (click)="openAddMedicationModal()" class="text-xs bg-green-50 text-green-800 border border-green-200 hover:bg-green-100 font-bold px-2.5 py-1.5 rounded flex items-center gap-1 transition">
-                                <span>+</span> Add Medication
+                    <div *ngIf="showConsentForm" class="rounded-lg border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+                        <label class="block text-xs font-semibold text-gray-700">Health ID address
+                            <input [(ngModel)]="consentForm.abhaAddress" placeholder="name@abdm" class="mt-1 w-full border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono">
+                        </label>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-700 mb-1.5">Record types</div>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button *ngFor="let t of HI_TYPES" type="button" (click)="toggleHiType(t)"
+                                        class="px-2.5 py-1 rounded-full border text-xs font-medium transition"
+                                        [ngClass]="consentForm.hiTypes.includes(t) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'">{{ t }}</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="block text-xs font-semibold text-gray-700">From (optional)
+                                <input [(ngModel)]="consentForm.dateFrom" type="date" class="mt-1 w-full border p-2 rounded text-sm outline-none">
+                            </label>
+                            <label class="block text-xs font-semibold text-gray-700">To (optional)
+                                <input [(ngModel)]="consentForm.dateTo" type="date" class="mt-1 w-full border p-2 rounded text-sm outline-none">
+                            </label>
+                        </div>
+                        <p *ngIf="consentError" class="text-xs text-red-600">{{ consentError }}</p>
+                        <div class="flex justify-end gap-2">
+                            <button (click)="showConsentForm = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded border bg-white transition-colors">Cancel</button>
+                            <button (click)="requestExternalConsent()" [disabled]="consentBusy" class="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                                {{ consentBusy ? 'Requesting...' : 'Send request' }}
                             </button>
                         </div>
-                    </app-shared-table>
+                        <p class="text-[11px] text-gray-500">The patient approves this in their health app. Records appear here once granted and fetched.</p>
+                    </div>
+
+                    <div *ngIf="externalConsents.length > 0" class="space-y-2">
+                        <div *ngFor="let c of externalConsents" class="flex items-center justify-between gap-2 rounded-lg border border-gray-200 p-2.5 text-xs">
+                            <div class="min-w-0">
+                                <div class="font-mono font-semibold text-gray-800 truncate">{{ c.abha_address }}</div>
+                                <div class="text-gray-500 truncate">{{ consentTypesText(c) }}{{ c.date_from ? ' • ' + c.date_from + ' → ' + (c.date_to || 'now') : '' }}</div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span class="px-2 py-0.5 rounded uppercase text-[10px] font-bold" [ngClass]="consentChipClass(c.status)">{{ c.status }}</span>
+                                <button *ngIf="c.status === 'granted' && canMutateSafety" (click)="fetchExternal(c.id)" class="text-blue-600 border border-blue-200 hover:border-blue-400 bg-blue-50 px-2.5 py-1 rounded font-semibold">Fetch</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div *ngIf="!loadingExternal && externalRecords.length === 0 && externalConsents.length === 0" class="text-center text-sm text-gray-500 py-8">
+                        No outside records yet. Request them from another facility with patient consent.
+                    </div>
+                    <div *ngIf="loadingExternal" class="text-center text-sm text-gray-500 py-8">Loading outside records...</div>
+
+                    <div *ngFor="let rec of externalRecords" class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="font-bold text-gray-800 text-sm">{{ rec.parsed?.title || 'Outside record' }}</div>
+                            <div class="text-[11px] text-gray-400 font-mono shrink-0">{{ rec.fetchedAt ? (rec.fetchedAt | date:'shortDate') : '' }}</div>
+                        </div>
+                        <p *ngIf="rec.error" class="text-xs text-amber-700 mt-1">This record could not be read: {{ rec.error }}</p>
+                        <div *ngIf="rec.parsed?.diagnoses?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Diagnoses</div>
+                            <div *ngFor="let d of rec.parsed.diagnoses" class="text-sm text-gray-700">• {{ d.text }}{{ d.code ? ' (' + d.code + ')' : '' }}</div>
+                        </div>
+                        <div *ngIf="rec.parsed?.medications?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Medications</div>
+                            <div *ngFor="let m of rec.parsed.medications" class="flex items-center justify-between gap-2 py-1 border-b border-gray-50 last:border-0">
+                                <div class="text-sm text-gray-700 min-w-0">
+                                    <span class="font-semibold">{{ m.name }}</span>
+                                    <span class="text-gray-500 text-xs"> {{ m.dosage || '' }}{{ m.dosage && m.frequency ? ' • ' : '' }}{{ m.frequency || '' }}</span>
+                                </div>
+                                <button *ngIf="canMutateSafety" (click)="importExternalMed(rec.id, m)" class="text-xs text-green-700 border border-green-200 hover:bg-green-50 px-2 py-1 rounded shrink-0">Import</button>
+                            </div>
+                        </div>
+                        <div *ngIf="rec.parsed?.observations?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Observations</div>
+                            <div *ngFor="let o of rec.parsed.observations" class="text-sm text-gray-700">• {{ o.text }}{{ o.value ? ': ' + o.value : '' }}</div>
+                        </div>
+                        <div *ngIf="rec.parsed?.allergies?.length" class="mt-2">
+                            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">Allergies noted outside</div>
+                            <div *ngFor="let a of rec.parsed.allergies" class="text-sm text-red-700">• {{ a.substance }}</div>
+                        </div>
+                    </div>
+                    <p *ngIf="externalError" class="text-xs text-red-600">{{ externalError }}</p>
                 </div>
 
              </div>
@@ -725,11 +832,212 @@ export class PatientDetailsComponent implements OnInit {
     currentUser: any;
 
     // Clinical Safety & Longitudinal Records
-    activeTab: 'visits' | 'allergies' | 'conditions' | 'medications' = 'visits';
+    activeTab: 'summary' | 'visits' | 'external' = 'summary';
     safetyContext: any = null;
     allergies: any[] = [];
     conditions: any[] = [];
     medications: any[] = [];
+
+    // M3 HIU External Records
+    readonly HI_TYPES = ['Prescription', 'DiagnosticReport', 'DischargeSummary', 'OPConsultation', 'ImmunizationRecord', 'WellnessRecord'];
+    externalRecords: any[] = [];
+    externalConsents: any[] = [];
+    loadingExternal = false;
+    externalError = '';
+    showConsentForm = false;
+    consentBusy = false;
+    consentError = '';
+    consentForm = { abhaAddress: '', hiTypes: ['Prescription', 'DiagnosticReport'] as string[], dateFrom: '', dateTo: '' };
+
+    /** Summary helpers: the chart leads with active records, not raw tables. */
+    activeAllergiesList(): any[] {
+        return (this.allergies || []).filter((a: any) => a?.status === 'active');
+    }
+
+    activeConditionsList(): any[] {
+        return (this.conditions || []).filter((c: any) => {
+            const status = c?.clinical_status || c?.status;
+            return status === 'active';
+        });
+    }
+
+    activeMedicationsList(): any[] {
+        return (this.medications || []).filter((m: any) => m?.status === 'active');
+    }
+
+    recentVisits(): any[] {
+        return (this.visits || []).slice(0, 3);
+    }
+
+    removeSafetyRecord(kind: 'allergy' | 'condition' | 'medication', id: number): void {
+        if (this.denySafetyMutation()) return;
+        if (kind === 'allergy') void this.deleteAllergy(id);
+        else if (kind === 'condition') void this.deleteCondition(id);
+        else void this.deleteMedication(id);
+    }
+
+    consentChipClass(status: unknown): string {
+        switch (String(status || '').toLowerCase()) {
+            case 'granted': return 'bg-green-100 text-green-700';
+            case 'denied': return 'bg-red-100 text-red-700';
+            case 'expired': return 'bg-gray-100 text-gray-500';
+            default: return 'bg-amber-100 text-amber-800';
+        }
+    }
+
+    consentTypesText(consent: any): string {
+        try {
+            const types = typeof consent?.hi_types === 'string' ? JSON.parse(consent.hi_types) : consent?.hi_types;
+            return Array.isArray(types) ? types.join(', ') : '';
+        } catch {
+            return '';
+        }
+    }
+
+    async openExternalTab(): Promise<void> {
+        this.activeTab = 'external';
+        await this.loadExternal();
+    }
+
+    async loadExternal(): Promise<void> {
+        if (!this.patientId) return;
+        this.loadingExternal = true;
+        this.externalError = '';
+        try {
+            const [consents, records] = await Promise.all([
+                this.dataService.invoke<any[]>('abdmHiuGetConsents', { patientId: this.patientId }).catch(() => []),
+                this.dataService.invoke<any[]>('abdmHiuGetExternalRecords', { patientId: this.patientId }).catch(() => [])
+            ]);
+            this.ngZone.run(() => {
+                this.externalConsents = consents || [];
+                this.externalRecords = records || [];
+                this.loadingExternal = false;
+            });
+        } catch (e) {
+            this.ngZone.run(() => {
+                this.loadingExternal = false;
+                this.externalError = e instanceof Error ? e.message : 'Could not load outside records.';
+            });
+        }
+    }
+
+    toggleHiType(type: string): void {
+        const selected = this.consentForm.hiTypes;
+        this.consentForm.hiTypes = selected.includes(type)
+            ? selected.filter((t) => t !== type)
+            : [...selected, type];
+    }
+
+    async requestExternalConsent(): Promise<void> {
+        this.consentError = '';
+        const address = this.consentForm.abhaAddress.trim() || this.patient?.abha_address || '';
+        if (!address) {
+            this.consentError = 'A health ID address is required.';
+            return;
+        }
+        if (this.consentForm.hiTypes.length === 0) {
+            this.consentError = 'Select at least one record type.';
+            return;
+        }
+        this.consentBusy = true;
+        try {
+            await this.dataService.invoke('abdmHiuRequestConsent', {
+                patientId: this.patientId,
+                abhaAddress: address,
+                hiTypes: this.consentForm.hiTypes,
+                dateFrom: this.consentForm.dateFrom || null,
+                dateTo: this.consentForm.dateTo || null
+            });
+            this.ngZone.run(() => {
+                this.showConsentForm = false;
+                this.consentForm = { abhaAddress: '', hiTypes: ['Prescription', 'DiagnosticReport'], dateFrom: '', dateTo: '' };
+                this.consentBusy = false;
+            });
+            await this.loadExternal();
+        } catch (e) {
+            this.ngZone.run(() => {
+                this.consentBusy = false;
+                this.consentError = e instanceof Error ? e.message : 'Could not send the request.';
+            });
+        }
+    }
+
+    async fetchExternal(consentId: number): Promise<void> {
+        this.externalError = '';
+        try {
+            await this.dataService.invoke('abdmHiuFetchRecords', { consentId });
+            await this.loadExternal();
+        } catch (e) {
+            this.externalError = e instanceof Error ? e.message : 'Could not fetch records.';
+        }
+    }
+
+    async clearExternalCache(): Promise<void> {
+        const confirmed = await this.dialogService.open({
+            title: 'Clear outside records?',
+            message: 'Cached records from other facilities will be permanently removed from this device.',
+            type: 'confirm',
+            confirmText: 'Clear',
+            cancelText: 'Keep'
+        });
+        if (!confirmed) return;
+        try {
+            await this.dataService.invoke('abdmHiuClearExternalRecords', { patientId: this.patientId });
+            await this.loadExternal();
+        } catch (e) {
+            await this.dialogService.open({
+                title: 'Clear failed',
+                message: e instanceof Error ? e.message : 'Could not clear the cache.',
+                type: 'error'
+            });
+        }
+    }
+
+    /**
+     * Imports one outside medication into the active list through the same
+     * allergy-conflict gate as prescribing: a conflict needs an explicit
+     * override, recorded in the audit trail.
+     */
+    async importExternalMed(recordId: number, med: any): Promise<void> {
+        const name = String(med?.name || '').trim();
+        if (!name) return;
+        const attempt = async (overrideReason?: string) => this.dataService.invoke('abdmHiuImportMedication', {
+            patientId: this.patientId,
+            medicine_name: name,
+            dosage: med?.dosage || '',
+            frequency: med?.frequency || '',
+            source: `Outside record #${recordId}`,
+            ...(overrideReason ? { overrideReason } : {})
+        });
+        try {
+            await attempt();
+            await this.loadData();
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Could not import the medication.';
+            if (!message.includes('conflicting')) {
+                await this.dialogService.open({ title: 'Import failed', message, type: 'error' });
+                return;
+            }
+            const confirmed = await this.dialogService.open({
+                title: 'Allergy conflict',
+                message: `${message} Import anyway? The override will be recorded.`,
+                type: 'confirm',
+                confirmText: 'Import with override',
+                cancelText: 'Cancel'
+            });
+            if (!confirmed) return;
+            try {
+                await attempt(`Clinician override on import despite known allergy`);
+                await this.loadData();
+            } catch (retryError) {
+                await this.dialogService.open({
+                    title: 'Import failed',
+                    message: retryError instanceof Error ? retryError.message : 'Could not import.',
+                    type: 'error'
+                });
+            }
+        }
+    }
 
     // Modal State
     showVisitModal = false;
@@ -824,117 +1132,6 @@ export class PatientDetailsComponent implements OnInit {
         }
     ];
 
-    allergyColumnDefs: ColDef[] = [
-        {
-            headerName: 'Substance', field: 'substance', flex: 1.5, minWidth: 180,
-            cellRenderer: (params: any) => {
-                const a = params.data;
-                if (!a) return '';
-                const notes = a.notes ? `<span class="block text-xs font-normal text-gray-500">${this.escHtml(a.notes)}</span>` : '';
-                return `<span class="font-bold text-gray-800">${this.escHtml(a.substance)}</span>${notes}`;
-            }
-        },
-        {
-            headerName: 'Criticality', field: 'criticality', flex: 1, minWidth: 130,
-            cellRenderer: (params: any) => {
-                const c = params.value || 'low';
-                const classes = c === 'high'
-                    ? 'bg-red-100 text-red-800 border-red-200'
-                    : c === 'low'
-                        ? 'bg-amber-100 text-amber-800 border-amber-200'
-                        : 'bg-gray-100 text-gray-700 border-gray-200';
-                return `<span class="px-2 py-0.5 rounded border uppercase text-[10px] font-semibold ${classes}">${this.escHtml(c)}</span>`;
-            }
-        },
-        {
-            headerName: 'Severity & Reaction', flex: 1.5, minWidth: 180,
-            valueGetter: (params: any) => `${params.data?.severity || '-'}${params.data?.reaction ? ' ' + params.data.reaction : ''}`,
-            cellRenderer: (params: any) => {
-                const a = params.data;
-                if (!a) return '';
-                const reaction = a.reaction ? `<span class="text-xs text-gray-500 block">${this.escHtml(a.reaction)}</span>` : '';
-                return `<span class="capitalize font-medium text-gray-600">${this.escHtml(a.severity || '-')}</span>${reaction}`;
-            }
-        },
-        {
-            headerName: 'Status', field: 'status', flex: 1, minWidth: 120,
-            cellRenderer: (params: any) => this.statusChip(params.value, params.value === 'active', 'bg-red-100 text-red-800')
-        },
-        {
-            headerName: 'Actions', flex: 0.6, minWidth: 100, sortable: false, filter: false,
-            cellClass: 'flex items-center justify-end',
-            cellRenderer: () => this.deleteActionHtml(),
-            onCellClicked: (params: any) => { if (!this.denySafetyMutation()) this.deleteAllergy(params.data.id); }
-        }
-    ];
-
-    conditionColumnDefs: ColDef[] = [
-        {
-            headerName: 'Problem / Condition', field: 'condition_name', flex: 1.5, minWidth: 200,
-            cellRenderer: (params: any) => {
-                const c = params.data;
-                if (!c) return '';
-                const notes = c.notes ? `<span class="block text-xs font-normal text-gray-500">${this.escHtml(c.notes)}</span>` : '';
-                return `<span class="font-bold text-gray-800">${this.escHtml(c.condition_name)}</span>${notes}`;
-            }
-        },
-        {
-            headerName: 'ICD-10 Code', field: 'code', flex: 1, minWidth: 130,
-            cellRenderer: (params: any) => `<span class="font-mono text-xs text-gray-600">${this.escHtml(params.value || '-')}</span>`
-        },
-        {
-            headerName: 'Status', field: 'clinical_status', flex: 1, minWidth: 130,
-            cellRenderer: (params: any) => this.statusChip(params.value, params.value === 'active', 'bg-amber-100 text-amber-800')
-        },
-        {
-            headerName: 'Onset Date', field: 'onset_date', flex: 1, minWidth: 130,
-            valueFormatter: (params: any) => params.value ? this.fmtDate(params.value) : '-',
-            cellRenderer: (params: any) => `<span class="text-xs text-gray-600">${this.escHtml(params.value ? this.fmtDate(params.value) : '-')}</span>`
-        },
-        {
-            headerName: 'Actions', flex: 0.6, minWidth: 100, sortable: false, filter: false,
-            cellClass: 'flex items-center justify-end',
-            cellRenderer: () => this.deleteActionHtml(),
-            onCellClicked: (params: any) => { if (!this.denySafetyMutation()) this.deleteCondition(params.data.id); }
-        }
-    ];
-
-    medicationColumnDefs: ColDef[] = [
-        {
-            headerName: 'Medication', field: 'medicine_name', flex: 1.5, minWidth: 200,
-            cellRenderer: (params: any) => {
-                const m = params.data;
-                if (!m) return '';
-                const notes = m.notes ? `<span class="block text-xs font-normal text-gray-500">${this.escHtml(m.notes)}</span>` : '';
-                return `<span class="font-bold text-gray-800">${this.escHtml(m.medicine_name)}</span>${notes}`;
-            }
-        },
-        {
-            headerName: 'Dosage & Frequency', flex: 1.5, minWidth: 180,
-            valueGetter: (params: any) => `${params.data?.dosage || '-'} ${params.data?.frequency ? '(' + params.data.frequency + ')' : ''}`,
-            cellRenderer: (params: any) => {
-                const m = params.data;
-                if (!m) return '';
-                const freq = m.frequency ? `<span class="text-gray-500 ml-1">(${this.escHtml(m.frequency)})</span>` : '';
-                return `<span class="text-xs text-gray-700 font-medium">${this.escHtml(m.dosage || '-')}</span>${freq}`;
-            }
-        },
-        {
-            headerName: 'Status', field: 'status', flex: 1, minWidth: 120,
-            cellRenderer: (params: any) => this.statusChip(params.value, params.value === 'active', 'bg-green-100 text-green-800')
-        },
-        {
-            headerName: 'Duration', flex: 1, minWidth: 150,
-            valueGetter: (params: any) => `${params.data?.start_date || '-'}${params.data?.end_date ? ' to ' + params.data.end_date : ''}`,
-            cellRenderer: (params: any) => `<span class="text-xs text-gray-600">${this.escHtml(params.value)}</span>`
-        },
-        {
-            headerName: 'Actions', flex: 0.6, minWidth: 100, sortable: false, filter: false,
-            cellClass: 'flex items-center justify-end',
-            cellRenderer: () => this.deleteActionHtml(),
-            onCellClicked: (params: any) => { if (!this.denySafetyMutation()) this.deleteMedication(params.data.id); }
-        }
-    ];
 
     constructor(
         private route: ActivatedRoute,

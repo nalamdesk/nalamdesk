@@ -1160,5 +1160,27 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 30,
+        up: (db: any) => {
+            console.log('Running Migration v30 (external medication import grant)...');
+            // Importing outside meds mutates the active list: clinical act.
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmHiuImportMedication'],
+                admin: ['abdmHiuImportMedication']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

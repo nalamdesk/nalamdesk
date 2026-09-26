@@ -32,7 +32,7 @@ const ABDM_SERVICE_METHODS = new Set([
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle', 'abdmHiuGetPublicKey',
     'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords',
-    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'
+    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords', 'abdmHiuImportMedication'
 ]);
 
 const ALLOWED_IPC_METHODS = [
@@ -58,7 +58,7 @@ const ALLOWED_IPC_METHODS = [
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey', 'abdmHiuRequestConsent',
     'abdmHiuGetConsents', 'abdmHiuFetchRecords', 'abdmHiuGetExternalRecords',
-    'abdmHiuClearExternalRecords',
+    'abdmHiuClearExternalRecords', 'abdmHiuImportMedication',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -241,6 +241,18 @@ export class ApiServer {
             }
             case 'abdmHiuClearExternalRecords':
                 return db.clearFetchedRecords(Number(payload['patientId']), user?.id);
+            case 'abdmHiuImportMedication':
+                return db.importExternalMedication(
+                    Number(payload['patientId']),
+                    {
+                        medicine_name: payload['medicine_name'] ?? payload['name'],
+                        dosage: payload['dosage'],
+                        frequency: payload['frequency'],
+                        source: payload['source']
+                    },
+                    payload['overrideReason'] ?? null,
+                    user?.id
+                );
             case 'abdmAbhaCard':
                 return abha.getCard(payload['abhaAddress']);
             case 'abdmLinkAbha':

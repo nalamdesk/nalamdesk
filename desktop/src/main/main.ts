@@ -1065,6 +1065,21 @@ handleDb('db:abdmHiuClearExternalRecords', (_, payload) => {
     const args = payload || {};
     return databaseService.clearFetchedRecords(Number(args.patientId), user.id);
 });
+handleDb('db:abdmHiuImportMedication', (_, payload) => {
+    const user = requireHiuClinician(sessionService.getUser());
+    const args = payload || {};
+    return databaseService.importExternalMedication(
+        Number(args.patientId),
+        {
+            medicine_name: args.medicine_name ?? args.name,
+            dosage: args.dosage,
+            frequency: args.frequency,
+            source: args.source
+        },
+        args.overrideReason ?? null,
+        user.id
+    );
+});
 handleDb('db:abdmAbhaConfirmOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());
     const args = payload || {};

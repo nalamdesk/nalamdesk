@@ -155,6 +155,44 @@ describe('HiuService (consent flow, mock gateway)', () => {
             .rejects.toThrow('not certified');
     });
 
+    it('issues unique mock request ids for rapid requests', async () => {
+        const { svc } = svcWithStore();
+        const ids = new Set<string>();
+        for (let i = 0; i < 5; i += 1) {
+            const row = await svc.requestConsent({ abhaAddress: 'a@sbx', hiTypes: ['Prescription'] }, 10);
+            ids.add(row.gatewayRequestId);
+        }
+        expect(ids.size).toBe(5);
+    });
+
+    it('reconciles out-of-order notifications waiting in the inbox', () => {
+        const pending = [{
+            kind: 'consent-granted',
+            payload: JSON.stringify({ requestId: 'late-1', consentHandle: 'h-9' })
+        }];
+        const created: any[] = [];
+        const svc = new HiuService({
+            store: {
+                createConsentRequest: (input: any) => created[0],
+                getConsentById: (id: number) => created[0],
+                getConsentByRequestId: () => null,
+                updateConsentStatus: (id: number, status: string) => {
+                    created[0].status = status;
+                    return created[0];
+                },
+                storeFetchedRecord: (input: any) => input,
+                getPendingInbox: () => pending
+            },
+            session: { getSessionToken: async () => ({ token: 'mock', mock: true }), gatewayBaseUrl: () => '' },
+            keyStore: fakeKeyStore() as any
+        });
+        expect(svc.reconcilePendingNotifies()).toEqual({ applied: 0, skipped: 1 });
+        created.push({ id: 7, status: 'requested' });
+        (svc as any).deps.store.getConsentByRequestId = () => created[0];
+        expect(svc.reconcilePendingNotifies()).toEqual({ applied: 1, skipped: 0 });
+        expect(created[0].status).toBe('granted');
+    });
+
     it('applies grant/deny/expire notifications to the matching request', async () => {
         const { svc, store } = svcWithStore();
         const row = await svc.requestConsent({ abhaAddress: 'a@sbx', hiTypes: ['Prescription'] }, 10);
@@ -183,5 +221,46 @@ describe('HiuService (consent flow, mock gateway)', () => {
         expect(bundle.resourceType).toBe('Bundle');
         expect(store.records).toHaveLength(1);
         await expect(svc.fetchForConsent(999, 10)).rejects.toThrow('not found');
+    });
+
+    it('heals a mismatched stored pair instead of advertising it', () => {
+        const store = memoryStore();
+        const svc = new HiuService({ ...store, keyStore: fakeKeyStore() as any });
+        svc.ensureKeypair();
+        // Simulate an edited public key: pair no longer matches.
+        store.settings.abdm_hiu_public_key = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+        const healed = svc.ensureKeypair();
+        expect(healed.publicKey).not.toBe('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
+        // Round trip proves the healed pair belongs together.
+        const fidelius = new FideliusService();
+        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, healed.publicKey))).toEqual({ ok: 1 });
+    });
+
+    it('regenerates when the private blob cannot be unwrapped', () => {
+        const store = memoryStore();
+        const svc = new HiuService({ ...store, keyStore: fakeKeyStore() as any });
+        svc.ensureKeypair();
+        // Simulate a clean-machine restore: foreign keychain blob.
+        store.settings.abdm_hiu_private_protected = Buffer.from('foreign-blob').toString('base64');
+        const healed = svc.ensureKeypair();
+        const fidelius = new FideliusService();
+        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, healed.publicKey))).toEqual({ ok: 1 });
+    });
+
+    it('writes both halves through the atomic saver when available', () => {
+        const store = memoryStore();
+        const saved: any[] = [];
+        const svc = new HiuService({
+            ...store,
+            saveHiuKeypair: (pub: string, priv: string) => {
+                saved.push([pub, priv]);
+                (store as any).saveHiuPrivateProtected(priv);
+                (store as any).saveSettingsPatch({ abdm_hiu_public_key: pub });
+            },
+            keyStore: fakeKeyStore() as any
+        });
+        const { publicKey } = svc.ensureKeypair();
+        expect(saved).toHaveLength(1);
+        expect(saved[0][0]).toBe(publicKey);
     });
 });

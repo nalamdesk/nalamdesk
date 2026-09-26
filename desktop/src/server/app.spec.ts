@@ -357,7 +357,8 @@ describe('ABDM HIU data transfer route', () => {
             endWork: vi.fn(),
             callbackSecretMatches: vi.fn().mockReturnValue(true),
             getConsentByRequestId: vi.fn().mockReturnValue(null),
-            storeFetchedRecord: vi.fn().mockReturnValue({ id: 3, status: 'cached' })
+            storeFetchedRecord: vi.fn().mockReturnValue({ id: 3, status: 'cached' }),
+            storeFetchedRecordBatch: vi.fn().mockReturnValue([{ id: 3, status: 'cached' }])
         };
         server = new ApiServer(db, os.tmpdir());
     });
@@ -373,10 +374,37 @@ describe('ABDM HIU data transfer route', () => {
             payload: { requestId: 'req-1', records: [] }
         });
         expect(response.statusCode).toBe(400);
-        expect(db.storeFetchedRecord).not.toHaveBeenCalled();
+        expect(db.storeFetchedRecordBatch).not.toHaveBeenCalled();
+    });
+
+    it('rejects pushes without a matching granted consent', async () => {
+        db.getConsentByRequestId.mockReturnValue(null);
+        const unknown = await server.inject({
+            method: 'POST',
+            url: '/abdm/hiu/data/transfer',
+            payload: {
+                requestId: 'nope',
+                records: [{ ephemeralPublicKey: 'x', nonce: 'x', ciphertext: 'x', tag: 'x' }]
+            }
+        });
+        expect(unknown.statusCode).toBe(400);
+        expect(db.storeFetchedRecordBatch).not.toHaveBeenCalled();
+
+        db.getConsentByRequestId.mockReturnValue({ id: 5, status: 'denied', patient_id: 1 });
+        const denied = await server.inject({
+            method: 'POST',
+            url: '/abdm/hiu/data/transfer',
+            payload: {
+                requestId: 'req-denied',
+                records: [{ ephemeralPublicKey: 'x', nonce: 'x', ciphertext: 'x', tag: 'x' }]
+            }
+        });
+        expect(denied.statusCode).toBe(400);
+        expect(db.storeFetchedRecordBatch).not.toHaveBeenCalled();
     });
 
     it('rejects envelopes the HIU key cannot open', async () => {
+        db.getConsentByRequestId.mockReturnValue({ id: 5, status: 'granted', patient_id: 1 });
         const response = await server.inject({
             method: 'POST',
             url: '/abdm/hiu/data/transfer',
@@ -386,7 +414,7 @@ describe('ABDM HIU data transfer route', () => {
             }
         });
         expect(response.statusCode).toBe(400);
-        expect(db.storeFetchedRecord).not.toHaveBeenCalled();
+        expect(db.storeFetchedRecordBatch).not.toHaveBeenCalled();
     });
 
     it('enforces the callback password when one is configured', async () => {

@@ -76,10 +76,13 @@ function dosageText(dosage: any): { dosage?: string; frequency?: string } {
 function observationValue(resource: any): string {
     const q = resource?.valueQuantity;
     if (q && q.value != null) return `${q.value}${q.unit ? ` ${q.unit}` : ''}`;
-    for (const key of ['valueString', 'valueCodeableConcept', 'valueDateTime']) {
+    if (resource?.valueCodeableConcept) {
+        const { text, code } = codeText(resource.valueCodeableConcept);
+        if (text) return code ? `${text} (${code})` : text;
+    }
+    for (const key of ['valueString', 'valueDateTime']) {
         const value = resource?.[key];
         if (typeof value === 'string' && value.trim()) return value.trim();
-        if (value && typeof value.text === 'string' && value.text.trim()) return value.text.trim();
     }
     return '';
 }

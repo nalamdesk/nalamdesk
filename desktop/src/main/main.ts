@@ -157,6 +157,7 @@ const hiuService = new HiuService({
     getHiuPrivateProtected: () => databaseService.getHiuPrivateProtected(),
     saveHiuPrivateProtected: (value) => databaseService.saveHiuPrivateProtected(value),
     saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
+    saveHiuKeypair: (publicKey, protectedPrivate) => databaseService.saveHiuKeypair(publicKey, protectedPrivate),
     keyStore: new ElectronSafeStorageDeviceKeyStore(),
     store: {
         createConsentRequest: (input, actingUserId) => databaseService.createConsentRequest(input, actingUserId),
@@ -164,7 +165,8 @@ const hiuService = new HiuService({
         getConsentByRequestId: (requestId) => databaseService.getConsentByRequestId(requestId),
         updateConsentStatus: (id, status, handle, actingUserId) =>
             databaseService.updateConsentStatus(id, status, handle, actingUserId),
-        storeFetchedRecord: (input, actingUserId) => databaseService.storeFetchedRecord(input, actingUserId)
+        storeFetchedRecord: (input, actingUserId) => databaseService.storeFetchedRecord(input, actingUserId),
+        getPendingInbox: () => databaseService.getPendingInbox()
     },
     session: {
         getSessionToken: () => abdmSessionService.getSessionToken(),

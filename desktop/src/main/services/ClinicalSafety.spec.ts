@@ -826,14 +826,14 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
 
             const stale: any = service.storeFetchedRecord({
                 consentId: row.id, patientId: 1,
-                bundleJson: JSON.stringify({ resourceType: 'Bundle' }),
+                bundleJson: JSON.stringify({ resourceType: 'Bundle', marker: 'stale' }),
                 expiresAt: '2000-01-01 00:00:00'
             }, 10);
             expect(service.getFetchedRecords(1).map((r: any) => r.id)).not.toContain(stale.id);
             expect(service.getFetchedRecords(1, true).map((r: any) => r.id)).toContain(stale.id);
             service.expireFetchedRecords();
-            expect(db.prepare('SELECT status FROM abdm_fetched_records WHERE id = ?')
-                .get(stale.id).status).toBe('expired');
+            expect(db.prepare('SELECT status, bundle_json FROM abdm_fetched_records WHERE id = ?')
+                .get(stale.id)).toMatchObject({ status: 'expired', bundle_json: '{"expired":true}' });
         });
 
         it('wipes the external-records cache on explicit request', () => {
@@ -880,6 +880,72 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 medicine_name: 'Amlodipine', dosage: '5mg', frequency: '1-0-0'
             }, null, 10);
             expect(clean.medicine_name).toBe('Amlodipine');
+        });
+
+        it('writes both HIU keypair halves atomically', () => {
+            service.saveHiuKeypair('PUBKEY', 'WRAPPED');
+            const settings: any = service.getSettings();
+            expect(settings.abdm_hiu_public_key).toBe('PUBKEY');
+            expect(service.getHiuPrivateProtected()).toBe('WRAPPED');
+        });
+
+        it('keeps consent transitions monotonic', () => {
+            const row: any = service.createConsentRequest({
+                abhaAddress: 'mono@sbx', hiTypes: ['Prescription'], gatewayRequestId: 'mono-1'
+            }, 10);
+            service.updateConsentStatus(row.id, 'denied', null, 10);
+            expect(() => service.updateConsentStatus(row.id, 'granted', null, 10))
+                .toThrow('a new request is required');
+            // Same-state re-application (gateway retries) stays idempotent.
+            expect(service.updateConsentStatus(row.id, 'denied', null, 10).status).toBe('denied');
+
+            const row2: any = service.createConsentRequest({
+                abhaAddress: 'mono2@sbx', hiTypes: ['Prescription'], gatewayRequestId: 'mono-2'
+            }, 10);
+            service.updateConsentStatus(row2.id, 'granted', null, 10);
+            service.updateConsentStatus(row2.id, 'expired', null, 10);
+            expect(() => service.updateConsentStatus(row2.id, 'granted', null, 10))
+                .toThrow('a new request is required');
+        });
+
+        it('rejects consent requests mismatched to the patient link', () => {
+            db.prepare("UPDATE patients SET abha_address = 'linked@sbx' WHERE id = 1").run();
+            expect(() => service.createConsentRequest({
+                patientId: 1, abhaAddress: 'other@sbx', hiTypes: ['Prescription']
+            }, 10)).toThrow('does not belong to this patient');
+            expect(() => service.createConsentRequest({
+                patientId: 999, abhaAddress: 'other@sbx', hiTypes: ['Prescription']
+            }, 10)).toThrow('Patient not found');
+            const ok: any = service.createConsentRequest({
+                patientId: 1, abhaAddress: 'linked@sbx', hiTypes: ['Prescription']
+            }, 10);
+            expect(ok.patient_id).toBe(1);
+            const unlinked: any = service.createConsentRequest({
+                patientId: 2, abhaAddress: 'fresh@sbx', hiTypes: ['Prescription']
+            }, 10);
+            expect(unlinked.patient_id).toBe(2);
+        });
+
+        it('stores push batches atomically and idempotently', () => {
+            const consent: any = service.createConsentRequest({
+                patientId: 1, abhaAddress: 'batch@sbx', hiTypes: ['Prescription']
+            }, 10);
+            const batch = [
+                { consentId: consent.id, patientId: 1, bundleJson: JSON.stringify({ n: 1 }), expiresAt: null },
+                { consentId: consent.id, patientId: 1, bundleJson: JSON.stringify({ n: 2 }), expiresAt: null }
+            ];
+            const first = service.storeFetchedRecordBatch(batch, 10);
+            expect(first).toHaveLength(2);
+            // Retry lands idempotently: same rows, no duplicates.
+            const retry = service.storeFetchedRecordBatch(batch, 10);
+            expect(retry.map((r: any) => r.id).sort()).toEqual(first.map((r: any) => r.id).sort());
+            expect(service.getFetchedRecords(1, true)).toHaveLength(2);
+            // A bad bundle aborts the whole batch: nothing is stored.
+            expect(() => service.storeFetchedRecordBatch([
+                { consentId: consent.id, patientId: 1, bundleJson: JSON.stringify({ n: 3 }), expiresAt: null },
+                { consentId: consent.id, patientId: 1, bundleJson: 'not-json', expiresAt: null }
+            ], 10)).toThrow();
+            expect(service.getFetchedRecords(1, true)).toHaveLength(2);
         });
     });
 });

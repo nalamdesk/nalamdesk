@@ -1105,5 +1105,41 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 28,
+        up: (db: any) => {
+            console.log('Running Migration v28 (consent notify dedupe and HIU grants)...');
+            try { db.exec(`ALTER TABLE abdm_inbox ADD COLUMN request_id TEXT`); } catch (e) { }
+            try {
+                db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_abdm_inbox_dedupe
+                    ON abdm_inbox(kind, request_id) WHERE request_id IS NOT NULL;`);
+            } catch (e) { }
+            // Content-hash delivery key: retried pushes land idempotently.
+            try { db.exec(`ALTER TABLE abdm_fetched_records ADD COLUMN bundle_sha256 TEXT`); } catch (e) { }
+            try {
+                db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_abdm_fetched_delivery
+                    ON abdm_fetched_records(consent_id, bundle_sha256);`);
+            } catch (e) { }
+            // Consent requests and record fetches are clinical acts
+            // (doctor/admin); reads stay available to the desk incl. nurses.
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords'],
+                receptionist: ['abdmHiuGetConsents'],
+                admin: ['abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords'],
+                nurse: ['abdmHiuGetConsents']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

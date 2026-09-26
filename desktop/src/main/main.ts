@@ -156,7 +156,20 @@ const hiuService = new HiuService({
     saveHiuPrivateProtected: (value) => databaseService.saveHiuPrivateProtected(value),
     saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
     saveHiuKeypair: (publicKey, protectedPrivate) => databaseService.saveHiuKeypair(publicKey, protectedPrivate),
-    keyStore: new ElectronSafeStorageDeviceKeyStore()
+    keyStore: new ElectronSafeStorageDeviceKeyStore(),
+    store: {
+        createConsentRequest: (input, actingUserId) => databaseService.createConsentRequest(input, actingUserId),
+        getConsentById: (id) => databaseService.getConsentById(id),
+        getConsentByRequestId: (requestId) => databaseService.getConsentByRequestId(requestId),
+        updateConsentStatus: (id, status, handle, actingUserId) =>
+            databaseService.updateConsentStatus(id, status, handle, actingUserId),
+        storeFetchedRecord: (input, actingUserId) => databaseService.storeFetchedRecord(input, actingUserId),
+        getPendingInbox: () => databaseService.getPendingInbox()
+    },
+    session: {
+        getSessionToken: () => abdmSessionService.getSessionToken(),
+        gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl()
+    }
 });
 const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
@@ -970,6 +983,33 @@ handleDb('db:abdmAbhaRequestLoginOtp', (_, payload) => {
 handleDb('db:abdmHiuGetPublicKey', () => {
     requireAbdmDeskRole(sessionService.getUser());
     return hiuService.ensureKeypair();
+});
+function requireHiuClinician(user: any) {
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return user;
+}
+handleDb('db:abdmHiuRequestConsent', (_, payload) => {
+    const user = requireHiuClinician(sessionService.getUser());
+    const args = payload || {};
+    return hiuService.requestConsent({
+        patientId: args.patientId ?? null,
+        abhaAddress: args.abhaAddress,
+        hiTypes: args.hiTypes,
+        dateFrom: args.dateFrom ?? null,
+        dateTo: args.dateTo ?? null
+    }, user.id);
+});
+handleDb('db:abdmHiuGetConsents', (_, payload) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    const args = payload || {};
+    return databaseService.getConsents(args.patientId ?? null);
+});
+handleDb('db:abdmHiuFetchRecords', (_, payload) => {
+    const user = requireHiuClinician(sessionService.getUser());
+    const args = payload || {};
+    return hiuService.fetchForConsent(Number(args.consentId), user.id);
 });
 handleDb('db:abdmAbhaConfirmOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());

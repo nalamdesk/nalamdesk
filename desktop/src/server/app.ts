@@ -71,7 +71,7 @@ export class ApiServer {
     // ABDM services are built lazily: unit tests that never touch ABDM flows
     // never pay for (or need) keychain access.
     private abdmServices() {
-        if (!this.abdmSessionSvc || !this.abdmAbhaSvc) {
+        if (!this.abdmSessionSvc || !this.abdmAbhaSvc || !this.hiuSvc) {
             const db = this.dbService as any;
             const session = new AbdmSessionService({
                 getSettings: () => db.getSettings(),

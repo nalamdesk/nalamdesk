@@ -12,6 +12,7 @@ import { invokeDbMethod } from '../shared/ipc-db-args';
 import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmSessionService } from '../main/services/AbdmSessionService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
+import { HiuService } from '../main/services/HiuService';
 import { FideliusService } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
 
@@ -28,7 +29,7 @@ const ABDM_SERVICE_METHODS = new Set([
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
-    'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle'
+    'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle', 'abdmHiuGetPublicKey'
 ]);
 
 const ALLOWED_IPC_METHODS = [
@@ -52,7 +53,7 @@ const ALLOWED_IPC_METHODS = [
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
-    'abdmAbhaCard', 'abdmLinkAbha',
+    'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -65,11 +66,12 @@ const ALLOWED_IPC_METHODS = [
 export class ApiServer {
     private abdmSessionSvc: AbdmSessionService | null = null;
     private abdmAbhaSvc: AbdmAbhaService | null = null;
+    private hiuSvc: HiuService | null = null;
 
     // ABDM services are built lazily: unit tests that never touch ABDM flows
     // never pay for (or need) keychain access.
     private abdmServices() {
-        if (!this.abdmSessionSvc || !this.abdmAbhaSvc) {
+        if (!this.abdmSessionSvc || !this.abdmAbhaSvc || !this.hiuSvc) {
             const db = this.dbService as any;
             const session = new AbdmSessionService({
                 getSettings: () => db.getSettings(),
@@ -83,12 +85,21 @@ export class ApiServer {
                 getSessionToken: () => session.getSessionToken(),
                 gatewayBaseUrl: () => session.gatewayBaseUrl()
             });
+            this.hiuSvc = new HiuService({
+                getSettings: () => db.getSettings(),
+                getHiuPrivateProtected: () => db.getHiuPrivateProtected(),
+                saveHiuPrivateProtected: (value: string) => db.saveHiuPrivateProtected(value),
+                saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
+                saveHiuKeypair: (publicKey: string, protectedPrivate: string) =>
+                    db.saveHiuKeypair(publicKey, protectedPrivate),
+                keyStore: new ElectronSafeStorageDeviceKeyStore()
+            });
         }
-        return { session: this.abdmSessionSvc, abha: this.abdmAbhaSvc };
+        return { session: this.abdmSessionSvc, abha: this.abdmAbhaSvc, hiu: this.hiuSvc };
     }
 
     private async invokeAbdmMethod(method: string, args: unknown[], user: any): Promise<unknown> {
-        const { session, abha } = this.abdmServices();
+        const { session, abha, hiu } = this.abdmServices();
         const payload = ((args || [])[0] || {}) as Record<string, any>;
         const db = this.dbService as any;
         switch (method) {
@@ -180,6 +191,8 @@ export class ApiServer {
                 return abha.requestLoginOtp(payload['abhaAddress']);
             case 'abdmAbhaConfirmLoginOtp':
                 return abha.verifyLoginOtp(payload['txnId'], payload['otp']);
+            case 'abdmHiuGetPublicKey':
+                return hiu.ensureKeypair();
             case 'abdmAbhaCard':
                 return abha.getCard(payload['abhaAddress']);
             case 'abdmLinkAbha':

@@ -781,5 +781,12 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(() => service.ackInbox(row.id, 20)).toThrow('already handled');
             expect((service.getPendingInbox() as any[]).map((r) => r.id)).not.toContain(row.id);
         });
+
+        it('writes both HIU keypair halves atomically', () => {
+            service.saveHiuKeypair('PUBKEY', 'WRAPPED');
+            const settings: any = service.getSettings();
+            expect(settings.abdm_hiu_public_key).toBe('PUBKEY');
+            expect(service.getHiuPrivateProtected()).toBe('WRAPPED');
+        });
     });
 });

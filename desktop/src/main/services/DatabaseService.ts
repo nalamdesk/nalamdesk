@@ -322,7 +322,8 @@ export class DatabaseService {
             drive_client_id, drive_client_secret, local_backup_path,
             backup_schedule, cloud_backup_schedule,
             abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id,
-            abdm_hfr_id, abdm_hpr_id, abdm_hip_endpoint, abdm_recipient_key
+            abdm_hfr_id, abdm_hpr_id, abdm_hip_endpoint, abdm_recipient_key,
+            abdm_hiu_public_key
             FROM settings LIMIT 1`).get();
     }
 
@@ -374,6 +375,18 @@ export class DatabaseService {
         }
     }
 
+    // Main-process-only accessor for the keychain-protected HIU private key.
+    // Same contract as the client secret: never in generic reads or LAN.
+    getHiuPrivateProtected(): string | null {
+        try {
+            const row = this.db.prepare(
+                'SELECT abdm_hiu_private_protected AS value FROM settings LIMIT 1').get() as any;
+            return row?.value ?? null;
+        } catch {
+            return null;
+        }
+    }
+
     // ... (existing code)
 
     getPublicSettings() {
@@ -419,6 +432,7 @@ export class DatabaseService {
             'drive_client_id', 'drive_client_secret', 'local_backup_path',
             'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
             'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
+            'abdm_hiu_public_key',
             'abdm_callback_secret'
         ];
 
@@ -456,6 +470,36 @@ export class DatabaseService {
         } else {
             this.db.prepare('INSERT INTO settings(abdm_client_secret_protected) VALUES(?)').run(protectedValue);
         }
+    }
+
+    // Dedicated writer for the keychain-protected HIU private key. Same
+    // contract: plaintext key material never crosses generic settings paths.
+    saveHiuPrivateProtected(protectedValue: string) {
+        const existing = this.getSettings();
+        if (existing) {
+            this.db.prepare('UPDATE settings SET abdm_hiu_private_protected = ?').run(protectedValue);
+        } else {
+            this.db.prepare('INSERT INTO settings(abdm_hiu_private_protected) VALUES(?)').run(protectedValue);
+        }
+    }
+
+    /**
+     * Writes both HIU keypair halves atomically: a crash between the two
+     * writes must never leave a public key paired with another key's
+     * private half (records encrypted to it would be undecryptable).
+     */
+    saveHiuKeypair(publicKey: string, protectedPrivate: string) {
+        const save = this.db.transaction(() => {
+            const existing = this.getSettings();
+            if (existing) {
+                this.db.prepare(`UPDATE settings
+                    SET abdm_hiu_private_protected = ?, abdm_hiu_public_key = ?`).run(protectedPrivate, publicKey);
+            } else {
+                this.db.prepare(`INSERT INTO settings(abdm_hiu_private_protected, abdm_hiu_public_key)
+                    VALUES(?, ?)`).run(protectedPrivate, publicKey);
+            }
+        });
+        return (save as any).immediate ? (save as any).immediate() : (save as any)();
     }
 
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients').get().count;

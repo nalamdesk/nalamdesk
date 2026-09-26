@@ -17,6 +17,7 @@ import { SecurityService } from './services/SecurityService';
 import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './services/DeviceKeyStore';
 import { AbdmSessionService } from './services/AbdmSessionService';
 import { AbdmAbhaService } from './services/AbdmAbhaService';
+import { HiuService } from './services/HiuService';
 import { FideliusService } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
@@ -148,6 +149,14 @@ const abdmSessionService = new AbdmSessionService({
 const abdmAbhaService = new AbdmAbhaService({
     getSessionToken: () => abdmSessionService.getSessionToken(),
     gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl()
+});
+const hiuService = new HiuService({
+    getSettings: () => databaseService.getSettings(),
+    getHiuPrivateProtected: () => databaseService.getHiuPrivateProtected(),
+    saveHiuPrivateProtected: (value) => databaseService.saveHiuPrivateProtected(value),
+    saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
+    saveHiuKeypair: (publicKey, protectedPrivate) => databaseService.saveHiuKeypair(publicKey, protectedPrivate),
+    keyStore: new ElectronSafeStorageDeviceKeyStore()
 });
 const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
@@ -953,11 +962,14 @@ handleDb('db:abdmAbhaRequestLoginOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());
     const args = payload || {};
     return abdmAbhaService.requestLoginOtp(args.abhaAddress);
-});
-handleDb('db:abdmAbhaConfirmLoginOtp', (_, payload) => {
+});handleDb('db:abdmAbhaConfirmLoginOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());
     const args = payload || {};
     return abdmAbhaService.verifyLoginOtp(args.txnId, args.otp);
+});
+handleDb('db:abdmHiuGetPublicKey', () => {
+    requireAbdmDeskRole(sessionService.getUser());
+    return hiuService.ensureKeypair();
 });
 handleDb('db:abdmAbhaConfirmOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());

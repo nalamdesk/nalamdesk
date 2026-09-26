@@ -949,6 +949,16 @@ handleDb('db:abdmAbhaRequestOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());
     return abdmAbhaService.requestEnrollmentOtp(payload || {});
 });
+handleDb('db:abdmAbhaRequestLoginOtp', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return abdmAbhaService.requestLoginOtp(args.abhaAddress);
+});
+handleDb('db:abdmAbhaConfirmLoginOtp', (_, payload) => {
+    const user = requireAbdmDeskRole(sessionService.getUser());
+    const args = payload || {};
+    return abdmAbhaService.verifyLoginOtp(args.txnId, args.otp);
+});
 handleDb('db:abdmAbhaConfirmOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());
     const args = payload || {};

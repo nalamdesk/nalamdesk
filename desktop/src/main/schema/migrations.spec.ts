@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 25 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(25);
+        it('should have 26 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(26);
         });
     });
 
@@ -428,7 +428,8 @@ describe('Database Migrations', () => {
         });
     });
 
-    describe('Migration v21 (inbox LAN grants)', () => {        it('grants inbox methods to desk roles, reads only for nurses', () => {
+    describe('Migration v21 (inbox LAN grants)', () => {
+        it('grants inbox methods to desk roles, reads only for nurses', () => {
             const store: Record<string, string> = {
                 doctor: JSON.stringify(['getQueue']),
                 receptionist: JSON.stringify(['getQueue']),
@@ -471,7 +472,7 @@ describe('Database Migrations', () => {
             });
             MIGRATIONS.find((m) => m.version === 25)!.up(mockDb);
 
-            for (const role of ['doctor', 'receptionist', 'nurse']) {
+            for (const role of ['doctor', 'nurse', 'receptionist']) {
                 const perms = JSON.parse(writes[role]);
                 expect(perms).toContain('getQueue');
                 expect(perms).not.toContain('deletePatient');
@@ -479,6 +480,31 @@ describe('Database Migrations', () => {
                 expect(perms).not.toContain('deleteUser');
             }
             expect(writes['admin']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v26 (profile-login LAN grants)', () => {
+        it('grants the login OTP methods to desk roles, mirroring the intake gate', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['abdmAbhaLookup']),
+                receptionist: JSON.stringify(['abdmAbhaLookup']),
+                nurse: JSON.stringify(['abdmAbhaLookup']),
+                admin: JSON.stringify(['abdmAbhaLookup'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sql: string) => {
+                if (sql.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 26)!.up(mockDb);
+
+            for (const role of ['doctor', 'receptionist', 'admin']) {
+                const perms = JSON.parse(writes[role]);
+                expect(perms).toEqual(expect.arrayContaining(['abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp']));
+            }
+            expect(writes['nurse']).toBeUndefined();
         });
     });
 });

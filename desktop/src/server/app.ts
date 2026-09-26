@@ -27,7 +27,8 @@ const JWT_SECRET = process.env['JWT_SECRET'] || crypto.randomBytes(64).toString(
 const ABDM_SERVICE_METHODS = new Set([
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
-    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle'
+    'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
+    'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle'
 ]);
 
 const ALLOWED_IPC_METHODS = [
@@ -50,7 +51,8 @@ const ALLOWED_IPC_METHODS = [
     'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox', 'abdmTransferBundle',
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
-    'abdmAbhaConfirmOtp', 'abdmAbhaCard', 'abdmLinkAbha',
+    'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
+    'abdmAbhaCard', 'abdmLinkAbha',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -174,6 +176,10 @@ export class ApiServer {
                 return abha.requestEnrollmentOtp({ via: payload['via'], identifier: payload['identifier'] });
             case 'abdmAbhaConfirmOtp':
                 return abha.confirmEnrollmentOtp(payload['txnId'], payload['otp']);
+            case 'abdmAbhaRequestLoginOtp':
+                return abha.requestLoginOtp(payload['abhaAddress']);
+            case 'abdmAbhaConfirmLoginOtp':
+                return abha.verifyLoginOtp(payload['txnId'], payload['otp']);
             case 'abdmAbhaCard':
                 return abha.getCard(payload['abhaAddress']);
             case 'abdmLinkAbha':

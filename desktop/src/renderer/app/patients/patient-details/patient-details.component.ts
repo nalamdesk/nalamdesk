@@ -374,7 +374,7 @@ import { newRequestId } from '../../services/request-id';
                                     <span class="font-semibold">{{ m.name }}</span>
                                     <span class="text-gray-500 text-xs"> {{ m.dosage || '' }}{{ m.dosage && m.frequency ? ' • ' : '' }}{{ m.frequency || '' }}</span>
                                 </div>
-                                <button *ngIf="canMutateSafety" (click)="importExternalMed(rec.id, m)" class="text-xs text-green-700 border border-green-200 hover:bg-green-50 px-2 py-1 rounded shrink-0">Import</button>
+                                <button *ngIf="canMutateSafety" (click)="importExternalMed(rec.id, m)" class="text-xs text-blue-700 border border-blue-200 hover:bg-blue-50 px-2 py-1 rounded shrink-0">Import</button>
                             </div>
                         </div>
                         <div *ngIf="rec.parsed?.observations?.length" class="mt-2">

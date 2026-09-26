@@ -1,9 +1,11 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { jsPDF } from 'jspdf';
 import { DataService } from '../services/api.service';
 
 type AbhaStep = 'lookup' | 'enroll' | 'otp' | 'card';
+type OtpMode = 'enroll' | 'login';
 
 /**
  * Health ID (ABHA) linking modal: verify an existing address, enroll with an
@@ -67,6 +69,9 @@ type AbhaStep = 'lookup' | 'enroll' | 'otp' | 'card';
               <p class="font-bold text-green-800">{{ foundName }}</p>
               <p class="text-green-700 text-xs mt-1">This health ID exists. Link it to {{ patientName || 'this patient' }}?</p>
               <button (click)="link(foundName)" [disabled]="busy" class="btn btn-primary btn-sm mt-3 w-full">Link Health ID</button>
+              <button (click)="requestLoginOtp()" [disabled]="busy" class="btn btn-ghost btn-sm mt-2 w-full">
+                {{ busy ? 'Sending...' : 'Verify with login code instead' }}
+              </button>
             </div>
             <p *ngIf="lookupMiss" class="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
               No health ID found with that address. Check the spelling, or create a new one.
@@ -104,9 +109,9 @@ type AbhaStep = 'lookup' | 'enroll' | 'otp' | 'card';
                 class="w-full border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono tracking-widest text-center text-lg">
             <div class="mt-3 flex gap-2">
               <button (click)="confirmOtp()" [disabled]="busy || otp.trim().length !== 6" class="btn btn-primary btn-sm flex-1">
-                {{ busy ? 'Verifying...' : 'Verify & Create ID' }}
+                {{ busy ? 'Verifying...' : (otpMode === 'login' ? 'Verify & Continue' : 'Verify & Create ID') }}
               </button>
-              <button (click)="step = 'enroll'" class="btn btn-ghost btn-sm">Back</button>
+              <button (click)="step = otpMode === 'login' ? 'lookup' : 'enroll'" class="btn btn-ghost btn-sm">Back</button>
             </div>
           </div>
 
@@ -125,6 +130,7 @@ type AbhaStep = 'lookup' | 'enroll' | 'otp' | 'card';
             <div class="mt-4 flex gap-2 no-print">
               <button *ngIf="!linkedDone" (click)="link(card.name)" [disabled]="busy" class="btn btn-primary btn-sm flex-1">Link to Patient</button>
               <button (click)="printCard()" class="btn btn-outline btn-sm flex-1">Print Card</button>
+              <button (click)="downloadCard()" class="btn btn-outline btn-sm flex-1">Save PDF</button>
               <button (click)="close.emit()" class="btn btn-ghost btn-sm">Done</button>
             </div>
           </div>
@@ -153,6 +159,7 @@ export class AbhaModalComponent {
     identifier = '';
     txnId = '';
     otp = '';
+    otpMode: OtpMode = 'enroll';
     linkedDone = false;
     card: { abhaAddress: string; name: string; gender?: string; dateOfBirth?: string; imageBase64?: string; mimeType?: string } | null = null;
 
@@ -203,6 +210,28 @@ export class AbhaModalComponent {
             });
             this.txnId = result?.txnId || '';
             this.otp = '';
+            this.otpMode = 'enroll';
+            this.step = 'otp';
+            this.noteMock(result);
+        } catch (e) {
+            this.error = e instanceof Error ? e.message : 'Could not send the code.';
+        } finally {
+            this.busy = false;
+        }
+    }
+
+    /** Login code for an already-verified address (returning patient). */
+    async requestLoginOtp(): Promise<void> {
+        if (this.busy || !this.verifiedAddress) return;
+        this.busy = true;
+        this.error = '';
+        try {
+            const result = await this.dataService.invoke<any>('abdmAbhaRequestLoginOtp', {
+                abhaAddress: this.verifiedAddress
+            });
+            this.txnId = result?.txnId || '';
+            this.otp = '';
+            this.otpMode = 'login';
             this.step = 'otp';
             this.noteMock(result);
         } catch (e) {
@@ -217,7 +246,8 @@ export class AbhaModalComponent {
         this.busy = true;
         this.error = '';
         try {
-            const result = await this.dataService.invoke<any>('abdmAbhaConfirmOtp', {
+            const method = this.otpMode === 'login' ? 'abdmAbhaConfirmLoginOtp' : 'abdmAbhaConfirmOtp';
+            const result = await this.dataService.invoke<any>(method, {
                 txnId: this.txnId,
                 otp: this.otp.trim()
             });
@@ -279,6 +309,42 @@ export class AbhaModalComponent {
 
     printCard(): void {
         window.print();
+    }
+
+    /** Save the health ID card as a PDF (works offline, unlike print-to-PDF drivers). */
+    downloadCard(): void {
+        if (!this.card) return;
+        const doc = new jsPDF({ unit: 'mm', format: [120, 80] });
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(100);
+        doc.text('ABHA HEALTH ID CARD', 10, 12);
+        doc.setFontSize(14);
+        doc.setTextColor(20);
+        doc.text(this.card.name || '', 10, 22, { maxWidth: 100 });
+        doc.setFont('courier', 'bold');
+        doc.setFontSize(12);
+        doc.setTextColor(24, 104, 219);
+        doc.text(this.card.abhaAddress, 10, 30);
+        const details = [this.card.dateOfBirth, this.card.gender].filter(Boolean).join('  •  ');
+        if (details) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.setTextColor(100);
+            doc.text(details, 10, 37);
+        }
+        if (this.card.imageBase64) {
+            try {
+                const mime = this.card.mimeType || 'image/png';
+                const format = mime.includes('jpeg') || mime.includes('jpg') ? 'JPEG' : 'PNG';
+                doc.addImage(`data:${mime};base64,${this.card.imageBase64}`, format, 88, 42, 24, 24);
+            } catch { /* card stays text-only when the image is unreadable */ }
+        }
+        doc.setFontSize(8);
+        doc.setTextColor(140);
+        doc.text('Issued via ABDM. Verify at nalamdesk.', 10, 72);
+        const file = `abha-card-${this.card.abhaAddress.replace(/[^a-zA-Z0-9@.-]/g, '_')}.pdf`;
+        doc.save(file);
     }
 
     private noteMock(result: any): void {

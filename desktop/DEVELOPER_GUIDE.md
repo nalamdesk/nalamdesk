@@ -104,6 +104,7 @@ directly. For certification, expose the local API port through a tunnel:
 ```bash
 # Example: Cloudflare Tunnel (quick tunnel, no account needed for sandbox)
 cloudflared tunnel --url http://127.0.0.1:3002
+# Alternative: ngrok http 3002
 # Register the printed https://<tunnel> URL as the callback base with ABDM.
 ```
 

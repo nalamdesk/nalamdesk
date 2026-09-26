@@ -29,6 +29,8 @@ const PATHS = {
     enrolByAadhaar: '/v3/enrollment/enrol/byAadhaar',
     enrolByMobile: '/v3/enrollment/enrol/byMobile',
     enrolVerify: '/v3/enrollment/enrol/verify',
+    loginRequestOtp: '/v3/profile/login/request/otp',
+    loginVerify: '/v3/profile/login/verify',
     verifyAbha: '/v3/profile/account/verify',
     abhaCard: '/v3/profile/account/abha-card',
     // Gateway public key for encrypting enrollment identifiers (HIE-CM cert
@@ -156,6 +158,27 @@ export class AbdmAbhaService {
         return { abhaAddress, name: String(json?.name || '').trim(), mock };
     }
 
+    /** Starts profile login: sends an OTP for an existing health ID address. */
+    async requestLoginOtp(abhaAddress: string): Promise<{ txnId: string; mock: boolean; hint?: string }> {
+        const address = String(abhaAddress || '').trim();
+        if (!address) throw new Error('Health ID is required.');
+        const { json, mock } = await this.authorized(PATHS.loginRequestOtp, { abhaAddress: address });
+        const txnId = String(json?.txnId || json?.txn_id || '');
+        if (!txnId) throw new Error('ABDM login did not return a transaction.');
+        return mock ? { txnId, mock, hint: MOCK_OTP_HINT } : { txnId, mock };
+    }
+
+    /** Verifies the login OTP; returns the health ID and holder name. */
+    async verifyLoginOtp(txnId: string, otp: string): Promise<{ abhaAddress: string; name: string; mock: boolean }> {
+        if (!String(txnId || '').trim()) throw new Error('Login transaction is missing. Request a new code.');
+        const code = String(otp || '').replace(/\D/g, '');
+        if (code.length !== 6) throw new Error('The 6-digit code is required.');
+        const { json, mock } = await this.authorized(PATHS.loginVerify, { txnId, otp: code });
+        const abhaAddress = String(json?.abhaAddress || json?.abha_address || '').trim();
+        if (!abhaAddress) throw new Error('ABDM could not verify the health ID. Please retry.');
+        return { abhaAddress, name: String(json?.name || '').trim(), mock };
+    }
+
     /** Checks whether a health ID exists and returns the holder name. */
     async lookupAddress(abhaAddress: string): Promise<{ exists: boolean; name: string; mock: boolean }> {
         const address = String(abhaAddress || '').trim();
@@ -193,6 +216,12 @@ export class AbdmAbhaService {
         if (path === PATHS.enrolVerify) {
             const tail = String(body?.txnId || now).slice(-4);
             return { abhaAddress: `demo.patient${tail}@sbx`, name: 'Demo Patient' };
+        }
+        if (path === PATHS.loginRequestOtp) {
+            return { txnId: `mock-login-${now}` };
+        }
+        if (path === PATHS.loginVerify) {
+            return { abhaAddress: 'demo.patient@sbx', name: 'Demo Patient' };
         }
         if (path === PATHS.verifyAbha) {
             const address = String(body?.abhaAddress || '');

@@ -50,6 +50,30 @@ describe('AbhaModalComponent', () => {
         expect(component.foundName).toBe('');
     });
 
+    it('verifies a returning patient through the login code flow', async () => {
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmAbhaLookup') return Promise.resolve({ exists: true, name: 'Asha Worker', mock: true });
+            if (method === 'abdmAbhaRequestLoginOtp') return Promise.resolve({ txnId: 'mock-login-1', mock: true });
+            if (method === 'abdmAbhaConfirmLoginOtp') return Promise.resolve({ abhaAddress: 'asha.worker@sbx', name: 'Asha Worker', mock: true });
+            if (method === 'abdmAbhaCard') return Promise.resolve({ name: 'Asha Worker', mock: true });
+            return Promise.resolve(null);
+        });
+        component.address = 'asha.worker@sbx';
+        await component.lookup();
+        expect(component.verifiedAddress).toBe('asha.worker@sbx');
+
+        await component.requestLoginOtp();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmAbhaRequestLoginOtp', { abhaAddress: 'asha.worker@sbx' });
+        expect(component.step).toBe('otp');
+        expect(component.otpMode).toBe('login');
+
+        component.otp = '482916';
+        await component.confirmOtp();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmAbhaConfirmLoginOtp', { txnId: 'mock-login-1', otp: '482916' });
+        expect(component.step).toBe('card');
+        expect(component.card?.abhaAddress).toBe('asha.worker@sbx');
+    });
+
     it('runs the enrollment code flow through to the printable card', async () => {
         mockDataService.invoke.mockImplementation((method: string) => {
             if (method === 'abdmAbhaRequestOtp') return Promise.resolve({ txnId: 'mock-txn-1', mock: true, hint: 'Mock hint' });

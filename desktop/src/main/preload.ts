@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld('electron', {
         abdmTestConnectivity: () => ipcRenderer.invoke('db:abdmTestConnectivity'),
         abdmAbhaRequestOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaRequestOtp', input),
         abdmAbhaConfirmOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaConfirmOtp', input),
+        abdmAbhaRequestLoginOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaRequestLoginOtp', input),
+        abdmAbhaConfirmLoginOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaConfirmLoginOtp', input),
         abdmAbhaLookup: (input: any) => ipcRenderer.invoke('db:abdmAbhaLookup', input),
         abdmAbhaCard: (input: any) => ipcRenderer.invoke('db:abdmAbhaCard', input),
         abdmLinkAbha: (input: any) => ipcRenderer.invoke('db:abdmLinkAbha', input),

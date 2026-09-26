@@ -46,6 +46,39 @@ describe('AbdmAbhaService (mock gateway)', () => {
         expect(card).toMatchObject({ abhaAddress: 'demo.patient@sbx', mock: true });
         expect(card.name).toBeTruthy();
     });
+
+    it('runs the mock profile-login round trip with any 6-digit code', async () => {
+        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+        await expect(svc.requestLoginOtp('')).rejects.toThrow('Health ID is required');
+        const started = await svc.requestLoginOtp('demo.patient@sbx');
+        expect(started.txnId.startsWith('mock-login-')).toBe(true);
+        expect(started.mock).toBe(true);
+        expect(started.hint).toContain('6-digit');
+
+        const verified = await svc.verifyLoginOtp(started.txnId, '482916');
+        expect(verified).toMatchObject({ abhaAddress: 'demo.patient@sbx', name: 'Demo Patient', mock: true });
+        await expect(svc.verifyLoginOtp('', '482916')).rejects.toThrow('transaction is missing');
+        await expect(svc.verifyLoginOtp(started.txnId, '12')).rejects.toThrow('6-digit');
+    });
+
+    it('sends profile-login calls to the login endpoints with the session token', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ txnId: 'live-txn-9' })
+        });
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => ({ token: 'live-token', mock: false }),
+            gatewayBaseUrl: () => 'https://gateway.example',
+            fetchFn
+        });
+        await svc.requestLoginOtp('real@abdm');
+        expect(fetchFn).toHaveBeenCalledWith(
+            expect.stringContaining('/v3/profile/login/request/otp'),
+            expect.objectContaining({
+                headers: expect.objectContaining({ Authorization: 'Bearer live-token' })
+            })
+        );
+    });
     it('sends live calls with the session token when credentials exist', async () => {
         const fetchFn = vi.fn().mockResolvedValue({
             ok: true,

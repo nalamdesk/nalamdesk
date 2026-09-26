@@ -13,6 +13,7 @@ import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmSessionService } from '../main/services/AbdmSessionService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
 import { HiuService } from '../main/services/HiuService';
+import { parseClinicalBundle } from '../shared/fhir/parser';
 import { FideliusService } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
 
@@ -30,7 +31,8 @@ const ABDM_SERVICE_METHODS = new Set([
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle', 'abdmHiuGetPublicKey',
-    'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords'
+    'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords',
+    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'
 ]);
 
 const ALLOWED_IPC_METHODS = [
@@ -55,7 +57,8 @@ const ALLOWED_IPC_METHODS = [
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey', 'abdmHiuRequestConsent',
-    'abdmHiuGetConsents', 'abdmHiuFetchRecords',
+    'abdmHiuGetConsents', 'abdmHiuFetchRecords', 'abdmHiuGetExternalRecords',
+    'abdmHiuClearExternalRecords',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -217,6 +220,27 @@ export class ApiServer {
                 return db.getConsents(payload['patientId'] ?? null);
             case 'abdmHiuFetchRecords':
                 return hiu.fetchForConsent(Number(payload['consentId']), user?.id);
+            case 'abdmHiuGetExternalRecords': {
+                db.expireFetchedRecords();
+                const rows = db.getFetchedRecords(Number(payload['patientId'])) as any[];
+                return rows.map((row) => {
+                    try {
+                        return {
+                            id: row.id, consentId: row.consent_id, fetchedAt: row.fetched_at,
+                            expiresAt: row.expires_at, status: row.status,
+                            parsed: parseClinicalBundle(row.bundle_json)
+                        };
+                    } catch (e) {
+                        return {
+                            id: row.id, consentId: row.consent_id, fetchedAt: row.fetched_at,
+                            expiresAt: row.expires_at, status: row.status, parsed: null,
+                            error: e instanceof Error ? e.message : 'Unreadable record.'
+                        };
+                    }
+                });
+            }
+            case 'abdmHiuClearExternalRecords':
+                return db.clearFetchedRecords(Number(payload['patientId']), user?.id);
             case 'abdmAbhaCard':
                 return abha.getCard(payload['abhaAddress']);
             case 'abdmLinkAbha':

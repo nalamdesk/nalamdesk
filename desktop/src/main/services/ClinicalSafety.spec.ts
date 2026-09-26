@@ -835,5 +835,16 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(db.prepare('SELECT status FROM abdm_fetched_records WHERE id = ?')
                 .get(stale.id).status).toBe('expired');
         });
+
+        it('wipes the external-records cache on explicit request', () => {
+            const cached: any = service.storeFetchedRecord({
+                consentId: null, patientId: 2,
+                bundleJson: JSON.stringify({ resourceType: 'Bundle' }),
+                expiresAt: '2099-01-01 00:00:00'
+            }, 10);
+            expect(service.getFetchedRecords(2, true)).toHaveLength(1);
+            service.clearFetchedRecords(2, 10);
+            expect(service.getFetchedRecords(2, true)).toHaveLength(0);
+        });
     });
 });

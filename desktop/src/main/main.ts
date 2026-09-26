@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, clipboard, shell, dialog } from 'electron';
 import * as path from 'path';
+import { CronJob } from 'cron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import { bindUpdateIpc, createUpdateService, type UpdaterPort } from './updates/updateService';
@@ -29,6 +30,7 @@ import { verifyPersistedActiveAdmin } from './services/AdminCredentialVerifier';
 import { acknowledgeRecoveryCodeForActiveAdmin } from './services/RecoveryCodeAcknowledgement';
 import { ApiServer } from '../server/app';
 import { invokeDbMethod } from '../shared/ipc-db-args';
+import { parseClinicalBundle } from '../shared/fhir/parser';
 import {
     DEV_APP_NAME,
     getApiPort,
@@ -536,6 +538,26 @@ function initializeServices(settings: any): void {
         if (settings?.local_backup_path || settings?.drive_tokens) {
             backupService.initAutomatedBackup();
         }
+        // HIU cache retention: sweep expired outside records at startup and
+        // once daily (03:00 local). Reads sweep first too, so the 30-day
+        // rule holds even if the scheduler never fires.
+        try {
+            databaseService.expireFetchedRecords();
+        } catch (e) {
+            console.error('[HIU] Startup retention sweep failed:', e);
+        }
+        try {
+            const retentionJob = new CronJob('0 3 * * *', () => {
+                try {
+                    databaseService.expireFetchedRecords();
+                } catch (e) {
+                    console.error('[HIU] Scheduled retention sweep failed:', e);
+                }
+            });
+            retentionJob.start();
+        } catch (e) {
+            console.error('[HIU] Could not schedule retention sweep:', e);
+        }
     } catch (e) {
         console.error('Failed to configure services', e);
     }
@@ -1008,6 +1030,40 @@ handleDb('db:abdmHiuFetchRecords', (_, payload) => {
     const user = requireHiuClinician(sessionService.getUser());
     const args = payload || {};
     return hiuService.fetchForConsent(Number(args.consentId), user.id);
+});
+handleDb('db:abdmHiuGetExternalRecords', (_, payload) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    const args = payload || {};
+    databaseService.expireFetchedRecords();
+    const rows = databaseService.getFetchedRecords(Number(args.patientId)) as any[];
+    return rows.map((row) => {
+        try {
+            return {
+                id: row.id,
+                consentId: row.consent_id,
+                fetchedAt: row.fetched_at,
+                expiresAt: row.expires_at,
+                status: row.status,
+                parsed: parseClinicalBundle(row.bundle_json)
+            };
+        } catch (e) {
+            return {
+                id: row.id,
+                consentId: row.consent_id,
+                fetchedAt: row.fetched_at,
+                expiresAt: row.expires_at,
+                status: row.status,
+                parsed: null,
+                error: e instanceof Error ? e.message : 'Unreadable record.'
+            };
+        }
+    });
+});
+handleDb('db:abdmHiuClearExternalRecords', (_, payload) => {
+    const user = requireHiuClinician(sessionService.getUser());
+    const args = payload || {};
+    return databaseService.clearFetchedRecords(Number(args.patientId), user.id);
 });
 handleDb('db:abdmAbhaConfirmOtp', (_, payload) => {
     const user = requireAbdmDeskRole(sessionService.getUser());

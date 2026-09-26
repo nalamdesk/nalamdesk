@@ -426,7 +426,21 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
                 return { changes: 1 };
             }),
             saveAbdmSecretProtected: vi.fn(),
-            linkAbhaAddress: vi.fn().mockReturnValue({ id: 7 })
+            linkAbhaAddress: vi.fn().mockReturnValue({ id: 7 }),
+            expireFetchedRecords: vi.fn(),
+            getFetchedRecords: vi.fn().mockReturnValue([{
+                id: 11, consent_id: 2, fetched_at: '2026-09-26 10:00:00',
+                expires_at: '2099-01-01 00:00:00', status: 'cached',
+                bundle_json: JSON.stringify({
+                    resourceType: 'Bundle', type: 'document', entry: [{
+                        resource: {
+                            resourceType: 'Condition',
+                            code: { text: 'Asthma' }, clinicalStatus: 'active'
+                        }
+                    }]
+                })
+            }]),
+            clearFetchedRecords: vi.fn().mockReturnValue({ changes: 1 })
         };
         server = new ApiServer(db, os.tmpdir());
     });
@@ -482,6 +496,34 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
             expect.objectContaining({ abhaAddress: 'asha@sbx' }),
             expect.anything()
         );
+    });
+
+    it('serves parsed external records over LAN to desk readers', async () => {
+        db.getPermissions.mockImplementation((role: string) => role === 'admin'
+            ? []
+            : ['abdmHiuGetExternalRecords']);
+        const response = await postIpc('abdmHiuGetExternalRecords', [{ patientId: 1 }], 'receptionist');
+        expect(response.statusCode).toBe(200);
+        expect(db.expireFetchedRecords).toHaveBeenCalled();
+        const rows = response.json();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].parsed.diagnoses).toEqual([{ text: 'Asthma', code: undefined, status: 'active' }]);
+    });
+
+    it('restricts cache clearing to clinical roles over LAN', async () => {
+        db.getPermissions.mockImplementation((role: string) => role === 'admin'
+            ? []
+            : ['abdmHiuGetExternalRecords']);
+        const denied = await postIpc('abdmHiuClearExternalRecords', [{ patientId: 1 }], 'receptionist');
+        expect(denied.statusCode).toBe(403);
+        expect(db.clearFetchedRecords).not.toHaveBeenCalled();
+
+        db.getPermissions.mockImplementation((role: string) => role === 'admin'
+            ? []
+            : ['abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords']);
+        const allowed = await postIpc('abdmHiuClearExternalRecords', [{ patientId: 1 }], 'doctor');
+        expect(allowed.statusCode).toBe(200);
+        expect(db.clearFetchedRecords).toHaveBeenCalledWith(1, expect.anything());
     });
 
     it('transfers bundles over LAN without exposing the recipient key', async () => {

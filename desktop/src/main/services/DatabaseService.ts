@@ -821,6 +821,15 @@ export class DatabaseService {
             AND expires_at <= CURRENT_TIMESTAMP`).run();
     }
 
+    /** Explicit patient-initiated wipe of the external-records cache. */
+    clearFetchedRecords(patientId: number, actingUserId?: number) {
+        const result = this.db.prepare(`DELETE FROM abdm_fetched_records
+            WHERE patient_id = ?`).run(Number(patientId));
+        this.logAudit('DELETE', 'abdm_fetched_records', Number(patientId),
+            actingUserId, 'HIU external-records cache cleared');
+        return result;
+    }
+
     // Atomic Scan & Share check-in: claim the token, match or create the
     // patient, and insert the queue entry in one transaction. Anything that
     // fails rolls everything back, so reception never sees "failed" for a

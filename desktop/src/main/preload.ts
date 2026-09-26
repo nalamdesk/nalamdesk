@@ -104,6 +104,8 @@ contextBridge.exposeInMainWorld('electron', {
         abdmHiuRequestConsent: (input: any) => ipcRenderer.invoke('db:abdmHiuRequestConsent', input),
         abdmHiuGetConsents: (input: any) => ipcRenderer.invoke('db:abdmHiuGetConsents', input),
         abdmHiuFetchRecords: (input: any) => ipcRenderer.invoke('db:abdmHiuFetchRecords', input),
+        abdmHiuGetExternalRecords: (input: any) => ipcRenderer.invoke('db:abdmHiuGetExternalRecords', input),
+        abdmHiuClearExternalRecords: (input: any) => ipcRenderer.invoke('db:abdmHiuClearExternalRecords', input),
         abdmAbhaLookup: (input: any) => ipcRenderer.invoke('db:abdmAbhaLookup', input),
         abdmAbhaCard: (input: any) => ipcRenderer.invoke('db:abdmAbhaCard', input),
         abdmLinkAbha: (input: any) => ipcRenderer.invoke('db:abdmLinkAbha', input),

@@ -1141,5 +1141,30 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 29,
+        up: (db: any) => {
+            console.log('Running Migration v29 (external-records read and clear grants)...');
+            // Reading outside records follows the inbox read split; clearing
+            // the cache is a clinical act (doctor/admin only).
+            const grants: Record<string, string[]> = {
+                doctor: ['abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'],
+                receptionist: ['abdmHiuGetExternalRecords'],
+                admin: ['abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'],
+                nurse: ['abdmHiuGetExternalRecords']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

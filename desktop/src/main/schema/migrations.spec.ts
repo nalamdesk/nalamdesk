@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 28 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(28);
+        it('should have 29 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(29);
         });
     });
 
@@ -540,6 +540,36 @@ describe('Database Migrations', () => {
             expect(JSON.parse(writes['nurse'])).toEqual(
                 expect.arrayContaining(['abdmHiuGetConsents']));
             expect(JSON.parse(writes['nurse'])).not.toContain('abdmHiuFetchRecords');
+        });
+    });
+
+    describe('Migration v29 (external-records read and clear grants)', () => {
+        it('grants reads to the desk and clearing to clinical roles', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 29)!.up(mockDb);
+
+            for (const role of ['doctor', 'receptionist', 'admin', 'nurse']) {
+                expect(JSON.parse(writes[role])).toEqual(
+                    expect.arrayContaining(['abdmHiuGetExternalRecords']));
+            }
+            for (const role of ['doctor', 'admin']) {
+                expect(JSON.parse(writes[role])).toEqual(
+                    expect.arrayContaining(['abdmHiuClearExternalRecords']));
+            }
+            expect(JSON.parse(writes['receptionist'])).not.toContain('abdmHiuClearExternalRecords');
+            expect(JSON.parse(writes['nurse'])).not.toContain('abdmHiuClearExternalRecords');
         });
     });
 });

@@ -886,11 +886,23 @@ export class DatabaseService {
             ORDER BY id DESC`).all(Number(patientId));
     }
 
-    /** Sweeps expired cache rows (PR3 retention job calls this on a schedule). */
+    /** Sweeps expired cache rows: status flips and the decrypted bundle is
+     * replaced by a tombstone, so retention actually removes clinical data
+     * (metadata stays for accountability). PR3 retention job calls this. */
     expireFetchedRecords() {
-        return this.db.prepare(`UPDATE abdm_fetched_records SET status = 'expired'
+        return this.db.prepare(`UPDATE abdm_fetched_records
+            SET status = 'expired', bundle_json = '{"expired":true}'
             WHERE status = 'cached' AND expires_at IS NOT NULL
             AND expires_at <= CURRENT_TIMESTAMP`).run();
+    }
+
+    /** Explicit patient-initiated wipe of the external-records cache. */
+    clearFetchedRecords(patientId: number, actingUserId?: number) {
+        const result = this.db.prepare(`DELETE FROM abdm_fetched_records
+            WHERE patient_id = ?`).run(Number(patientId));
+        this.logAudit('DELETE', 'abdm_fetched_records', Number(patientId),
+            actingUserId, 'HIU external-records cache cleared');
+        return result;
     }
 
     // Atomic Scan & Share check-in: claim the token, match or create the

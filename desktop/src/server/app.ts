@@ -29,7 +29,8 @@ const ABDM_SERVICE_METHODS = new Set([
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
-    'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle', 'abdmHiuGetPublicKey'
+    'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle', 'abdmHiuGetPublicKey',
+    'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords'
 ]);
 
 const ALLOWED_IPC_METHODS = [
@@ -53,7 +54,8 @@ const ALLOWED_IPC_METHODS = [
     'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
-    'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey',
+    'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey', 'abdmHiuRequestConsent',
+    'abdmHiuGetConsents', 'abdmHiuFetchRecords',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -90,7 +92,19 @@ export class ApiServer {
                 getHiuPrivateProtected: () => db.getHiuPrivateProtected(),
                 saveHiuPrivateProtected: (value: string) => db.saveHiuPrivateProtected(value),
                 saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
-                keyStore: new ElectronSafeStorageDeviceKeyStore()
+                keyStore: new ElectronSafeStorageDeviceKeyStore(),
+                store: {
+                    createConsentRequest: (input: any, actingUserId?: number) => db.createConsentRequest(input, actingUserId),
+                    getConsentById: (id: number) => db.getConsentById(id),
+                    getConsentByRequestId: (requestId: string) => db.getConsentByRequestId(requestId),
+                    updateConsentStatus: (id: number, status: string, handle?: string | null, actingUserId?: number) =>
+                        db.updateConsentStatus(id, status, handle, actingUserId),
+                    storeFetchedRecord: (input: any, actingUserId?: number) => db.storeFetchedRecord(input, actingUserId)
+                },
+                session: {
+                    getSessionToken: () => session.getSessionToken(),
+                    gatewayBaseUrl: () => session.gatewayBaseUrl()
+                }
             });
         }
         return { session: this.abdmSessionSvc, abha: this.abdmAbhaSvc, hiu: this.hiuSvc };
@@ -191,6 +205,18 @@ export class ApiServer {
                 return abha.verifyLoginOtp(payload['txnId'], payload['otp']);
             case 'abdmHiuGetPublicKey':
                 return hiu.ensureKeypair();
+            case 'abdmHiuRequestConsent':
+                return hiu.requestConsent({
+                    patientId: payload['patientId'] ?? null,
+                    abhaAddress: payload['abhaAddress'],
+                    hiTypes: payload['hiTypes'],
+                    dateFrom: payload['dateFrom'] ?? null,
+                    dateTo: payload['dateTo'] ?? null
+                }, user?.id);
+            case 'abdmHiuGetConsents':
+                return db.getConsents(payload['patientId'] ?? null);
+            case 'abdmHiuFetchRecords':
+                return hiu.fetchForConsent(Number(payload['consentId']), user?.id);
             case 'abdmAbhaCard':
                 return abha.getCard(payload['abhaAddress']);
             case 'abdmLinkAbha':
@@ -353,11 +379,61 @@ export class ApiServer {
                     return reply.code(401).send({ error: 'Callback authentication required.' });
                 }
                 try {
-                    const row = this.dbService.receiveInboxCallback(
-                        (request.params as any)?.kind, request.body);
+                    const kind = (request.params as any)?.kind;
+                    const row = this.dbService.receiveInboxCallback(kind, request.body);
+                    // Consent bookkeeping applies automatically; clinical data
+                    // never does. Best-effort: the 202 stands either way.
+                    try {
+                        const { hiu } = this.abdmServices();
+                        if ((DatabaseService.inboxConsentKinds as readonly string[]).includes(String(kind))) {
+                            hiu.handleNotify(kind, request.body);
+                        }
+                    } catch (notifyError) {
+                        console.error('[HIU notify]', notifyError);
+                    }
                     return reply.code(202).send({ status: 'queued', id: (row as any)?.id });
                 } catch (e: any) {
                     return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid callback.' });
+                }
+            });
+
+        // HIU direct data push (M3): gateway-delivered encrypted records for
+        // granted consents. Same posture as the inbox route — validated,
+        // rate-limited, secret-gated — but bundles may reach 256 KB, so the
+        // body cap is larger. Each record is decrypted on receipt (proving
+        // the HIU keypair) and cached encrypted-at-rest; nothing is
+        // auto-applied to the chart.
+        this.fastify.post('/abdm/hiu/data/transfer',
+            { bodyLimit: 262144 },
+            async (request: any, reply: any) => {
+                if (!this.shareCallbackAllowed(`${request.ip || 'unknown'}:hiu-data`)) {
+                    return reply.code(429).send({ error: 'Too many data pushes. Slow down and retry.' });
+                }
+                const liveCallbacks = !this.abdmServices().session.isMockMode();
+                if (!this.dbService.callbackSecretMatches(request.headers?.['x-callback-token'], liveCallbacks)) {
+                    return reply.code(401).send({ error: 'Callback authentication required.' });
+                }
+                try {
+                    const { hiu } = this.abdmServices();
+                    const body = (request.body || {}) as any;
+                    const requestId = String(body.requestId || body.gatewayRequestId || '').trim();
+                    const records = Array.isArray(body.records) ? body.records : [body.envelope || body.record].filter(Boolean);
+                    if (records.length === 0) throw new Error('No record envelopes in this push.');
+                    const consent = requestId ? this.dbService.getConsentByRequestId(requestId) : null;
+                    const stored = [];
+                    for (const envelope of records) {
+                        const decrypted = hiu.decryptRecord(envelope);
+                        stored.push(this.dbService.storeFetchedRecord({
+                            consentId: consent?.id ?? null,
+                            patientId: consent?.patient_id ?? null,
+                            careContextRef: null,
+                            bundleJson: JSON.stringify(decrypted),
+                            expiresAt: HiuService.retentionExpiry()
+                        }));
+                    }
+                    return reply.code(202).send({ status: 'cached', received: stored.length });
+                } catch (e: any) {
+                    return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid data push.' });
                 }
             });
 

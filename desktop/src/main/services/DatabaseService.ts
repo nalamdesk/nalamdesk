@@ -651,18 +651,36 @@ export class DatabaseService {
 
     // ABDM callback inbox: gateway notifications (consent events, data-share
     // notices, link confirmations) land here for explicit human handling.
-    // Kinds are free-form today; M3 consent work will enumerate them.
-    receiveInboxCallback(kind: string, payload: any, actingUserId?: number) {
+    // M3 enumerates consent kinds; requestId makes gateway retries idempotent.
+    receiveInboxCallback(kind: string, payload: any, actingUserId?: number, requestId?: string) {
         const cleanKind = String(kind || '').trim().slice(0, 64);
         if (!cleanKind) throw new Error('Callback kind is required.');
+        const cleanRequestId = String(requestId || (payload as any)?.requestId || '').trim().slice(0, 128) || null;
+        if (cleanRequestId) {
+            const existing = this.db.prepare(
+                `SELECT * FROM abdm_inbox WHERE kind = ? AND request_id = ?`
+            ).get(cleanKind, cleanRequestId) as any;
+            if (existing) return existing;
+        }
         const body = JSON.stringify(payload ?? null);
         if (body.length > 8192) throw new Error('Callback payload is too large.');
-        const result = this.db.prepare(
-            `INSERT INTO abdm_inbox (kind, payload) VALUES (?, ?)`
-        ).run(cleanKind, body);
-        const row = this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?')
-            .get(Number(result.lastInsertRowid));
-        this.logAudit('INSERT', 'abdm_inbox', Number(result.lastInsertRowid),
+        let rowId: number;
+        try {
+            const result = this.db.prepare(
+                `INSERT INTO abdm_inbox (kind, payload, request_id) VALUES (?, ?, ?)`
+            ).run(cleanKind, body, cleanRequestId);
+            rowId = Number(result.lastInsertRowid);
+        } catch (e) {
+            // Lost race with a duplicate delivery: return the winner.
+            if (!cleanRequestId) throw e;
+            const winner = this.db.prepare(
+                `SELECT * FROM abdm_inbox WHERE kind = ? AND request_id = ?`
+            ).get(cleanKind, cleanRequestId) as any;
+            if (!winner) throw e;
+            return winner;
+        }
+        const row = this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?').get(rowId);
+        this.logAudit('INSERT', 'abdm_inbox', rowId,
             actingUserId, `ABDM callback (${cleanKind}) queued`);
         return row;
     }
@@ -684,6 +702,123 @@ export class DatabaseService {
             return this.db.prepare('SELECT * FROM abdm_inbox WHERE id = ?').get(row.id);
         });
         return ack.immediate();
+    }
+
+    /** Enumerated M3 consent-notification kinds carried on the inbox channel. */
+    static readonly inboxConsentKinds = [
+        'consent-requested',
+        'consent-granted',
+        'consent-denied',
+        'consent-expired',
+        'data-ready'
+    ] as const;
+
+    static readonly consentStatuses = ['requested', 'granted', 'denied', 'expired'] as const;
+
+    /** Records an HIU consent request; returns the stored row. */
+    createConsentRequest(input: {
+        patientId?: number | null;
+        abhaAddress: string;
+        hiTypes: string[];
+        dateFrom?: string | null;
+        dateTo?: string | null;
+        gatewayRequestId?: string | null;
+    }, actingUserId?: number) {
+        const abhaAddress = String(input?.abhaAddress || '').trim();
+        if (!abhaAddress) throw new Error('Health ID is required for a consent request.');
+        const hiTypes = Array.isArray(input?.hiTypes)
+            ? input.hiTypes.map((t) => String(t || '').trim()).filter(Boolean)
+            : [];
+        if (hiTypes.length === 0) throw new Error('At least one health information type is required.');
+        const gatewayRequestId = String(input?.gatewayRequestId || '').trim().slice(0, 128) || null;
+        const result = this.db.prepare(`
+            INSERT INTO abdm_consents (
+                patient_id, abha_address, hi_types, date_from, date_to,
+                status, gateway_request_id
+            ) VALUES (?, ?, ?, ?, ?, 'requested', ?)
+        `).run(
+            input?.patientId ?? null, abhaAddress, JSON.stringify(hiTypes),
+            input?.dateFrom || null, input?.dateTo || null, gatewayRequestId
+        );
+        const row = this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?')
+            .get(Number(result.lastInsertRowid));
+        this.logAudit('INSERT', 'abdm_consents', Number(result.lastInsertRowid),
+            actingUserId, `HIU consent requested for ${abhaAddress}`);
+        return row;
+    }
+
+    getConsents(patientId?: number | null) {
+        if (patientId != null) {
+            return this.db.prepare(`SELECT * FROM abdm_consents
+                WHERE patient_id = ? ORDER BY id DESC`).all(Number(patientId));
+        }
+        return this.db.prepare(`SELECT * FROM abdm_consents ORDER BY id DESC`).all();
+    }
+
+    getConsentByRequestId(gatewayRequestId: string) {
+        const id = String(gatewayRequestId || '').trim();
+        if (!id) return null;
+        return this.db.prepare(`SELECT * FROM abdm_consents
+            WHERE gateway_request_id = ?`).get(id) as any;
+    }
+
+    getConsentById(id: number) {
+        return this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?').get(Number(id)) as any;
+    }
+
+    /** Moves a consent to granted/denied/expired; records the gateway handle. */
+    updateConsentStatus(id: number, status: string, consentHandle?: string | null, actingUserId?: number) {
+        const next = String(status || '').trim().toLowerCase();
+        if (!(DatabaseService.consentStatuses as readonly string[]).includes(next)) {
+            throw new Error(`Unknown consent status: ${status}`);
+        }
+        const existing = this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?').get(Number(id)) as any;
+        if (!existing) throw new Error('Consent request not found.');
+        this.db.prepare(`UPDATE abdm_consents
+            SET status = ?, consent_handle = COALESCE(?, consent_handle), updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`).run(next, consentHandle ?? null, Number(id));
+        const row = this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?').get(Number(id));
+        this.logAudit('UPDATE', 'abdm_consents', Number(id), actingUserId, `HIU consent ${next}`);
+        return row;
+    }
+
+    /** Stores a decrypted inbound bundle against a consent (retention set by caller). */
+    storeFetchedRecord(input: {
+        consentId?: number | null;
+        patientId?: number | null;
+        careContextRef?: string | null;
+        bundleJson: string;
+        expiresAt?: string | null;
+    }, actingUserId?: number) {
+        const bundleJson = String(input?.bundleJson || '');
+        if (!bundleJson) throw new Error('A record bundle is required.');
+        JSON.parse(bundleJson);
+        const result = this.db.prepare(`
+            INSERT INTO abdm_fetched_records (
+                consent_id, patient_id, care_context_ref, bundle_json, status, expires_at
+            ) VALUES (?, ?, ?, ?, 'cached', ?)
+        `).run(
+            input?.consentId ?? null, input?.patientId ?? null,
+            input?.careContextRef || null, bundleJson, input?.expiresAt || null
+        );
+        const row = this.db.prepare('SELECT * FROM abdm_fetched_records WHERE id = ?')
+            .get(Number(result.lastInsertRowid));
+        this.logAudit('INSERT', 'abdm_fetched_records', Number(result.lastInsertRowid),
+            actingUserId, 'HIU record cached');
+        return row;
+    }
+
+    getFetchedRecords(patientId: number, includeExpired = false) {
+        return this.db.prepare(`SELECT * FROM abdm_fetched_records
+            WHERE patient_id = ? ${includeExpired ? '' : `AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`}
+            ORDER BY id DESC`).all(Number(patientId));
+    }
+
+    /** Sweeps expired cache rows (PR3 retention job calls this on a schedule). */
+    expireFetchedRecords() {
+        return this.db.prepare(`UPDATE abdm_fetched_records SET status = 'expired'
+            WHERE status = 'cached' AND expires_at IS NOT NULL
+            AND expires_at <= CURRENT_TIMESTAMP`).run();
     }
 
     // Atomic Scan & Share check-in: claim the token, match or create the

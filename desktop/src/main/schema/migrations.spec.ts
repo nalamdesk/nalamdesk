@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 27 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(27);
+        it('should have 28 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(28);
         });
     });
 
@@ -505,6 +505,41 @@ describe('Database Migrations', () => {
                 expect(perms).toEqual(expect.arrayContaining(['abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp']));
             }
             expect(writes['nurse']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v28 (consent notify dedupe and HIU grants)', () => {
+        it('adds the request id column and grants HIU methods to clinical roles', () => {
+            MIGRATIONS.find((m) => m.version === 28)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('ADD COLUMN request_id');
+            expect(sql).toContain('idx_abdm_inbox_dedupe');
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 28)!.up(mockDb);
+
+            for (const role of ['doctor', 'admin']) {
+                const perms = JSON.parse(writes[role]);
+                expect(perms).toEqual(expect.arrayContaining(
+                    ['abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords']));
+            }
+            expect(JSON.parse(writes['receptionist'])).toEqual(
+                expect.arrayContaining(['abdmHiuGetConsents']));
+            expect(JSON.parse(writes['receptionist'])).not.toContain('abdmHiuRequestConsent');
+            expect(JSON.parse(writes['nurse'])).toEqual(
+                expect.arrayContaining(['abdmHiuGetConsents']));
+            expect(JSON.parse(writes['nurse'])).not.toContain('abdmHiuFetchRecords');
         });
     });
 });

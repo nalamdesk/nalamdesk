@@ -288,8 +288,7 @@ describe('ABDM callback inbox route', () => {
         expect(badKind.statusCode).toBe(400);
     });
 
-    it('enforces the callback password when one is configured', async () => {
-        db.callbackSecretMatches = vi.fn().mockImplementation((presented: unknown) => presented === 's3cret-token');
+    it('enforces the callback password when one is configured', async () => {        db.callbackSecretMatches = vi.fn().mockImplementation((presented: unknown) => presented === 's3cret-token');
         const denied = await server.inject({
             method: 'POST',
             url: '/abdm/v0.5/callbacks/consent-request',
@@ -345,6 +344,59 @@ describe('ABDM callback inbox route', () => {
         } finally {
             await liveServer.close();
         }
+    });
+});
+
+describe('ABDM HIU data transfer route', () => {
+    let server: ApiServer;
+    let db: any;
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            callbackSecretMatches: vi.fn().mockReturnValue(true),
+            getConsentByRequestId: vi.fn().mockReturnValue(null),
+            storeFetchedRecord: vi.fn().mockReturnValue({ id: 3, status: 'cached' })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    it('rejects pushes without envelopes', async () => {
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/hiu/data/transfer',
+            payload: { requestId: 'req-1', records: [] }
+        });
+        expect(response.statusCode).toBe(400);
+        expect(db.storeFetchedRecord).not.toHaveBeenCalled();
+    });
+
+    it('rejects envelopes the HIU key cannot open', async () => {
+        const response = await server.inject({
+            method: 'POST',
+            url: '/abdm/hiu/data/transfer',
+            payload: {
+                requestId: 'req-2',
+                records: [{ ephemeralPublicKey: 'nope', nonce: 'nope', ciphertext: 'nope', tag: 'nope' }]
+            }
+        });
+        expect(response.statusCode).toBe(400);
+        expect(db.storeFetchedRecord).not.toHaveBeenCalled();
+    });
+
+    it('enforces the callback password when one is configured', async () => {
+        db.callbackSecretMatches = vi.fn().mockImplementation((presented: unknown) => presented === 's3cret-token');
+        const denied = await server.inject({
+            method: 'POST',
+            url: '/abdm/hiu/data/transfer',
+            payload: { requestId: 'req-3', records: [] }
+        });
+        expect(denied.statusCode).toBe(401);
     });
 });
 

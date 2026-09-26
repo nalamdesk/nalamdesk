@@ -766,7 +766,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(enc2.care_context_ref).toBe(`OP-${year}-0002`);
         });
 
-        it('queues gateway callbacks and acknowledges them once', () => {
+        it('queues gateway callbacks and acknowledges them once', async () => {
             const row: any = service.receiveInboxCallback('consent-request', { requestId: 'r-1' }, 20);
             expect(row.status).toBe('pending');
 
@@ -780,6 +780,60 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(acked.status).toBe('handled');
             expect(() => service.ackInbox(row.id, 20)).toThrow('already handled');
             expect((service.getPendingInbox() as any[]).map((r) => r.id)).not.toContain(row.id);
+        });
+
+        it('dedupes retried callbacks by request id', () => {
+            const first: any = service.receiveInboxCallback('consent-granted', { requestId: 'dup-1' }, 20);
+            const second: any = service.receiveInboxCallback('consent-granted', { requestId: 'dup-1' }, 20);
+            expect(second.id).toBe(first.id);
+            // Different kinds are independent deliveries.
+            const other: any = service.receiveInboxCallback('data-ready', { requestId: 'dup-1' }, 20);
+            expect(other.id).not.toBe(first.id);
+        });
+
+        it('tracks HIU consent requests through grant to cached records', async () => {
+            expect(() => service.createConsentRequest({
+                abhaAddress: '', hiTypes: ['Prescription']
+            }, 10)).toThrow('Health ID is required');
+            expect(() => service.createConsentRequest({
+                abhaAddress: 'asha@sbx', hiTypes: []
+            }, 10)).toThrow('health information type');
+
+            const row: any = service.createConsentRequest({
+                patientId: 1, abhaAddress: 'asha@sbx',
+                hiTypes: ['DiagnosticReport', 'Prescription'],
+                dateFrom: '2026-01-01', gatewayRequestId: 'gw-1'
+            }, 10);
+            expect(row.status).toBe('requested');
+            expect(JSON.parse(row.hi_types)).toEqual(['DiagnosticReport', 'Prescription']);
+
+            expect(() => service.updateConsentStatus(row.id, 'maybe', null, 10)).toThrow('Unknown consent status');
+            const granted: any = service.updateConsentStatus(row.id, 'granted', 'handle-9', 10);
+            expect(granted.status).toBe('granted');
+            expect(granted.consent_handle).toBe('handle-9');
+            expect(service.getConsentByRequestId('gw-1').id).toBe(row.id);
+            expect(service.getConsents(1).map((r: any) => r.id)).toContain(row.id);
+
+            expect(() => service.storeFetchedRecord({ bundleJson: '' }, 10)).toThrow('bundle is required');
+            expect(() => service.storeFetchedRecord({ bundleJson: 'not-json' }, 10)).toThrow();
+            const cached: any = service.storeFetchedRecord({
+                consentId: row.id, patientId: 1,
+                bundleJson: JSON.stringify({ resourceType: 'Bundle' }),
+                expiresAt: '2099-01-01 00:00:00'
+            }, 10);
+            expect(cached.status).toBe('cached');
+            expect(service.getFetchedRecords(1).map((r: any) => r.id)).toContain(cached.id);
+
+            const stale: any = service.storeFetchedRecord({
+                consentId: row.id, patientId: 1,
+                bundleJson: JSON.stringify({ resourceType: 'Bundle' }),
+                expiresAt: '2000-01-01 00:00:00'
+            }, 10);
+            expect(service.getFetchedRecords(1).map((r: any) => r.id)).not.toContain(stale.id);
+            expect(service.getFetchedRecords(1, true).map((r: any) => r.id)).toContain(stale.id);
+            service.expireFetchedRecords();
+            expect(db.prepare('SELECT status FROM abdm_fetched_records WHERE id = ?')
+                .get(stale.id).status).toBe('expired');
         });
     });
 });

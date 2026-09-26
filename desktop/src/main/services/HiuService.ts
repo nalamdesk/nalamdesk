@@ -7,6 +7,8 @@ export interface HiuDeps {
     getHiuPrivateProtected?: () => string | null;
     saveHiuPrivateProtected?: (value: string) => unknown;
     saveSettingsPatch?: (patch: Record<string, unknown>) => unknown;
+    /** Atomic two-half write; preferred over the single-column writers. */
+    saveHiuKeypair?: (publicKey: string, protectedPrivate: string) => unknown;
     keyStore?: DeviceKeyStore;
     nowMs?: () => number;
     /** Consent-record store (DatabaseService subset); required for consent flows. */
@@ -16,6 +18,7 @@ export interface HiuDeps {
         getConsentByRequestId: (gatewayRequestId: string) => any;
         updateConsentStatus: (id: number, status: string, handle?: string | null, actingUserId?: number) => any;
         storeFetchedRecord: (input: any, actingUserId?: number) => any;
+        getPendingInbox?: () => any[];
     };
     /** Gateway session snapshot for live calls. */
     session?: {
@@ -34,6 +37,16 @@ export interface HiuConsentRequest {
 
 // Mock-mode retention for fetched records (matches the issue's 30-day rule).
 const MOCK_RETENTION_DAYS = 30;
+
+// Consent-notification kinds this service applies (mirrors
+// DatabaseService.inboxConsentKinds; kept local to avoid a service cycle).
+const HIU_NOTIFY_KINDS = [
+    'consent-requested',
+    'consent-granted',
+    'consent-denied',
+    'consent-expired',
+    'data-ready'
+] as const;
 
 /**
  * HIU (Health Information User) identity: the clinic's own X25519 keypair
@@ -67,13 +80,24 @@ export class HiuService {
     }
 
     /**
-     * Generates the HIU keypair on first use; later calls return the stored
-     * public key without touching private material. Throws
+     * Generates the HIU keypair on first use; later calls verify the stored
+     * halves still match (trial encrypt→decrypt) and return the public key.
+     * A mismatch — edited public key, unrestorable private blob (e.g. after
+     * a clean-machine restore), or torn write — regenerates a fresh pair
+     * instead of advertising an undecryptable key. Throws
      * ENCRYPTION_UNAVAILABLE when device crypto cannot wrap the key.
      */
     ensureKeypair(): { publicKey: string } {
         const existing = this.getPublicKey();
-        if (existing && this.deps.getHiuPrivateProtected?.()) return { publicKey: existing };
+        const protectedPrivate = this.deps.getHiuPrivateProtected?.() || null;
+        if (existing && protectedPrivate && this.keypairMatches(existing, protectedPrivate)) {
+            return { publicKey: existing };
+        }
+        if ((existing || protectedPrivate) && !(existing && protectedPrivate)) {
+            console.warn('[HIU] Incomplete stored keypair; generating a fresh one.');
+        } else if (existing && protectedPrivate) {
+            console.warn('[HIU] Stored keypair halves do not match; generating a fresh one.');
+        }
         const store = this.deps.keyStore;
         if (!store) throw new Error('ENCRYPTION_UNAVAILABLE');
         const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519', {
@@ -88,9 +112,28 @@ export class HiuService {
         } catch (error) {
             throw new Error(`ENCRYPTION_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`);
         }
-        this.deps.saveHiuPrivateProtected?.(wrapped.toString('base64'));
-        this.deps.saveSettingsPatch?.({ abdm_hiu_public_key: publicRaw });
+        const protectedValue = wrapped.toString('base64');
+        if (this.deps.saveHiuKeypair) {
+            this.deps.saveHiuKeypair(publicRaw, protectedValue);
+        } else {
+            this.deps.saveHiuPrivateProtected?.(protectedValue);
+            this.deps.saveSettingsPatch?.({ abdm_hiu_public_key: publicRaw });
+        }
         return { publicKey: publicRaw };
+    }
+
+    /** Trial round trip proving a stored public/private pair belongs together. */
+    private keypairMatches(publicKey: string, protectedPrivate: string): boolean {
+        try {
+            const store = this.deps.keyStore;
+            if (!store) return false;
+            const privatePem = store.unprotect(Buffer.from(protectedPrivate, 'base64')).toString('utf8');
+            const probe = new FideliusService().encryptBundle({ hiu: 'probe' }, publicKey);
+            const back = new FideliusService().decryptEnvelope(probe, privatePem) as any;
+            return back?.hiu === 'probe';
+        } catch {
+            return false;
+        }
     }
 
     /** Test seam for the inbound decrypt path PR2 builds on. */
@@ -125,14 +168,42 @@ export class HiuService {
         if (!snapshot.mock) {
             throw new Error('Live HIU consent is not certified in this build; use the mock gateway.');
         }
-        return store.createConsentRequest({
+        const created = store.createConsentRequest({
             patientId: input?.patientId ?? null,
             abhaAddress: input?.abhaAddress,
             hiTypes: input?.hiTypes,
             dateFrom: input?.dateFrom ?? null,
             dateTo: input?.dateTo ?? null,
-            gatewayRequestId: `mock-consent-${this.nowMs()}`
+            gatewayRequestId: `mock-consent-${this.nowMs()}-${crypto.randomBytes(4).toString('hex')}`
         }, actingUserId);
+        // Out-of-order gateway notifications may already wait in the inbox;
+        // apply any that match, best-effort.
+        this.reconcilePendingNotifies();
+        return created;
+    }
+
+    /**
+     * Applies queued consent notifications that arrived before their request
+     * row existed (out-of-order gateway delivery). Unknown rows are left
+     * pending; failures never throw — the inbox row stays for review.
+     */
+    reconcilePendingNotifies(): { applied: number; skipped: number } {
+        const store = this.deps.store;
+        if (!store || typeof (store as any).getPendingInbox !== 'function') {
+            return { applied: 0, skipped: 0 };
+        }
+        let applied = 0;
+        let skipped = 0;
+        for (const row of (store as any).getPendingInbox() || []) {
+            if (!(HIU_NOTIFY_KINDS as readonly string[]).includes(String(row?.kind))) continue;
+            try {
+                this.handleNotify(row.kind, JSON.parse(row.payload || '{}'));
+                applied += 1;
+            } catch {
+                skipped += 1;
+            }
+        }
+        return { applied, skipped };
     }
 
     /**

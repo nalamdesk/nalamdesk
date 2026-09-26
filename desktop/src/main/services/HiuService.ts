@@ -7,6 +7,8 @@ export interface HiuDeps {
     getHiuPrivateProtected?: () => string | null;
     saveHiuPrivateProtected?: (value: string) => unknown;
     saveSettingsPatch?: (patch: Record<string, unknown>) => unknown;
+    /** Atomic two-half write; preferred over the single-column writers. */
+    saveHiuKeypair?: (publicKey: string, protectedPrivate: string) => unknown;
     keyStore?: DeviceKeyStore;
 }
 
@@ -32,13 +34,24 @@ export class HiuService {
     }
 
     /**
-     * Generates the HIU keypair on first use; later calls return the stored
-     * public key without touching private material. Throws
+     * Generates the HIU keypair on first use; later calls verify the stored
+     * halves still match (trial encrypt→decrypt) and return the public key.
+     * A mismatch — edited public key, unrestorable private blob (e.g. after
+     * a clean-machine restore), or torn write — regenerates a fresh pair
+     * instead of advertising an undecryptable key. Throws
      * ENCRYPTION_UNAVAILABLE when device crypto cannot wrap the key.
      */
     ensureKeypair(): { publicKey: string } {
         const existing = this.getPublicKey();
-        if (existing && this.deps.getHiuPrivateProtected?.()) return { publicKey: existing };
+        const protectedPrivate = this.deps.getHiuPrivateProtected?.() || null;
+        if (existing && protectedPrivate && this.keypairMatches(existing, protectedPrivate)) {
+            return { publicKey: existing };
+        }
+        if ((existing || protectedPrivate) && !(existing && protectedPrivate)) {
+            console.warn('[HIU] Incomplete stored keypair; generating a fresh one.');
+        } else if (existing && protectedPrivate) {
+            console.warn('[HIU] Stored keypair halves do not match; generating a fresh one.');
+        }
         const store = this.deps.keyStore;
         if (!store) throw new Error('ENCRYPTION_UNAVAILABLE');
         const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519', {
@@ -53,9 +66,28 @@ export class HiuService {
         } catch (error) {
             throw new Error(`ENCRYPTION_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`);
         }
-        this.deps.saveHiuPrivateProtected?.(wrapped.toString('base64'));
-        this.deps.saveSettingsPatch?.({ abdm_hiu_public_key: publicRaw });
+        const protectedValue = wrapped.toString('base64');
+        if (this.deps.saveHiuKeypair) {
+            this.deps.saveHiuKeypair(publicRaw, protectedValue);
+        } else {
+            this.deps.saveHiuPrivateProtected?.(protectedValue);
+            this.deps.saveSettingsPatch?.({ abdm_hiu_public_key: publicRaw });
+        }
         return { publicKey: publicRaw };
+    }
+
+    /** Trial round trip proving a stored public/private pair belongs together. */
+    private keypairMatches(publicKey: string, protectedPrivate: string): boolean {
+        try {
+            const store = this.deps.keyStore;
+            if (!store) return false;
+            const privatePem = store.unprotect(Buffer.from(protectedPrivate, 'base64')).toString('utf8');
+            const probe = new FideliusService().encryptBundle({ hiu: 'probe' }, publicKey);
+            const back = new FideliusService().decryptEnvelope(probe, privatePem) as any;
+            return back?.hiu === 'probe';
+        } catch {
+            return false;
+        }
     }
 
     /** Test seam for the inbound decrypt path PR2 builds on. */

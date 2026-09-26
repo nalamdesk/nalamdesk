@@ -483,6 +483,25 @@ export class DatabaseService {
         }
     }
 
+    /**
+     * Writes both HIU keypair halves atomically: a crash between the two
+     * writes must never leave a public key paired with another key's
+     * private half (records encrypted to it would be undecryptable).
+     */
+    saveHiuKeypair(publicKey: string, protectedPrivate: string) {
+        const save = this.db.transaction(() => {
+            const existing = this.getSettings();
+            if (existing) {
+                this.db.prepare(`UPDATE settings
+                    SET abdm_hiu_private_protected = ?, abdm_hiu_public_key = ?`).run(protectedPrivate, publicKey);
+            } else {
+                this.db.prepare(`INSERT INTO settings(abdm_hiu_private_protected, abdm_hiu_public_key)
+                    VALUES(?, ?)`).run(protectedPrivate, publicKey);
+            }
+        });
+        return (save as any).immediate ? (save as any).immediate() : (save as any)();
+    }
+
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients').get().count;
         // Today's visits: date >= start of day
         const today = new Date().toISOString().split('T')[0];

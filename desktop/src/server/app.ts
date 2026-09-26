@@ -90,6 +90,8 @@ export class ApiServer {
                 getHiuPrivateProtected: () => db.getHiuPrivateProtected(),
                 saveHiuPrivateProtected: (value: string) => db.saveHiuPrivateProtected(value),
                 saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
+                saveHiuKeypair: (publicKey: string, protectedPrivate: string) =>
+                    db.saveHiuKeypair(publicKey, protectedPrivate),
                 keyStore: new ElectronSafeStorageDeviceKeyStore()
             });
         }

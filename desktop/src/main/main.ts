@@ -155,6 +155,7 @@ const hiuService = new HiuService({
     getHiuPrivateProtected: () => databaseService.getHiuPrivateProtected(),
     saveHiuPrivateProtected: (value) => databaseService.saveHiuPrivateProtected(value),
     saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
+    saveHiuKeypair: (publicKey, protectedPrivate) => databaseService.saveHiuKeypair(publicKey, protectedPrivate),
     keyStore: new ElectronSafeStorageDeviceKeyStore()
 });
 const fideliusService = new FideliusService();

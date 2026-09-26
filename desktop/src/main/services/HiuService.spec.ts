@@ -70,4 +70,45 @@ describe('HiuService (HIU keypair)', () => {
         envelope.ciphertext = Buffer.from('tampered').toString('base64');
         expect(() => svc.decryptForTest(envelope)).toThrow();
     });
+
+    it('heals a mismatched stored pair instead of advertising it', () => {
+        const store = memoryStore();
+        const svc = new HiuService({ ...store, keyStore: fakeKeyStore() as any });
+        svc.ensureKeypair();
+        // Simulate an edited public key: pair no longer matches.
+        store.settings.abdm_hiu_public_key = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+        const healed = svc.ensureKeypair();
+        expect(healed.publicKey).not.toBe('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
+        // Round trip proves the healed pair belongs together.
+        const fidelius = new FideliusService();
+        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, healed.publicKey))).toEqual({ ok: 1 });
+    });
+
+    it('regenerates when the private blob cannot be unwrapped', () => {
+        const store = memoryStore();
+        const svc = new HiuService({ ...store, keyStore: fakeKeyStore() as any });
+        svc.ensureKeypair();
+        // Simulate a clean-machine restore: foreign keychain blob.
+        store.settings.abdm_hiu_private_protected = Buffer.from('foreign-blob').toString('base64');
+        const healed = svc.ensureKeypair();
+        const fidelius = new FideliusService();
+        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, healed.publicKey))).toEqual({ ok: 1 });
+    });
+
+    it('writes both halves through the atomic saver when available', () => {
+        const store = memoryStore();
+        const saved: any[] = [];
+        const svc = new HiuService({
+            ...store,
+            saveHiuKeypair: (pub: string, priv: string) => {
+                saved.push([pub, priv]);
+                (store as any).saveHiuPrivateProtected(priv);
+                (store as any).saveSettingsPatch({ abdm_hiu_public_key: pub });
+            },
+            keyStore: fakeKeyStore() as any
+        });
+        const { publicKey } = svc.ensureKeypair();
+        expect(saved).toHaveLength(1);
+        expect(saved[0][0]).toBe(publicKey);
+    });
 });

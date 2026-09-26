@@ -76,7 +76,7 @@ export class ApiServer {
     // ABDM services are built lazily: unit tests that never touch ABDM flows
     // never pay for (or need) keychain access.
     private abdmServices() {
-        if (!this.abdmSessionSvc || !this.abdmAbhaSvc) {
+        if (!this.abdmSessionSvc || !this.abdmAbhaSvc || !this.hiuSvc) {
             const db = this.dbService as any;
             const session = new AbdmSessionService({
                 getSettings: () => db.getSettings(),
@@ -95,6 +95,8 @@ export class ApiServer {
                 getHiuPrivateProtected: () => db.getHiuPrivateProtected(),
                 saveHiuPrivateProtected: (value: string) => db.saveHiuPrivateProtected(value),
                 saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
+                saveHiuKeypair: (publicKey: string, protectedPrivate: string) =>
+                    db.saveHiuKeypair(publicKey, protectedPrivate),
                 keyStore: new ElectronSafeStorageDeviceKeyStore(),
                 store: {
                     createConsentRequest: (input: any, actingUserId?: number) => db.createConsentRequest(input, actingUserId),
@@ -102,7 +104,8 @@ export class ApiServer {
                     getConsentByRequestId: (requestId: string) => db.getConsentByRequestId(requestId),
                     updateConsentStatus: (id: number, status: string, handle?: string | null, actingUserId?: number) =>
                         db.updateConsentStatus(id, status, handle, actingUserId),
-                    storeFetchedRecord: (input: any, actingUserId?: number) => db.storeFetchedRecord(input, actingUserId)
+                    storeFetchedRecord: (input: any, actingUserId?: number) => db.storeFetchedRecord(input, actingUserId),
+                    getPendingInbox: () => db.getPendingInbox()
                 },
                 session: {
                     getSessionToken: () => session.getSessionToken(),
@@ -441,20 +444,25 @@ export class ApiServer {
                     const { hiu } = this.abdmServices();
                     const body = (request.body || {}) as any;
                     const requestId = String(body.requestId || body.gatewayRequestId || '').trim();
+                    // Consent-gated storage: unknown, missing, or non-granted
+                    // requests never retain clinical data.
+                    const consent = requestId ? this.dbService.getConsentByRequestId(requestId) : null;
+                    if (!consent || consent.status !== 'granted') {
+                        throw new Error('Push requires a matching granted consent.');
+                    }
                     const records = Array.isArray(body.records) ? body.records : [body.envelope || body.record].filter(Boolean);
                     if (records.length === 0) throw new Error('No record envelopes in this push.');
-                    const consent = requestId ? this.dbService.getConsentByRequestId(requestId) : null;
-                    const stored = [];
+                    const decrypted = [];
                     for (const envelope of records) {
-                        const decrypted = hiu.decryptRecord(envelope);
-                        stored.push(this.dbService.storeFetchedRecord({
-                            consentId: consent?.id ?? null,
-                            patientId: consent?.patient_id ?? null,
+                        decrypted.push({
+                            consentId: consent.id,
+                            patientId: consent.patient_id,
                             careContextRef: null,
-                            bundleJson: JSON.stringify(decrypted),
+                            bundleJson: JSON.stringify(hiu.decryptRecord(envelope)),
                             expiresAt: HiuService.retentionExpiry()
-                        }));
+                        });
                     }
+                    const stored = this.dbService.storeFetchedRecordBatch(decrypted);
                     return reply.code(202).send({ status: 'cached', received: stored.length });
                 } catch (e: any) {
                     return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid data push.' });

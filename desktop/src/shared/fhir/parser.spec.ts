@@ -30,6 +30,13 @@ const FOREIGN_BUNDLE = {
         },
         {
             resource: {
+                resourceType: 'Observation',
+                code: { text: 'COVID-19 screening' },
+                valueCodeableConcept: { coding: [{ code: '260373001', display: 'Positive' }] }
+            }
+        },
+        {
+            resource: {
                 resourceType: 'AllergyIntolerance',
                 code: { text: 'Penicillin' },
                 criticality: 'high'
@@ -47,7 +54,10 @@ describe('parseClinicalBundle (M3 inbound)', () => {
         expect(parsed.title).toBe('Discharge Summary — City Hospital');
         expect(parsed.diagnoses).toEqual([{ text: 'Hypertensive disorder', code: '38341003', status: 'active' }]);
         expect(parsed.medications).toEqual([{ name: 'Amlodipine 5mg', dosage: '5mg', frequency: 'once daily', status: 'active' }]);
-        expect(parsed.observations).toEqual([{ text: 'Systolic blood pressure', value: '150 mmHg' }]);
+        expect(parsed.observations).toEqual([
+            { text: 'Systolic blood pressure', value: '150 mmHg' },
+            { text: 'COVID-19 screening', value: 'Positive (260373001)' }
+        ]);
         expect(parsed.allergies).toEqual([{ substance: 'Penicillin', criticality: 'high' }]);
     });
 

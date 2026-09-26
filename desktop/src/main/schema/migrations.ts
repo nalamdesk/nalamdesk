@@ -1115,6 +1115,12 @@ export const MIGRATIONS = [
                 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_abdm_inbox_dedupe
                     ON abdm_inbox(kind, request_id) WHERE request_id IS NOT NULL;`);
             } catch (e) { }
+            // Content-hash delivery key: retried pushes land idempotently.
+            try { db.exec(`ALTER TABLE abdm_fetched_records ADD COLUMN bundle_sha256 TEXT`); } catch (e) { }
+            try {
+                db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_abdm_fetched_delivery
+                    ON abdm_fetched_records(consent_id, bundle_sha256);`);
+            } catch (e) { }
             // Consent requests and record fetches are clinical acts
             // (doctor/admin); reads stay available to the desk incl. nurses.
             const grants: Record<string, string[]> = {

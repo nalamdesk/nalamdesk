@@ -446,17 +446,20 @@ export class DatabaseService {
         if (!reason) throw new Error('A reason is required for permission overrides.');
         const user = this.db.prepare('SELECT id FROM users WHERE id = ?').get(userId) as any;
         if (!user) throw new Error('User not found.');
-        const result = this.db.prepare(`
+        this.db.prepare(`
             INSERT INTO user_permission_overrides (user_id, action, effect, reason, granted_by)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(user_id, action) DO UPDATE SET
                 effect = excluded.effect, reason = excluded.reason,
                 granted_by = excluded.granted_by, created_at = CURRENT_TIMESTAMP
         `).run(userId, action, effect, reason, actingUserId ?? null);
-        this.logAudit('UPSERT', 'user_permission_overrides', Number(result.lastInsertRowid),
+        // lastInsertRowid is stale on the CONFLICT/DO UPDATE path, so resolve
+        // the row first and audit its actual id.
+        const row = this.db.prepare(`SELECT * FROM user_permission_overrides
+            WHERE user_id = ? AND action = ?`).get(userId, action) as any;
+        this.logAudit('UPSERT', 'user_permission_overrides', Number(row?.id),
             actingUserId, `${effect} ${action} for user ${userId}: ${reason}`);
-        return this.db.prepare(`SELECT * FROM user_permission_overrides
-            WHERE user_id = ? AND action = ?`).get(userId, action);
+        return row;
     }
 
     deleteUserOverride(userId: number, action: string, actingUserId?: number) {

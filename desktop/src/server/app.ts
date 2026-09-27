@@ -785,10 +785,14 @@ export class ApiServer {
         if (role === 'admin') return true;
 
         // Single engine, same as Electron IPC: roles baseline plus
-        // per-user overrides, default deny. Rebuilt lazily so tests and
-        // long-lived servers pick up grant changes.
+        // per-user overrides, default deny. Rebuilt on every check so
+        // desktop Settings mutations (separate Electron handlers) are
+        // visible to LAN immediately; the tables are tiny and LAN
+        // request rates are low, so the re-read cost is negligible.
         try {
-            return this.getAccessPolicy().isAuthorized({
+            const policy = this.getAccessPolicy();
+            policy.rebuild();
+            return policy.isAuthorized({
                 user: { id: userId ?? 0, role },
                 action: method
             }).allow;

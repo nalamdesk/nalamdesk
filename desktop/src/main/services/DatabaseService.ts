@@ -481,6 +481,17 @@ export class DatabaseService {
         return row;
     }
 
+    /**
+     * IPC-name alias for the LAN generic dispatcher, which resolves handlers
+     * by command name. Electron's explicit handler calls setUserOverride
+     * directly; the alias keeps both transports on one implementation.
+     */
+    saveUserOverride(input: {
+        userId: number; action: string; effect: string; reason: string;
+    }, actingUserId?: number) {
+        return this.setUserOverride(input, actingUserId);
+    }
+
     deleteUserOverride(userId: number, action: string, actingUserId?: number) {
         const result = this.db.prepare(`DELETE FROM user_permission_overrides
             WHERE user_id = ? AND action = ?`).run(Number(userId), String(action || '').trim());

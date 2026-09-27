@@ -1,5 +1,40 @@
 import { describe, it, expect } from 'vitest';
 import { AccessPolicy } from './AccessPolicy';
+import { DatabaseService } from './DatabaseService';
+
+const { DatabaseSync } = require('node:sqlite');
+
+class MatrixDatabase {
+    private readonly sqlite = new DatabaseSync(':memory:');
+    readonly name = ':memory:';
+    exec(sql: string) { return this.sqlite.exec(sql); }
+    prepare(sql: string) { return this.sqlite.prepare(sql); }
+    close() { return this.sqlite.close(); }
+    pragma(sql: string, options?: { simple?: boolean }) {
+        const assignment = sql.match(/^user_version\s*=\s*(\d+)$/);
+        if (assignment) {
+            this.sqlite.exec(`PRAGMA user_version = ${assignment[1]}`);
+            return;
+        }
+        const row = this.sqlite.prepare(`PRAGMA ${sql}`).get() as any;
+        return options?.simple ? row?.user_version : row;
+    }
+    transaction<T extends (...args: any[]) => any>(operation: T): T & { immediate: T } {
+        const run = ((...args: any[]) => {
+            this.sqlite.exec('BEGIN IMMEDIATE');
+            try {
+                const value = operation(...args);
+                this.sqlite.exec('COMMIT');
+                return value;
+            } catch (error) {
+                this.sqlite.exec('ROLLBACK');
+                throw error;
+            }
+        }) as T & { immediate: T };
+        run.immediate = run;
+        return run;
+    }
+}
 
 function sourceWith(overrides: Array<{ user_id: number; action: string; effect: string }> = []) {
     return {
@@ -69,5 +104,34 @@ describe('AccessPolicy (role baseline + user deltas)', () => {
         overrides.push({ user_id: 5, action: 'updateQueueStatus', effect: 'allow' });
         policy.rebuild();
         expect(policy.isAuthorized(req).allow).toBe(true);
+    });
+
+    it('matches the migrated roles table on representative desk flows', async () => {
+        const db: any = new MatrixDatabase();
+        const service = new DatabaseService();
+        service.setDb(db);
+        await service.migrate();
+        const policy = new AccessPolicy({
+            getRoles: () => service.getAllRoles(),
+            getAllOverrides: () => service.getAllOverrides()
+        });
+        const check = (role: string, action: string) =>
+            policy.isAuthorized({ user: { id: 7, role }, action }).allow;
+        // Desk flows that must keep working.
+        expect(check('receptionist', 'addToQueue')).toBe(true);
+        expect(check('receptionist', 'saveVitals')).toBe(true);
+        expect(check('receptionist', 'getDashboardStats')).toBe(true);
+        expect(check('receptionist', 'saveAppointment')).toBe(true);
+        expect(check('nurse', 'saveVitals')).toBe(true);
+        expect(check('nurse', 'getVisits')).toBe(true);
+        expect(check('doctor', 'saveAllergy')).toBe(true);
+        expect(check('doctor', 'beginConsultation')).toBe(true);
+        // Destructive and secret methods stay denied off-admin.
+        expect(check('receptionist', 'deletePatient')).toBe(false);
+        expect(check('nurse', 'removeFromQueue')).toBe(false);
+        expect(check('doctor', 'deleteVisit')).toBe(false);
+        expect(check('doctor', 'getSettings')).toBe(false);
+        expect(check('receptionist', 'getAuditLogs')).toBe(false);
+        expect(check('doctor', 'noSuchMethod')).toBe(false);
     });
 });

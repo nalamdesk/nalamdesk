@@ -328,6 +328,18 @@ export class DatabaseService {
             FROM settings LIMIT 1`).get();
     }
 
+    /**
+     * Desk-safe settings view: identity and feature flags only. Tokens,
+     * secrets, file paths, and keys never leave this allowlist, so it is
+     * safe to serve to any authenticated role.
+     */
+    getSanitizedSettings() {
+        return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, cloud_enabled,
+            abdm_gateway_env, abdm_mock, abdm_hip_id, abdm_counter_id,
+            abdm_hfr_id, abdm_hip_endpoint, abdm_hiu_public_key
+            FROM settings LIMIT 1`).get();
+    }
+
     // The callback shared secret is write-only through settings: readers
     // learn only whether one is set, never its value.
     hasCallbackSecret(): boolean {
@@ -403,7 +415,8 @@ export class DatabaseService {
         return [];
     }
 
-    getAllRoles() {        return this.db.prepare('SELECT * FROM roles').all().map((r: any) => {
+    getAllRoles() {
+        return this.db.prepare('SELECT * FROM roles').all().map((r: any) => {
             try {
                 return {
                     name: r.name,
@@ -429,6 +442,12 @@ export class DatabaseService {
     getUserOverrides(userId: number) {
         return this.db.prepare(`SELECT * FROM user_permission_overrides
             WHERE user_id = ? ORDER BY action ASC`).all(Number(userId));
+    }
+
+    /** All override rows, for compiling the policy set. */
+    getAllOverrides() {
+        return this.db.prepare(`SELECT user_id, action, effect FROM user_permission_overrides
+            ORDER BY user_id ASC, action ASC`).all();
     }
 
     setUserOverride(input: {

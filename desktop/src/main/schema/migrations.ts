@@ -1213,5 +1213,32 @@ export const MIGRATIONS = [
             db.exec(`CREATE INDEX IF NOT EXISTS idx_user_overrides_user
                 ON user_permission_overrides(user_id);`);
         }
+    },
+    {
+        version: 32,
+        up: (db: any) => {
+            console.log('Running Migration v32 (desk read and check-in grants)...');
+            // Close the gap between what desk UIs call and what the roles
+            // table grants, so central permission enforcement cannot break
+            // legitimate flows: dashboard stats, appointment check-in, and
+            // visit reads for every desk role. Destructive and secret
+            // methods stay admin-only by omission.
+            const grants: Record<string, string[]> = {
+                doctor: ['getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits'],
+                receptionist: ['getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits'],
+                nurse: ['getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

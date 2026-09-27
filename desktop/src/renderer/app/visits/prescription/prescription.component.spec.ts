@@ -84,6 +84,9 @@ describe('PrescriptionComponent', () => {
     });
 
     it('searches and creates medicines through catalog IPC when available', async () => {
+        // Bypass inject entirely: catalog-off behavior must not depend on
+        // whichever inject double the runner provides.
+        (component as any).dataService = null;
         await expect(component.searchMedicines('para')).resolves.toEqual([]);
         await expect(component.createMedicine('ORS')).resolves.toEqual({ id: 0, name: 'ORS' });
         component.disabled = true;

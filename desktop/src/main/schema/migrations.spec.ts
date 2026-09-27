@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 30 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(30);
+        it('should have 31 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(31);
         });
     });
 
@@ -596,6 +596,16 @@ describe('Database Migrations', () => {
             }
             expect(writes['receptionist']).toBeUndefined();
             expect(writes['nurse']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v31 (per-user permission overrides)', () => {
+        it('creates the overrides table with one-row-per-user-action', () => {
+            MIGRATIONS.find((m) => m.version === 31)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS user_permission_overrides');
+            expect(sql).toContain('UNIQUE(user_id, action)');
+            expect(sql).toContain("CHECK(effect IN ('allow', 'forbid'))");
         });
     });
 });

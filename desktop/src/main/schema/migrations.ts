@@ -1188,5 +1188,30 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 31,
+        up: (db: any) => {
+            console.log('Running Migration v31 (per-user permission overrides)...');
+            // Fine-grained deltas over the role baseline: one row grants or
+            // forbids a single action for a single user. Reason is mandatory
+            // (ABDM audit needs who allowed what and why). Effective access =
+            // role permits, plus user allows, minus user forbids; default deny.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS user_permission_overrides (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    action TEXT NOT NULL,
+                    effect TEXT NOT NULL DEFAULT 'allow'
+                        CHECK(effect IN ('allow', 'forbid')),
+                    reason TEXT NOT NULL DEFAULT '',
+                    granted_by INTEGER REFERENCES users(id),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, action)
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_user_overrides_user
+                ON user_permission_overrides(user_id);`);
+        }
     }
 ];

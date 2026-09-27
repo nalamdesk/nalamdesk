@@ -915,6 +915,11 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(upsert.record_id).toBe(updated.id);
             service.deleteUserOverride(20, 'updateQueueStatus', 99);
             expect(service.getUserOverrides(20)).toEqual([]);
+            // DELETE audits the override row id, never the user id.
+            const afterDelete: any[] = service.getAuditLogs(5);
+            const del = afterDelete.find((a: any) =>
+                a.action === 'DELETE' && a.table_name === 'user_permission_overrides');
+            expect(del.record_id).toBe(updated.id);
         });
 
         it('keeps consent transitions monotonic', () => {

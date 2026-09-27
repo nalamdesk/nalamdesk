@@ -4,17 +4,14 @@
  * from the original grant logic.
  */
 function grantRoleMethods(db: any, grants: Record<string, string[]>) {
-    Object.entries(grants).forEach(([roleName, methods]) => {
+    const get = db.prepare('SELECT permissions FROM roles WHERE name = ?');
+    const set = db.prepare('UPDATE roles SET permissions = ? WHERE name = ?');
+    for (const [name, add] of Object.entries(grants)) {
         try {
-            const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
-            if (role?.permissions) {
-                const permissions = new Set<string>(JSON.parse(role.permissions));
-                methods.forEach((m) => permissions.add(m));
-                db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
-                    .run(JSON.stringify([...permissions]), roleName);
-            }
-        } catch (e) { }
-    });
+            const row = get.get(name) as { permissions?: string };
+            set.run(JSON.stringify([...new Set([...JSON.parse(row?.permissions || '[]'), ...add])]), name);
+        } catch { /* keep existing grants on malformed rows */ }
+    }
 }
 
 export const MIGRATIONS = [

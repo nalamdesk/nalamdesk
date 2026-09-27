@@ -914,6 +914,11 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(upsert.record_id).toBe(updated.id);
             service.deleteUserOverride(20, 'updateQueueStatus', 99);
             expect(service.getUserOverrides(20)).toEqual([]);
+            // DELETE audits the override row id, never the user id.
+            const afterDelete: any[] = service.getAuditLogs(5);
+            const del = afterDelete.find((a: any) =>
+                a.action === 'DELETE' && a.table_name === 'user_permission_overrides');
+            expect(del.record_id).toBe(updated.id);
             service.deleteUserOverride(20, 'updateQueueStatus', 99);
             expect(service.getUserOverrides(20)).toEqual([]);
         });
@@ -925,6 +930,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getAllRoles().map((r: any) => r.name)).toContain('billing-clerk');
             expect(() => service.deleteRole('billing-clerk', 99)).not.toThrow();
             expect(service.getAllRoles().map((r: any) => r.name)).not.toContain('billing-clerk');
+        });
         });
 
         it('keeps consent transitions monotonic', () => {
@@ -986,4 +992,3 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getFetchedRecords(1, true)).toHaveLength(2);
         });
     });
-});

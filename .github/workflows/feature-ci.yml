@@ -76,20 +76,11 @@ jobs:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: node scripts/assert-packaged-version.js
 
-      # Upload Artifacts to Action Run
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: nalamdesk-${{ matrix.os }}
-          path: |
-            desktop/release/*.deb
-            desktop/release/*.exe
-            desktop/release/*.dmg
-            desktop/release/*.AppImage
-            desktop/release/LINUX-INSTALL.txt
-            desktop/release/run-nalamdesk-appimage.sh
-            desktop/release/APPIMAGE-FUSE.txt
-          retention-days: 5
+      # No artifact upload: installer distribution happens exclusively
+      # through GitHub Release assets (quota-free), which electron-builder
+      # publishes directly. CI compiles, tests, builds, and asserts the
+      # packaged version without banking anything against the private-repo
+      # Actions storage quota.
 
   # ===========================================================================
   # SonarCloud Analysis (runs once on ubuntu, after build-check passes)

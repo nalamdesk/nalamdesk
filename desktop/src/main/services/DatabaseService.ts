@@ -493,10 +493,17 @@ export class DatabaseService {
     }
 
     deleteUserOverride(userId: number, action: string, actingUserId?: number) {
+        const cleanAction = String(action || '').trim();
+        // Resolve the row id first: auditing users.id would point at the
+        // wrong record (same class of bug as the upsert path above).
+        const existing = this.db.prepare(`SELECT id FROM user_permission_overrides
+            WHERE user_id = ? AND action = ?`).get(Number(userId), cleanAction) as any;
         const result = this.db.prepare(`DELETE FROM user_permission_overrides
-            WHERE user_id = ? AND action = ?`).run(Number(userId), String(action || '').trim());
-        this.logAudit('DELETE', 'user_permission_overrides', Number(userId),
-            actingUserId, `Removed ${action} override for user ${userId}`);
+            WHERE user_id = ? AND action = ?`).run(Number(userId), cleanAction);
+        if (existing?.id) {
+            this.logAudit('DELETE', 'user_permission_overrides', Number(existing.id),
+                actingUserId, `Removed ${cleanAction} override for user ${userId}`);
+        }
         return result;
     }
 

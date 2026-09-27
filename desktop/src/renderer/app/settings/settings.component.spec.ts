@@ -418,4 +418,31 @@ describe('SettingsComponent Validation', () => {
             .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
         expect(payload2.callback_secret).toBe('a-very-long-shared-secret');
     });
+
+    it('manages per-user overrides through the admin IPC', async () => {
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'getUserOverrides') return Promise.resolve([{ action: 'updateQueueStatus', effect: 'allow' }]);
+            if (method === 'saveUserOverride') return Promise.resolve({ id: 1 });
+            return Promise.resolve(null);
+        });
+        await component.openPermissions({ id: 5, name: 'Nancy', role: 'nurse' });
+        expect(component.permissionTarget.id).toBe(5);
+        expect(component.permissionOverrides).toHaveLength(1);
+
+        component.permissionForm = { action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
+        await component.addPermissionOverride();
+        expect(mockData.invoke).toHaveBeenCalledWith('saveUserOverride', expect.objectContaining({
+            userId: 5, action: 'updateQueueStatus', effect: 'allow'
+        }));
+        expect(component.permissionForm.reason).toBe('');
+
+        component.permissionForm = { action: '', effect: 'allow', reason: '' };
+        await component.addPermissionOverride();
+        expect(mockData.invoke).not.toHaveBeenCalledWith('saveUserOverride', expect.objectContaining({ action: '' }));
+
+        await component.removePermissionOverride('updateQueueStatus');
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteUserOverride', { userId: 5, action: 'updateQueueStatus' });
+        component.closePermissions();
+        expect(component.permissionTarget).toBeNull();
+    });
 });

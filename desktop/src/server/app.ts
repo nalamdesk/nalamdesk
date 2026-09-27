@@ -13,6 +13,7 @@ import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmSessionService } from '../main/services/AbdmSessionService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
 import { HiuService } from '../main/services/HiuService';
+import { AccessPolicy } from '../main/services/AccessPolicy';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import { FideliusService } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
@@ -35,7 +36,8 @@ const ABDM_SERVICE_METHODS = new Set([
     'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords', 'abdmHiuImportMedication'
 ]);
 
-const ALLOWED_IPC_METHODS = [
+/** Allowlisted LAN methods; the conformance spec pins allow/deny per role. */
+export const ALLOWED_IPC_METHODS = [
     'getQueue', 'addToQueue', 'reassessQueueTriage', 'getQueueTriageHistory', 'updateQueueStatus', 'updateQueueStatusByPatientId', 'removeFromQueue',
     'getAuditLogs',
     'getAppointmentRequests', 'updateAppointmentRequestStatus',
@@ -59,6 +61,7 @@ const ALLOWED_IPC_METHODS = [
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey', 'abdmHiuRequestConsent',
     'abdmHiuGetConsents', 'abdmHiuFetchRecords', 'abdmHiuGetExternalRecords',
     'abdmHiuClearExternalRecords', 'abdmHiuImportMedication',
+    'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
@@ -741,8 +744,8 @@ export class ApiServer {
             throw error;
         }
         try {
-            // 2. RBAC Enforcement
-            if (!this.checkPermission(user.role, method)) {
+            // 2. RBAC Enforcement (single Cedar engine, shared with Electron IPC)
+            if (!this.checkPermission(user.role, method, user.id)) {
                 return reply.code(403).send({ error: 'Forbidden' });
             }
 
@@ -761,6 +764,9 @@ export class ApiServer {
             if (typeof dbAny[method] === 'function') {
                 try {
                     const result = await invokeDbMethod(dbAny, method, args, user.id);
+                    if (method === 'saveUserOverride' || method === 'deleteUserOverride') {
+                        this.refreshAccessPolicy();
+                    }
                     return result;
                 } catch (e: any) {
                     console.error(`[IPC Error] method: ${method}`, e);
@@ -774,17 +780,42 @@ export class ApiServer {
         }
     }
 
-    private checkPermission(role: string, method: string): boolean {
-        // Admin: All access
+    private checkPermission(role: string, method: string, userId?: number): boolean {
+        // Admin: All access (mirrors the Electron path bypass).
         if (role === 'admin') return true;
 
-        // Dynamic DB-based RBAC
+        // Single engine, same as Electron IPC: roles baseline plus
+        // per-user overrides, default deny. Rebuilt lazily so tests and
+        // long-lived servers pick up grant changes.
         try {
-            const permissions = this.dbService.getPermissions(role);
-            return permissions.includes(method);
+            return this.getAccessPolicy().isAuthorized({
+                user: { id: userId ?? 0, role },
+                action: method
+            }).allow;
         } catch (e) {
             console.error(`[RBAC] Permission check failed for role ${role}:`, e);
             return false;
+        }
+    }
+
+    private accessPolicy: AccessPolicy | null = null;
+
+    private getAccessPolicy(): AccessPolicy {
+        if (!this.accessPolicy) {
+            const db = this.dbService as any;
+            this.accessPolicy = new AccessPolicy({
+                getRoles: () => db.getAllRoles(),
+                getAllOverrides: () => db.getAllOverrides()
+            });
+        }
+        return this.accessPolicy;
+    }
+
+    private refreshAccessPolicy(): void {
+        try {
+            this.getAccessPolicy().rebuild();
+        } catch (e) {
+            console.error('[Access] Policy rebuild failed:', e);
         }
     }
 }

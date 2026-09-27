@@ -247,7 +247,8 @@ export class SettingsComponent implements OnInit {
       cellRendererParams: {
         onEdit: (data: any) => this.editUser(data),
         onDelete: (data: any) => this.deleteUser(data.id),
-        canDelete: (data: any) => data.username !== 'admin'
+        canDelete: (data: any) => data.username !== 'admin',
+        onPermissions: (data: any) => this.openPermissions(data)
       }
     }
   ];
@@ -716,6 +717,100 @@ export class SettingsComponent implements OnInit {
 
   // Batch Selection
   selectedUsers: any[] = [];
+
+  /** Actions an admin may delegate to one user without changing their role. */
+  readonly DELEGATEABLE_ACTIONS: string[] = [
+    'getQueue', 'addToQueue', 'removeFromQueue', 'updateQueueStatus',
+    'updateQueueStatusByPatientId', 'reassessQueueTriage', 'getQueueTriageHistory',
+    'getVitals', 'saveVitals', 'getEncounterVitals', 'getVitalsHistory',
+    'getPatients', 'getPatientById', 'getVisits', 'getAllVisits',
+    'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment',
+    'getAllergies', 'saveAllergy', 'deleteAllergy',
+    'getConditions', 'saveCondition', 'deleteCondition',
+    'getMedications', 'saveMedication', 'deleteMedication', 'getPatientSafetyContext',
+    'searchConditions', 'searchMedicines', 'createCondition', 'createMedicine',
+    'abdmAbhaLookup', 'abdmAbhaRequestOtp', 'abdmAbhaConfirmOtp', 'abdmAbhaCard',
+    'abdmLinkAbha', 'findPatientByAbha', 'abdmGetShareTokens', 'abdmAcceptShareToken',
+    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox', 'abdmGetConfig',
+    'abdmHiuGetPublicKey', 'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords',
+    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'
+  ];
+
+  // Per-user permission overrides (admin-only surface)
+  permissionTarget: any = null;
+  permissionOverrides: any[] = [];
+  permissionForm = { action: '', effect: 'allow', reason: '' };
+  loadingPermissions = false;
+
+  async openPermissions(user: any): Promise<void> {
+    this.permissionTarget = user;
+    this.permissionForm = { action: '', effect: 'allow', reason: '' };
+    await this.loadPermissionOverrides();
+  }
+
+  closePermissions(): void {
+    this.permissionTarget = null;
+    this.permissionOverrides = [];
+  }
+
+  async loadPermissionOverrides(): Promise<void> {
+    if (!this.permissionTarget) return;
+    this.loadingPermissions = true;
+    try {
+      const rows = await this.dataService.invoke<any[]>('getUserOverrides', this.permissionTarget.id);
+      this.ngZone.run(() => {
+        this.permissionOverrides = rows || [];
+        this.loadingPermissions = false;
+      });
+    } catch (e) {
+      this.ngZone.run(() => { this.loadingPermissions = false; });
+      await this.dialogService?.open({
+        title: 'Load failed',
+        message: e instanceof Error ? e.message : 'Could not load permissions.',
+        type: 'error'
+      });
+    }
+  }
+
+  async addPermissionOverride(): Promise<void> {
+    if (!this.permissionTarget || !this.permissionForm.action || !this.permissionForm.reason.trim()) return;
+    try {
+      await this.dataService.invoke('saveUserOverride', {
+        userId: this.permissionTarget.id,
+        action: this.permissionForm.action,
+        effect: this.permissionForm.effect,
+        reason: this.permissionForm.reason.trim()
+      });
+      this.ngZone.run(() => {
+        this.permissionForm = { action: '', effect: 'allow', reason: '' };
+      });
+      this.toastService?.success('Permission updated.', 'Saved');
+      await this.loadPermissionOverrides();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Save failed',
+        message: e instanceof Error ? e.message : 'Could not save the override.',
+        type: 'error'
+      });
+    }
+  }
+
+  async removePermissionOverride(action: string): Promise<void> {
+    if (!this.permissionTarget) return;
+    try {
+      await this.dataService.invoke('deleteUserOverride', {
+        userId: this.permissionTarget.id, action
+      });
+      this.toastService?.success('Override removed.', 'Saved');
+      await this.loadPermissionOverrides();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Remove failed',
+        message: e instanceof Error ? e.message : 'Could not remove the override.',
+        type: 'error'
+      });
+    }
+  }
 
   async deleteSelectedUsers() {
     if (this.selectedUsers.length === 0) return;

@@ -419,8 +419,7 @@ describe('SettingsComponent Validation', () => {
         expect(payload2.callback_secret).toBe('a-very-long-shared-secret');
     });
 
-    it('manages per-user overrides through the admin IPC', async () => {
-        mockData.invoke.mockImplementation((method: string) => {
+    it('manages per-user overrides through the admin IPC', async () => {        mockData.invoke.mockImplementation((method: string) => {
             if (method === 'getUserOverrides') return Promise.resolve([{ action: 'updateQueueStatus', effect: 'allow' }]);
             if (method === 'saveUserOverride') return Promise.resolve({ id: 1 });
             return Promise.resolve(null);
@@ -444,5 +443,37 @@ describe('SettingsComponent Validation', () => {
         expect(mockData.invoke).toHaveBeenCalledWith('deleteUserOverride', { userId: 5, action: 'updateQueueStatus' });
         component.closePermissions();
         expect(component.permissionTarget).toBeNull();
+    });
+
+    it('manages custom roles from templates', async () => {
+        (component as any).dialogService = { open: (...args: any[]) => Promise.resolve(true) };
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'getAllRoles') return Promise.resolve([
+                { name: 'admin', permissions: [] },
+                { name: 'billing-clerk', permissions: ['getDashboardStats'] }
+            ]);
+            return Promise.resolve(null);
+        });
+        await component.openRoles();
+        expect(component.roles).toHaveLength(2);
+        expect(component.availableRoleNames).toContain('billing-clerk');
+        expect(component.isBuiltinRole('admin')).toBe(true);
+        expect(component.isBuiltinRole('billing-clerk')).toBe(false);
+
+        component.startNewRole();
+        component.applyRoleTemplate('Front Desk');
+        expect(component.editingRole?.permissions).toContain('addToQueue');
+        component.toggleRolePermission('addToQueue');
+        expect(component.editingRole?.permissions).not.toContain('addToQueue');
+
+        component.editingRole = { name: 'billing-clerk', isNew: false, permissions: ['getDashboardStats'] };
+        await component.saveRole();
+        expect(mockData.invoke).toHaveBeenCalledWith('saveRole', expect.objectContaining({
+            name: 'billing-clerk', permissions: ['getDashboardStats']
+        }));
+        expect(component.editingRole).toBeNull();
+
+        await component.deleteRoleUI('billing-clerk');
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteRole', 'billing-clerk');
     });
 });

@@ -429,9 +429,36 @@ export class DatabaseService {
         });
     }
 
-    saveRole(name: string, permissions: string[]) {
-        const json = JSON.stringify(permissions);
-        return this.db.prepare('INSERT INTO roles (name, permissions) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET permissions = excluded.permissions').run(name, json);
+    saveRole(name: string, permissions: string[], actingUserId?: number) {
+        const clean = String(name || '').trim().toLowerCase();
+        if (!clean) throw new Error('Role name is required.');
+        if (!/^[a-z0-9][a-z0-9-_]{1,39}$/.test(clean)) {
+            throw new Error('Role name must be 2-40 chars: letters, numbers, hyphen, underscore.');
+        }
+        const list = Array.isArray(permissions) ? permissions : [];
+        const json = JSON.stringify([...new Set(list.map((m) => String(m)))]);
+        const result = this.db.prepare('INSERT INTO roles (name, permissions) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET permissions = excluded.permissions').run(clean, json);
+        this.logAudit('SAVE', 'roles', 0, actingUserId, `Saved custom role ${clean} (${list.length} permissions)`);
+        return result;
+    }
+
+    /**
+     * Deletes a custom role. Built-in roles and roles still assigned to
+     * users are protected: removing either would silently revoke access.
+     */
+    deleteRole(name: string, actingUserId?: number) {
+        const clean = String(name || '').trim().toLowerCase();
+        if (['admin', 'doctor', 'nurse', 'receptionist'].includes(clean)) {
+            throw new Error('Built-in roles cannot be deleted.');
+        }
+        const assigned = this.db.prepare(
+            'SELECT COUNT(*) as count FROM users WHERE LOWER(role) = ?').get(clean) as any;
+        if (assigned && Number(assigned.count) > 0) {
+            throw new Error(`Role is still assigned to ${assigned.count} user(s). Reassign them first.`);
+        }
+        const result = this.db.prepare('DELETE FROM roles WHERE name = ?').run(clean);
+        this.logAudit('DELETE', 'roles', 0, actingUserId, `Deleted custom role ${clean}`);
+        return result;
     }
 
     /**

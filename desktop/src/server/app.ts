@@ -64,7 +64,8 @@ export const ALLOWED_IPC_METHODS = [
     'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
-    'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword',
+    'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword', 'getAllRoles',
+    'saveRole', 'deleteRole',
     'searchConditions', 'searchMedicines', 'createCondition', 'createMedicine',
     'getConditionMedPresets', 'listConditions', 'listMedicines',
     'updateCondition', 'updateMedicine', 'retireCondition', 'retireMedicine',
@@ -764,7 +765,8 @@ export class ApiServer {
             if (typeof dbAny[method] === 'function') {
                 try {
                     const result = await invokeDbMethod(dbAny, method, args, user.id);
-                    if (method === 'saveUserOverride' || method === 'deleteUserOverride') {
+                    if (method === 'saveUserOverride' || method === 'deleteUserOverride'
+                        || method === 'saveRole' || method === 'deleteRole') {
                         this.refreshAccessPolicy();
                     }
                     return result;

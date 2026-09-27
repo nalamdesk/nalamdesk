@@ -890,7 +890,6 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         });
 
         it('manages per-user permission overrides with mandatory reasons', () => {
-            expect(service.getUserOverrides(20)).toEqual([]);
             expect(() => service.setUserOverride({ userId: 20, action: 'updateQueueStatus', effect: 'maybe', reason: 'x' }, 99))
                 .toThrow('Unknown override effect');
             expect(() => service.setUserOverride({ userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: '  ' }, 99))
@@ -909,6 +908,17 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getUserOverrides(20)).toHaveLength(1);
             service.deleteUserOverride(20, 'updateQueueStatus', 99);
             expect(service.getUserOverrides(20)).toEqual([]);
+            service.deleteUserOverride(20, 'updateQueueStatus', 99);
+            expect(service.getUserOverrides(20)).toEqual([]);
+        });
+
+        it('protects built-in and assigned roles from deletion', () => {
+            expect(() => service.deleteRole('admin', 99)).toThrow('Built-in');
+            expect(() => service.deleteRole('Doctor', 99)).toThrow('Built-in');
+            service.saveRole('Billing-Clerk', ['getDashboardStats']);
+            expect(service.getAllRoles().map((r: any) => r.name)).toContain('billing-clerk');
+            expect(() => service.deleteRole('billing-clerk', 99)).not.toThrow();
+            expect(service.getAllRoles().map((r: any) => r.name)).not.toContain('billing-clerk');
         });
 
         it('keeps consent transitions monotonic', () => {

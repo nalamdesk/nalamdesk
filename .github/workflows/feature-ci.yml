@@ -76,21 +76,11 @@ jobs:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: node scripts/assert-packaged-version.js
 
-      # Upload Artifacts to Action Run (master only: PR runs still compile
-      # and assert, but must not bank installers per push against
-      # the private-repo storage quota). .deb only: it is the primary
-      # clinic artifact; macOS/Windows installers ship via Releases
-      # (quota-free) since electron-builder publishes there directly.
-      - name: Upload Artifacts
-        if: github.ref == 'refs/heads/master'
-        uses: actions/upload-artifact@v4
-        with:
-          name: nalamdesk-${{ matrix.os }}
-          path: |
-            desktop/release/*.deb
-          # 1-day retention: convenience copy only; steady state stays
-          # ~300MB against the 500MB private quota.
-          retention-days: 1
+      # No artifact upload: installer distribution happens exclusively
+      # through GitHub Release assets (quota-free), which electron-builder
+      # publishes directly. CI compiles, tests, builds, and asserts the
+      # packaged version without banking anything against the private-repo
+      # Actions storage quota.
 
   # ===========================================================================
   # SonarCloud Analysis (runs once on ubuntu, after build-check passes)

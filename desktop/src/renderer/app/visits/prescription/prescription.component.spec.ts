@@ -4,6 +4,7 @@
 import '@angular/compiler';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PrescriptionComponent } from './prescription.component';
+import { inject } from '@angular/core';
 
 // Mock inject for standalone components
 vi.mock('@angular/core', async () => {
@@ -18,6 +19,9 @@ describe('PrescriptionComponent', () => {
     let component: PrescriptionComponent;
 
     beforeEach(() => {
+        // Pin the inject mock to pristine: a leaked implementation from a
+        // shared worker would otherwise make dataService truthy here.
+        vi.mocked(inject).mockReset();
         component = new PrescriptionComponent();
     });
 

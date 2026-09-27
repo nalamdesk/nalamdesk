@@ -76,8 +76,11 @@ jobs:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: node scripts/assert-packaged-version.js
 
-      # Upload Artifacts to Action Run
+      # Upload Artifacts to Action Run (master only: PR runs still compile
+      # and assert, but must not bank 300MB installers per push against
+      # the private-repo storage quota).
       - name: Upload Artifacts
+        if: github.ref == 'refs/heads/master'
         uses: actions/upload-artifact@v4
         with:
           name: nalamdesk-${{ matrix.os }}

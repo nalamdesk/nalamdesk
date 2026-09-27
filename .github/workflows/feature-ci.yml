@@ -92,7 +92,10 @@ jobs:
             desktop/release/LINUX-INSTALL.txt
             desktop/release/run-nalamdesk-appimage.sh
             desktop/release/APPIMAGE-FUSE.txt
-          retention-days: 5
+          # 1-day retention: installers are convenience copies (releases
+          # rebuild independently); each master merge banks ~900MB across
+          # the matrix, so anything longer re-fills the 500MB private quota.
+          retention-days: 1
 
   # ===========================================================================
   # SonarCloud Analysis (runs once on ubuntu, after build-check passes)

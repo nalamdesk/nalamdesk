@@ -889,6 +889,39 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getHiuPrivateProtected()).toBe('WRAPPED');
         });
 
+        it('manages per-user permission overrides with mandatory reasons', () => {
+            expect(service.getUserOverrides(20)).toEqual([]);
+            expect(() => service.setUserOverride({ userId: 20, action: 'updateQueueStatus', effect: 'maybe', reason: 'x' }, 99))
+                .toThrow('Unknown override effect');
+            expect(() => service.setUserOverride({ userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: '  ' }, 99))
+                .toThrow('reason is required');
+            expect(() => service.setUserOverride({ userId: 999, action: 'updateQueueStatus', effect: 'allow', reason: 'x' }, 99))
+                .toThrow('User not found');
+            const row: any = service.setUserOverride({
+                userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers front desk Tuesdays'
+            }, 99);
+            expect(row.effect).toBe('allow');
+            expect(service.getUserOverrides(20).map((r: any) => r.action)).toEqual(['updateQueueStatus']);
+            const updated: any = service.setUserOverride({
+                userId: 20, action: 'updateQueueStatus', effect: 'forbid', reason: 'Revoked'
+            }, 99);
+            expect(updated.effect).toBe('forbid');
+            expect(service.getUserOverrides(20)).toHaveLength(1);
+            // The CONFLICT/DO UPDATE path must audit the override's actual id,
+            // not a stale lastInsertRowid from an unrelated prior insert.
+            const audits: any[] = service.getAuditLogs(5);
+            const upsert = audits.find((a: any) =>
+                a.action === 'UPSERT' && a.table_name === 'user_permission_overrides');
+            expect(upsert.record_id).toBe(updated.id);
+            service.deleteUserOverride(20, 'updateQueueStatus', 99);
+            expect(service.getUserOverrides(20)).toEqual([]);
+            // DELETE audits the override row id, never the user id.
+            const afterDelete: any[] = service.getAuditLogs(5);
+            const del = afterDelete.find((a: any) =>
+                a.action === 'DELETE' && a.table_name === 'user_permission_overrides');
+            expect(del.record_id).toBe(updated.id);
+        });
+
         it('keeps consent transitions monotonic', () => {
             const row: any = service.createConsentRequest({
                 abhaAddress: 'mono@sbx', hiTypes: ['Prescription'], gatewayRequestId: 'mono-1'

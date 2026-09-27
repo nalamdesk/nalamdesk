@@ -403,8 +403,7 @@ export class DatabaseService {
         return [];
     }
 
-    getAllRoles() {
-        return this.db.prepare('SELECT * FROM roles').all().map((r: any) => {
+    getAllRoles() {        return this.db.prepare('SELECT * FROM roles').all().map((r: any) => {
             try {
                 return {
                     name: r.name,
@@ -420,6 +419,62 @@ export class DatabaseService {
     saveRole(name: string, permissions: string[]) {
         const json = JSON.stringify(permissions);
         return this.db.prepare('INSERT INTO roles (name, permissions) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET permissions = excluded.permissions').run(name, json);
+    }
+
+    /**
+     * Per-user permission deltas over the role baseline (M3-RBAC). One row
+     * allows or forbids a single action for a single user; reason is
+     * mandatory so the audit trail records why access changed hands.
+     */
+    getUserOverrides(userId: number) {
+        return this.db.prepare(`SELECT * FROM user_permission_overrides
+            WHERE user_id = ? ORDER BY action ASC`).all(Number(userId));
+    }
+
+    setUserOverride(input: {
+        userId: number; action: string; effect: string; reason: string;
+    }, actingUserId?: number) {
+        const userId = Number(input?.userId);
+        if (!Number.isInteger(userId) || userId <= 0) throw new Error('user_id is required.');
+        const action = String(input?.action || '').trim();
+        if (!action) throw new Error('action is required.');
+        const effect = String(input?.effect || '').trim().toLowerCase();
+        if (effect !== 'allow' && effect !== 'forbid') {
+            throw new Error(`Unknown override effect: ${input?.effect}`);
+        }
+        const reason = String(input?.reason || '').trim();
+        if (!reason) throw new Error('A reason is required for permission overrides.');
+        const user = this.db.prepare('SELECT id FROM users WHERE id = ?').get(userId) as any;
+        if (!user) throw new Error('User not found.');
+        this.db.prepare(`
+            INSERT INTO user_permission_overrides (user_id, action, effect, reason, granted_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, action) DO UPDATE SET
+                effect = excluded.effect, reason = excluded.reason,
+                granted_by = excluded.granted_by, created_at = CURRENT_TIMESTAMP
+        `).run(userId, action, effect, reason, actingUserId ?? null);
+        // lastInsertRowid is stale on the CONFLICT/DO UPDATE path, so resolve
+        // the row first and audit its actual id.
+        const row = this.db.prepare(`SELECT * FROM user_permission_overrides
+            WHERE user_id = ? AND action = ?`).get(userId, action) as any;
+        this.logAudit('UPSERT', 'user_permission_overrides', Number(row?.id),
+            actingUserId, `${effect} ${action} for user ${userId}: ${reason}`);
+        return row;
+    }
+
+    deleteUserOverride(userId: number, action: string, actingUserId?: number) {
+        const cleanAction = String(action || '').trim();
+        // Resolve the row id first: auditing users.id would point at the
+        // wrong record (same class of bug as the upsert path above).
+        const existing = this.db.prepare(`SELECT id FROM user_permission_overrides
+            WHERE user_id = ? AND action = ?`).get(Number(userId), cleanAction) as any;
+        const result = this.db.prepare(`DELETE FROM user_permission_overrides
+            WHERE user_id = ? AND action = ?`).run(Number(userId), cleanAction);
+        if (existing?.id) {
+            this.logAudit('DELETE', 'user_permission_overrides', Number(existing.id),
+                actingUserId, `Removed ${cleanAction} override for user ${userId}`);
+        }
+        return result;
     }
 
     saveSettings(settings: any) {

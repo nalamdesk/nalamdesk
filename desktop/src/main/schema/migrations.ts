@@ -1240,5 +1240,33 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 33,
+        up: (db: any) => {
+            console.log('Running Migration v33 (patient-detail, all-visits, and request reads)...');
+            // PR96 review (P1): central enforcement guards getPatientById,
+            // getAllVisits, and getAppointmentRequests, but no seed or v32
+            // grant covers them. Patient details, the Visits page, and the
+            // dashboard call these for every desk role, so denying them
+            // breaks legitimate flows. Additive (not a v32 edit) so clinics
+            // that already applied v32 are repaired too.
+            const grants: Record<string, string[]> = {
+                doctor: ['getPatientById', 'getAllVisits', 'getAppointmentRequests'],
+                receptionist: ['getPatientById', 'getAllVisits', 'getAppointmentRequests'],
+                nurse: ['getPatientById', 'getAllVisits', 'getAppointmentRequests']
+            };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];

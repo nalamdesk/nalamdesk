@@ -907,6 +907,12 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             }, 99);
             expect(updated.effect).toBe('forbid');
             expect(service.getUserOverrides(20)).toHaveLength(1);
+            // The CONFLICT/DO UPDATE path must audit the override's actual id,
+            // not a stale lastInsertRowid from an unrelated prior insert.
+            const audits: any[] = service.getAuditLogs(5);
+            const upsert = audits.find((a: any) =>
+                a.action === 'UPSERT' && a.table_name === 'user_permission_overrides');
+            expect(upsert.record_id).toBe(updated.id);
             service.deleteUserOverride(20, 'updateQueueStatus', 99);
             expect(service.getUserOverrides(20)).toEqual([]);
         });

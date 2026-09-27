@@ -653,7 +653,7 @@ describe('Database Migrations', () => {
 
             for (const role of ['doctor', 'receptionist', 'nurse']) {
                 expect(JSON.parse(writes[role])).toEqual(expect.arrayContaining(
-                    ['getPatientById', 'getAllVisits', 'getAppointmentRequests']));
+                    ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus']));
             }
             expect(writes['admin']).toBeUndefined();
         });

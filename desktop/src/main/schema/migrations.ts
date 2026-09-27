@@ -1249,12 +1249,16 @@ export const MIGRATIONS = [
             // getAllVisits, and getAppointmentRequests, but no seed or v32
             // grant covers them. Patient details, the Visits page, and the
             // dashboard call these for every desk role, so denying them
-            // breaks legitimate flows. Additive (not a v32 edit) so clinics
-            // that already applied v32 are repaired too.
+            // breaks legitimate flows. updateAppointmentRequestStatus is
+            // included: the online-booking Accept flow creates the
+            // appointment before marking the request accepted, so denying
+            // the status update leaves the request pending and a retry
+            // creates a duplicate appointment. Additive (not a v32 edit)
+            // so clinics that already applied v32 are repaired too.
             const grants: Record<string, string[]> = {
-                doctor: ['getPatientById', 'getAllVisits', 'getAppointmentRequests'],
-                receptionist: ['getPatientById', 'getAllVisits', 'getAppointmentRequests'],
-                nurse: ['getPatientById', 'getAllVisits', 'getAppointmentRequests']
+                doctor: ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus'],
+                receptionist: ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus'],
+                nurse: ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus']
             };
             Object.entries(grants).forEach(([roleName, methods]) => {
                 try {

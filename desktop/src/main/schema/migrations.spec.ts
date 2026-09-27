@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 32 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(32);
+        it('should have 33 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(33);
         });
     });
 
@@ -629,6 +629,31 @@ describe('Database Migrations', () => {
             for (const role of ['doctor', 'receptionist', 'nurse']) {
                 expect(JSON.parse(writes[role])).toEqual(expect.arrayContaining(
                     ['getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits']));
+            }
+            expect(writes['admin']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v33 (patient-detail, all-visits, and request reads)', () => {
+        it('grants patient, all-visits, and request reads to desk roles', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 33)!.up(mockDb);
+
+            for (const role of ['doctor', 'receptionist', 'nurse']) {
+                expect(JSON.parse(writes[role])).toEqual(expect.arrayContaining(
+                    ['getPatientById', 'getAllVisits', 'getAppointmentRequests']));
             }
             expect(writes['admin']).toBeUndefined();
         });

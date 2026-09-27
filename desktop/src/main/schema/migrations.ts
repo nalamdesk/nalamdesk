@@ -1,3 +1,19 @@
+/**
+ * Adds methods to existing roles without dropping current grants. Shared by
+ * the desk-grant migrations (v32, v33) so repair migrations cannot drift
+ * from the original grant logic.
+ */
+function grantRoleMethods(db: any, grants: Record<string, string[]>) {
+    const get = db.prepare('SELECT permissions FROM roles WHERE name = ?');
+    const set = db.prepare('UPDATE roles SET permissions = ? WHERE name = ?');
+    for (const [name, add] of Object.entries(grants)) {
+        try {
+            const row = get.get(name) as { permissions?: string };
+            set.run(JSON.stringify([...new Set([...JSON.parse(row?.permissions || '[]'), ...add])]), name);
+        } catch { /* keep existing grants on malformed rows */ }
+    }
+}
+
 export const MIGRATIONS = [
     {
         version: 1,
@@ -1212,6 +1228,45 @@ export const MIGRATIONS = [
             `);
             db.exec(`CREATE INDEX IF NOT EXISTS idx_user_overrides_user
                 ON user_permission_overrides(user_id);`);
+        }
+    },
+    {
+        version: 32,
+        up: (db: any) => {
+            console.log('Running Migration v32 (desk read and check-in grants)...');
+            // Close the gap between what desk UIs call and what the roles
+            // table grants, so central permission enforcement cannot break
+            // legitimate flows: dashboard stats, appointment check-in, and
+            // visit reads for every desk role. Destructive and secret
+            // methods stay admin-only by omission.
+            const grants: Record<string, string[]> = {
+                doctor: ['getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits'],
+                receptionist: ['getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits'],
+                nurse: ['getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits']
+            };
+            grantRoleMethods(db, grants);
+        }
+    },
+    {
+        version: 33,
+        up: (db: any) => {
+            console.log('Running Migration v33 (patient-detail, all-visits, and request reads)...');
+            // PR96 review (P1): central enforcement guards getPatientById,
+            // getAllVisits, and getAppointmentRequests, but no seed or v32
+            // grant covers them. Patient details, the Visits page, and the
+            // dashboard call these for every desk role, so denying them
+            // breaks legitimate flows. updateAppointmentRequestStatus is
+            // included: the online-booking Accept flow creates the
+            // appointment before marking the request accepted, so denying
+            // the status update leaves the request pending and a retry
+            // creates a duplicate appointment. Additive (not a v32 edit)
+            // so clinics that already applied v32 are repaired too.
+            const grants: Record<string, string[]> = {
+                doctor: ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus'],
+                receptionist: ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus'],
+                nurse: ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus']
+            };
+            grantRoleMethods(db, grants);
         }
     }
 ];

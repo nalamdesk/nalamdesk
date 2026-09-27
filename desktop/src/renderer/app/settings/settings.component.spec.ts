@@ -463,8 +463,15 @@ describe('SettingsComponent Validation', () => {
         component.startNewRole();
         component.applyRoleTemplate('Front Desk');
         expect(component.editingRole?.permissions).toContain('addToQueue');
+        expect(component.editingRole?.permissions).not.toContain('savePatient');
         component.toggleRolePermission('addToQueue');
         expect(component.editingRole?.permissions).not.toContain('addToQueue');
+
+        // Handler-gated clinical mutations stay out of the custom-role picker.
+        const pickable = component.pickableCatalog.flatMap((g: any) => g.methods);
+        expect(pickable).not.toContain('saveVisit');
+        expect(pickable).not.toContain('saveAllergy');
+        expect(pickable).toContain('addToQueue');
 
         component.editingRole = { name: 'billing-clerk', isNew: false, permissions: ['getDashboardStats'] };
         await component.saveRole();

@@ -11,7 +11,7 @@ import { DatePickerComponent } from '../shared/components/date-picker/date-picke
 import { CatalogSettingsComponent } from './catalog-settings.component';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
-import { METHOD_CATALOG, ROLE_TEMPLATES } from '../../../shared/access';
+import { METHOD_CATALOG, ROLE_TEMPLATES, HANDLER_GATED_ACTIONS } from '../../../shared/access';
 import { AppUpdateService } from '../services/update.service';
 
 @Component({
@@ -723,6 +723,20 @@ export class SettingsComponent implements OnInit {
   readonly METHOD_CATALOG = METHOD_CATALOG;
   readonly ROLE_TEMPLATES = ROLE_TEMPLATES;
 
+  /** Catalog minus actions whose handler role-strings would reject custom roles. */
+  get pickableCatalog() {
+    return METHOD_CATALOG
+      .map((group) => ({
+        label: group.label,
+        methods: group.methods.filter((m) => !HANDLER_GATED_ACTIONS.has(m))
+      }))
+      .filter((group) => group.methods.length > 0);
+  }
+
+  isPickableAction(action: string): boolean {
+    return !HANDLER_GATED_ACTIONS.has(action);
+  }
+
   // Custom roles (admin-only surface)
   roles: any[] = [];
   showRolesModal = false;
@@ -839,13 +853,11 @@ export class SettingsComponent implements OnInit {
     'getVitals', 'saveVitals', 'getEncounterVitals', 'getVitalsHistory',
     'getPatients', 'getPatientById', 'getVisits', 'getAllVisits',
     'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment',
-    'getAllergies', 'saveAllergy', 'deleteAllergy',
-    'getConditions', 'saveCondition', 'deleteCondition',
-    'getMedications', 'saveMedication', 'deleteMedication', 'getPatientSafetyContext',
+    'getAllergies', 'getConditions', 'getMedications', 'getPatientSafetyContext',
     'searchConditions', 'searchMedicines', 'createCondition', 'createMedicine',
     'abdmAbhaLookup', 'abdmAbhaRequestOtp', 'abdmAbhaConfirmOtp', 'abdmAbhaCard',
     'abdmLinkAbha', 'findPatientByAbha', 'abdmGetShareTokens', 'abdmAcceptShareToken',
-    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox', 'abdmGetConfig',
+    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmGetConfig',
     'abdmHiuGetPublicKey', 'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords',
     'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'
   ];

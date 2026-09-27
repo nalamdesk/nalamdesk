@@ -40,4 +40,14 @@ describe('resolveDbMethodArgs addToQueue', () => {
         expect(resolveDbMethodArgs('deleteRole', [{ name: 'billing-clerk' }], 99))
             .toEqual(['billing-clerk', 99]);
     });
+
+    it('unpacks override mutations for both transports', () => {
+        const input = { userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
+        expect(resolveDbMethodArgs('saveUserOverride', [input], 99))
+            .toEqual([input, 99]);
+        expect(resolveDbMethodArgs('deleteUserOverride', [{ userId: 20, action: 'updateQueueStatus' }], 99))
+            .toEqual([20, 'updateQueueStatus', 99]);
+        expect(resolveDbMethodArgs('getUserOverrides', [20], 99))
+            .toEqual([20]);
+    });
 });

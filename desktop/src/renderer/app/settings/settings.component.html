@@ -469,8 +469,9 @@
                   </div>
                 </div>
                 <div *ngIf="editingRole && !editingRole.isNew && editingRole.name === r.name" class="border-t px-4 py-3 space-y-2 bg-gray-50/50">
+                  <p class="text-[11px] text-gray-500">Clinical mutations and admin tools are excluded: their handlers admit only fixed role strings, so a custom-role grant would not take effect.</p>
                   <div class="max-h-56 overflow-y-auto space-y-2">
-                    <div *ngFor="let group of METHOD_CATALOG">
+                    <div *ngFor="let group of pickableCatalog">
                       <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">{{ group.label }}</div>
                       <div class="flex flex-wrap gap-1.5 mt-1">
                         <button *ngFor="let m of group.methods" type="button" (click)="toggleRolePermission(m)"
@@ -498,7 +499,7 @@
                   </select>
                 </div>
                 <div class="max-h-56 overflow-y-auto space-y-2 bg-white rounded border border-gray-200 p-3">
-                  <div *ngFor="let group of METHOD_CATALOG">
+                  <div *ngFor="let group of pickableCatalog">
                     <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">{{ group.label }}</div>
                     <div class="flex flex-wrap gap-1.5 mt-1">
                       <button *ngFor="let m of group.methods" type="button" (click)="toggleRolePermission(m)"

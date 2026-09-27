@@ -78,6 +78,17 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [payload['name'] ?? args[0], actingUserId];
         }
+        case 'saveUserOverride': {
+            return [payloadObject(args[0]), actingUserId];
+        }
+        case 'deleteUserOverride': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['userId'] ?? args[0]), String(payload['action'] ?? args[1] ?? ''), actingUserId];
+        }
+        case 'getUserOverrides': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['userId'] ?? args[0])];
+        }
         default:
             if (ENCOUNTER_METHODS.has(method)) {
                 return [...args, actingUserId];

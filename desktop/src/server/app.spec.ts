@@ -598,3 +598,50 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         expect(response.statusCode).toBe(403);
     });
 });
+
+describe('HTTP /api/ipc override admin over LAN', () => {
+    let server: ApiServer;
+    let db: any;
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            getAllRoles: vi.fn().mockReturnValue([]),
+            getAllOverrides: vi.fn().mockReturnValue([]),
+            getUserOverrides: vi.fn().mockReturnValue([]),
+            saveUserOverride: vi.fn().mockReturnValue({ id: 3 }),
+            deleteUserOverride: vi.fn().mockReturnValue({ changes: 1 })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    async function postIpc(method: string, args: unknown[]) {
+        return server.inject({
+            method: 'POST',
+            url: `/api/ipc/${method}`,
+            headers: {
+                authorization: authHeader({ id: 1, role: 'admin' }),
+                'content-type': 'application/json'
+            },
+            payload: args
+        });
+    }
+
+    it('routes saveUserOverride through the DB alias instead of 404', async () => {
+        const input = { userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
+        const response = await postIpc('saveUserOverride', [input]);
+        expect(response.statusCode).toBe(200);
+        expect(db.saveUserOverride).toHaveBeenCalledWith(input, 1);
+    });
+
+    it('unpacks deleteUserOverride to positional args instead of silent no-op', async () => {
+        const response = await postIpc('deleteUserOverride', [{ userId: 20, action: 'updateQueueStatus' }]);
+        expect(response.statusCode).toBe(200);
+        expect(db.deleteUserOverride).toHaveBeenCalledWith(20, 'updateQueueStatus', 1);
+    });
+});

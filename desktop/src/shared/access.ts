@@ -87,6 +87,32 @@ export const ALL_CATALOGUED_ACTIONS: ReadonlySet<string> = new Set(
     METHOD_CATALOG.flatMap((group) => group.methods)
 );
 
+/**
+ * Actions whose Electron handlers enforce an immutable role-string check
+ * AFTER the Cedar gate (clinical mutations, consultations, admin tools).
+ * Granting one to a custom role or via override passes Cedar but is still
+ * rejected in the packaged client, while the LAN policy-only path would
+ * allow it. Keep them out of both pickers until the handlers consult Cedar
+ * instead of role strings (open follow-up: custom roles cannot hold
+ * clinical-mutation rights until then).
+ */
+export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
+    'savePatient', 'deletePatient',
+    'saveVisit', 'deleteVisit',
+    'beginConsultation', 'beginNextConsultation', 'completeConsultation',
+    'postponeConsultation', 'resumeConsultation', 'getActiveConsultation',
+    'saveConsultationProgress',
+    'saveAllergy', 'deleteAllergy',
+    'saveCondition', 'deleteCondition',
+    'saveMedication', 'deleteMedication',
+    'abdmAckInbox', 'abdmTransferBundle',
+    'getUsers', 'saveUser', 'deleteUser', 'getAllRoles',
+    'saveRole', 'deleteRole',
+    'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
+    'saveSettings', 'abdmSaveConfig', 'abdmSetSecret',
+    'abdmTestConnectivity', 'abdmSimulateShare'
+]);
+
 export interface RoleTemplate {
     name: string;
     description: string;
@@ -98,8 +124,11 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     {
         name: 'Front Desk',
         description: 'Reception work: intake, queue, appointments, vitals reads.',
+        // savePatient excluded: its Electron handler admits only
+        // doctor/receptionist/admin role strings, so a custom role grant
+        // would pass Cedar yet still be rejected (see HANDLER_GATED_ACTIONS).
         permissions: [
-            'getPatients', 'savePatient', 'getQueue', 'addToQueue', 'removeFromQueue',
+            'getPatients', 'getQueue', 'addToQueue', 'removeFromQueue',
             'updateQueueStatus', 'updateQueueStatusByPatientId', 'getPublicSettings',
             'getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits',
             'getVitals', 'getVitalsHistory', 'getEncounterVitals',

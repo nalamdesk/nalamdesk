@@ -418,4 +418,81 @@ describe('SettingsComponent Validation', () => {
             .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
         expect(payload2.callback_secret).toBe('a-very-long-shared-secret');
     });
+
+    it('manages per-user overrides through the admin IPC', async () => {
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'getUserOverrides') return Promise.resolve([{ action: 'updateQueueStatus', effect: 'allow' }]);
+            if (method === 'saveUserOverride') return Promise.resolve({ id: 1 });
+            return Promise.resolve(null);
+        });
+        await component.openPermissions({ id: 5, name: 'Nancy', role: 'nurse' });
+        expect(component.permissionTarget.id).toBe(5);
+        expect(component.permissionOverrides).toHaveLength(1);
+
+        component.permissionForm = { action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
+        await component.addPermissionOverride();
+        expect(mockData.invoke).toHaveBeenCalledWith('saveUserOverride', expect.objectContaining({
+            userId: 5, action: 'updateQueueStatus', effect: 'allow'
+        }));
+        expect(component.permissionForm.reason).toBe('');
+
+        component.permissionForm = { action: '', effect: 'allow', reason: '' };
+        await component.addPermissionOverride();
+        expect(mockData.invoke).not.toHaveBeenCalledWith('saveUserOverride', expect.objectContaining({ action: '' }));
+
+        await component.removePermissionOverride('updateQueueStatus');
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteUserOverride', { userId: 5, action: 'updateQueueStatus' });
+        component.closePermissions();
+        expect(component.permissionTarget).toBeNull();
+    });
+
+    it('drives the row Permissions affordance through the grid params', () => {
+        const actionsCol = (component as any).userColumnDefs.find((c: any) => c.headerName === 'Actions');
+        const params = actionsCol.cellRendererParams;
+        const editSpy = vi.spyOn(component, 'editUser').mockImplementation(() => undefined);
+        const deleteSpy = vi.spyOn(component, 'deleteUser').mockImplementation(() => Promise.resolve());
+        params.onEdit({ id: 9 });
+        params.onDelete({ id: 9 });
+        expect(editSpy).toHaveBeenCalledWith({ id: 9 });
+        expect(deleteSpy).toHaveBeenCalledWith(9);
+        expect(params.canDelete({ username: 'admin' })).toBe(false);
+        expect(params.canDelete({ username: 'nurse-1' })).toBe(true);
+        editSpy.mockRestore();
+        deleteSpy.mockRestore();
+    });
+
+    it('opens the Permissions surface from grid params', async () => {
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'getUserOverrides') return Promise.resolve([]);
+            return Promise.resolve(null);
+        });
+        const actionsCol = (component as any).userColumnDefs.find((c: any) => c.headerName === 'Actions');
+        await actionsCol.cellRendererParams.onPermissions({ id: 7, name: 'Dot', role: 'doctor' });
+        expect(component.permissionTarget.id).toBe(7);
+        expect(component.permissionOverrides).toEqual([]);
+        component.closePermissions();
+    });
+
+    it('surfaces override load and mutation failures as dialogs', async () => {
+        const dialogSpy = vi.fn(() => Promise.resolve(true));
+        (component as any).dialogService = { open: dialogSpy };
+        mockData.invoke.mockRejectedValue(new Error('db down'));
+        component.permissionTarget = { id: 5, name: 'Nancy', role: 'nurse' };
+        await component.loadPermissionOverrides();
+        expect(component.loadingPermissions).toBe(false);
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Load failed', type: 'error' }));
+
+        component.permissionForm = { action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
+        await component.addPermissionOverride();
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Save failed', type: 'error' }));
+
+        await component.removePermissionOverride('updateQueueStatus');
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Remove failed', type: 'error' }));
+
+        component.permissionTarget = null;
+        mockData.invoke.mockClear();
+        await component.loadPermissionOverrides();
+        await component.removePermissionOverride('updateQueueStatus');
+        expect(mockData.invoke).not.toHaveBeenCalledWith('deleteUserOverride', expect.anything());
+    });
 });

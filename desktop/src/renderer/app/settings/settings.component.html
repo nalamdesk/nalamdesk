@@ -387,6 +387,58 @@
             </div>
         </div>
 
+        <!-- Permissions Modal (per-user deltas over the role baseline) -->
+        <div *ngIf="permissionTarget" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div class="bg-white rounded-lg w-full max-w-lg max-h-[90vh] shadow-xl flex flex-col overflow-hidden">
+            <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
+              <div>
+                <h2 class="text-lg font-bold text-gray-800">Permissions — {{ permissionTarget.name }}</h2>
+                <p class="text-xs text-gray-500">Role: {{ permissionTarget.role }} · overrides apply on top, deny by default.</p>
+              </div>
+              <button (click)="closePermissions()" class="text-gray-500 hover:text-gray-600" aria-label="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6 space-y-3">
+              <div *ngIf="loadingPermissions" class="text-sm text-gray-500">Loading...</div>
+              <div *ngIf="!loadingPermissions && permissionOverrides.length === 0" class="text-sm text-gray-500">
+                No overrides — this user holds exactly their role permissions.
+              </div>
+              <div *ngFor="let o of permissionOverrides" class="flex items-center justify-between gap-2 border border-gray-200 rounded-lg px-3 py-2">
+                <div class="min-w-0">
+                  <div class="font-mono text-xs font-semibold text-gray-800 truncate">{{ o.action }}</div>
+                  <div class="text-[11px] text-gray-500 truncate">{{ o.reason }}</div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <span class="px-2 py-0.5 rounded uppercase text-[10px] font-bold"
+                        [ngClass]="o.effect === 'forbid' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'">{{ o.effect }}</span>
+                  <button (click)="removePermissionOverride(o.action)" class="text-gray-400 hover:text-red-600 text-xs px-2 py-1 rounded hover:bg-red-50">Remove</button>
+                </div>
+              </div>
+              <div class="border-t pt-3 space-y-2">
+                <div class="text-xs font-bold text-gray-700 uppercase tracking-wider">Grant or forbid an action</div>
+                <select [(ngModel)]="permissionForm.action" aria-label="Action to override" class="w-full border p-2 rounded text-sm font-mono">
+                  <option value="">Select action...</option>
+                  <option *ngFor="let a of DELEGATEABLE_ACTIONS" [value]="a">{{ a }}</option>
+                </select>
+                <div class="flex gap-2">
+                  <select [(ngModel)]="permissionForm.effect" aria-label="Override effect" class="border p-2 rounded text-sm">
+                    <option value="allow">Allow</option>
+                    <option value="forbid">Forbid</option>
+                  </select>
+                  <input [(ngModel)]="permissionForm.reason" placeholder="Reason (required, audited)"
+                         aria-label="Reason for override (required, audited)"
+                         class="flex-1 border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="flex justify-end">
+                  <button (click)="addPermissionOverride()" [disabled]="!permissionForm.action || !permissionForm.reason.trim()"
+                          class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors">Save override</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 3. SECURITY TAB -->
         <div *ngIf="activeTab === 'security'" class="h-full overflow-y-auto p-4 md:p-8">
             <h2 class="text-2xl font-bold text-gray-800 mb-6">Security & Resilience</h2>

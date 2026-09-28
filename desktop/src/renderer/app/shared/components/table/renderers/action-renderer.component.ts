@@ -12,6 +12,9 @@ import { ICellRendererParams } from 'ag-grid-community';
       <button (click)="onEdit()" class="text-gray-400 hover:text-blue-600 transition-colors" title="Edit">
         ✏️
       </button>
+      <button *ngIf="showPermissions" (click)="onPermissions()" class="text-gray-400 hover:text-blue-600 transition-colors" title="Permissions">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm-9 9.75a6 6 0 0 1 6-6h1.5a6 6 0 0 1 5.25 3.12l1.11 2.035a.75.75 0 0 1-.663 1.095H6.75a.75.75 0 0 1-.75-.75v-.5Z" /></svg>
+      </button>
       <button *ngIf="canDelete" (click)="onDelete()" class="text-gray-400 hover:text-red-600 transition-colors" title="Delete">
         🗑️
       </button>
@@ -37,6 +40,16 @@ export class ActionRendererComponent implements ICellRendererAngularComp {
       return this.params.canDelete(this.params.data);
     }
     return true;
+  }
+
+  get showPermissions(): boolean {
+    return typeof this.params.onPermissions === 'function';
+  }
+
+  onPermissions() {
+    if (this.params.onPermissions) {
+      this.params.onPermissions(this.params.data);
+    }
   }
 
   onEdit() {

@@ -29,6 +29,11 @@ describe('HTTP /api/ipc queue wrapper', () => {
             beginWork: vi.fn(),
             endWork: vi.fn(),
             getPermissions: vi.fn().mockReturnValue(['addToQueue', 'updateQueueStatus', 'removeFromQueue', 'beginConsultation']),
+            getAllRoles: vi.fn().mockReturnValue([
+                { name: 'doctor', permissions: ['addToQueue', 'updateQueueStatus', 'removeFromQueue', 'beginConsultation'] },
+                { name: 'receptionist', permissions: ['addToQueue', 'updateQueueStatus', 'removeFromQueue', 'beginConsultation'] }
+            ]),
+            getAllOverrides: vi.fn().mockReturnValue([]),
             addToQueue: vi.fn().mockReturnValue({ lastInsertRowid: 11 }),
             updateQueueStatus: vi.fn().mockReturnValue({ changes: 1 }),
             updateQueueStatusByPatientId: vi.fn().mockReturnValue({ changes: 1 }),
@@ -117,6 +122,10 @@ describe('HTTP /api/ipc catalog methods', () => {
             beginWork: vi.fn(),
             endWork: vi.fn(),
             getPermissions: vi.fn().mockReturnValue(['searchConditions', 'createCondition', 'createMedicine']),
+            getAllRoles: vi.fn().mockReturnValue([
+                { name: 'doctor', permissions: ['searchConditions', 'createCondition', 'createMedicine'] }
+            ]),
+            getAllOverrides: vi.fn().mockReturnValue([]),
             searchConditions: vi.fn().mockReturnValue([{ id: 1, name: 'Influenza' }]),
             createCondition: vi.fn().mockReturnValue({ id: 2, name: 'URI' }),
             createMedicine: vi.fn().mockReturnValue({ id: 3, name: 'Paracetamol' })
@@ -432,21 +441,20 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
     let server: ApiServer;
     let db: any;
     let savedSettings: any[];
+    let rolePerms: Record<string, string[]>;
 
     beforeEach(() => {
         savedSettings = [];
+        rolePerms = {
+            receptionist: ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig'],
+            doctor: ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig', 'abdmTransferBundle']
+        };
         db = {
             beginWork: vi.fn(),
             endWork: vi.fn(),
-            getPermissions: vi.fn().mockImplementation((role: string) => {
-                if (role === 'receptionist') {
-                    return ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig'];
-                }
-                if (role === 'doctor') {
-                    return ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig', 'abdmTransferBundle'];
-                }
-                return [];
-            }),
+            getPermissions: vi.fn().mockImplementation((role: string) => rolePerms[role] || []),
+            getAllRoles: vi.fn().mockImplementation(() => Object.entries(rolePerms).map(([name, permissions]) => ({ name, permissions }))),
+            getAllOverrides: vi.fn().mockReturnValue([]),
             getSettings: vi.fn().mockReturnValue({}),
             hasCallbackSecret: vi.fn().mockReturnValue(false),
             saveSettings: vi.fn().mockImplementation((patch: any) => {
@@ -527,9 +535,7 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
     });
 
     it('serves parsed external records over LAN to desk readers', async () => {
-        db.getPermissions.mockImplementation((role: string) => role === 'admin'
-            ? []
-            : ['abdmHiuGetExternalRecords']);
+        rolePerms.receptionist = ['abdmHiuGetExternalRecords'];
         const response = await postIpc('abdmHiuGetExternalRecords', [{ patientId: 1 }], 'receptionist');
         expect(response.statusCode).toBe(200);
         expect(db.expireFetchedRecords).toHaveBeenCalled();
@@ -539,32 +545,24 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
     });
 
     it('restricts cache clearing to clinical roles over LAN', async () => {
-        db.getPermissions.mockImplementation((role: string) => role === 'admin'
-            ? []
-            : ['abdmHiuGetExternalRecords']);
+        rolePerms.receptionist = ['abdmHiuGetExternalRecords'];
+        rolePerms.doctor = [...rolePerms.doctor, 'abdmHiuClearExternalRecords'];
         const denied = await postIpc('abdmHiuClearExternalRecords', [{ patientId: 1 }], 'receptionist');
         expect(denied.statusCode).toBe(403);
         expect(db.clearFetchedRecords).not.toHaveBeenCalled();
 
-        db.getPermissions.mockImplementation((role: string) => role === 'admin'
-            ? []
-            : ['abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords']);
         const allowed = await postIpc('abdmHiuClearExternalRecords', [{ patientId: 1 }], 'doctor');
         expect(allowed.statusCode).toBe(200);
         expect(db.clearFetchedRecords).toHaveBeenCalledWith(1, expect.anything());
     });
 
     it('imports outside medications over LAN through the safety gate', async () => {
-        db.getPermissions.mockImplementation((role: string) => role === 'admin'
-            ? []
-            : ['abdmHiuGetExternalRecords']);
+        rolePerms.receptionist = ['abdmHiuGetExternalRecords'];
+        rolePerms.doctor = [...rolePerms.doctor, 'abdmHiuImportMedication'];
         const denied = await postIpc('abdmHiuImportMedication', [{ patientId: 1, medicine_name: 'Amlodipine' }], 'receptionist');
         expect(denied.statusCode).toBe(403);
 
         db.importExternalMedication = vi.fn().mockReturnValue({ id: 31, medicine_name: 'Amlodipine' });
-        db.getPermissions.mockImplementation((role: string) => role === 'admin'
-            ? []
-            : ['abdmHiuImportMedication']);
         const allowed = await postIpc('abdmHiuImportMedication', [{
             patientId: 1, medicine_name: 'Amlodipine', dosage: '5mg', frequency: '1-0-0', source: 'Outside record #4'
         }], 'doctor');
@@ -598,5 +596,52 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
             { bundle: { resourceType: 'Bundle', entry: [] } }
         ], 'nurse');
         expect(response.statusCode).toBe(403);
+    });
+});
+
+describe('HTTP /api/ipc override admin over LAN', () => {
+    let server: ApiServer;
+    let db: any;
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            getAllRoles: vi.fn().mockReturnValue([]),
+            getAllOverrides: vi.fn().mockReturnValue([]),
+            getUserOverrides: vi.fn().mockReturnValue([]),
+            saveUserOverride: vi.fn().mockReturnValue({ id: 3 }),
+            deleteUserOverride: vi.fn().mockReturnValue({ changes: 1 })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    async function postIpc(method: string, args: unknown[]) {
+        return server.inject({
+            method: 'POST',
+            url: `/api/ipc/${method}`,
+            headers: {
+                authorization: authHeader({ id: 1, role: 'admin' }),
+                'content-type': 'application/json'
+            },
+            payload: args
+        });
+    }
+
+    it('routes saveUserOverride through the DB alias instead of 404', async () => {
+        const input = { userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
+        const response = await postIpc('saveUserOverride', [input]);
+        expect(response.statusCode).toBe(200);
+        expect(db.saveUserOverride).toHaveBeenCalledWith(input, 1);
+    });
+
+    it('unpacks deleteUserOverride to positional args instead of silent no-op', async () => {
+        const response = await postIpc('deleteUserOverride', [{ userId: 20, action: 'updateQueueStatus' }]);
+        expect(response.statusCode).toBe(200);
+        expect(db.deleteUserOverride).toHaveBeenCalledWith(20, 'updateQueueStatus', 1);
     });
 });

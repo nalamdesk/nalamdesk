@@ -565,6 +565,14 @@ describe('SettingsComponent Validation', () => {
 
         component.selectedUsers = [];
         await component.deleteSelectedUsers();
+
+        component.selectedUsers = [{ id: 11 }, { id: 12 }];
+        mockData.invoke.mockResolvedValue({ changes: 1 });
+        dialogSpy.mockResolvedValue(true);
+        await component.deleteSelectedUsers();
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 11);
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 12);
+        expect(component.selectedUsers).toEqual([]);
         errorSpy.mockRestore();
     });
 

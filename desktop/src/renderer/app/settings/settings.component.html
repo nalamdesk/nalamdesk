@@ -417,16 +417,17 @@
               </div>
               <div class="border-t pt-3 space-y-2">
                 <div class="text-xs font-bold text-gray-700 uppercase tracking-wider">Grant or forbid an action</div>
-                <select [(ngModel)]="permissionForm.action" class="w-full border p-2 rounded text-sm font-mono">
+                <select [(ngModel)]="permissionForm.action" aria-label="Action to override" class="w-full border p-2 rounded text-sm font-mono">
                   <option value="">Select action...</option>
                   <option *ngFor="let a of DELEGATEABLE_ACTIONS" [value]="a">{{ a }}</option>
                 </select>
                 <div class="flex gap-2">
-                  <select [(ngModel)]="permissionForm.effect" class="border p-2 rounded text-sm">
+                  <select [(ngModel)]="permissionForm.effect" aria-label="Override effect" class="border p-2 rounded text-sm">
                     <option value="allow">Allow</option>
                     <option value="forbid">Forbid</option>
                   </select>
                   <input [(ngModel)]="permissionForm.reason" placeholder="Reason (required, audited)"
+                         aria-label="Reason for override (required, audited)"
                          class="flex-1 border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div class="flex justify-end">

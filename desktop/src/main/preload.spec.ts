@@ -73,4 +73,14 @@ describe('preload bridge surface', () => {
         expect(electron.invoke).toHaveBeenCalledWith('updates:download');
         expect(electron.on).toHaveBeenCalledWith('updates:event', expect.any(Function));
     });
+
+    it('exposes per-user override admin IPC', async () => {
+        const input = { userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
+        await api.db.getUserOverrides(20);
+        await api.db.saveUserOverride(input);
+        await api.db.deleteUserOverride({ userId: 20, action: 'updateQueueStatus' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:getUserOverrides', 20);
+        expect(electron.invoke).toHaveBeenCalledWith('db:saveUserOverride', input);
+        expect(electron.invoke).toHaveBeenCalledWith('db:deleteUserOverride', { userId: 20, action: 'updateQueueStatus' });
+    });
 });

@@ -332,9 +332,14 @@
                     <h2 class="text-xl md:text-2xl font-bold text-gray-800">Users</h2>
                     <p class="text-gray-500 text-xs md:text-sm">Manage roles and employee access.</p>
                 </div>
-                <button (click)="editUser({})" class="btn btn-primary btn-sm md:btn-md text-sm">
-                    + Add User
-                </button>
+                <div class="flex items-center gap-2">
+                    <button (click)="openRoles()" class="btn btn-sm md:btn-md text-sm border border-gray-300 text-gray-700 hover:bg-gray-50">
+                        Manage roles
+                    </button>
+                    <button (click)="editUser({})" class="btn btn-primary btn-sm md:btn-md text-sm">
+                        + Add User
+                    </button>
+                </div>
             </div>
 
             <!-- AG Table Container -->
@@ -433,6 +438,81 @@
                 <div class="flex justify-end">
                   <button (click)="addPermissionOverride()" [disabled]="!permissionForm.action || !permissionForm.reason.trim()"
                           class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors">Save override</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Roles Manager Modal -->
+        <div *ngIf="showRolesModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div class="bg-white rounded-lg w-full max-w-3xl max-h-[90vh] shadow-xl flex flex-col overflow-hidden">
+            <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
+              <div>
+                <h2 class="text-lg font-bold text-gray-800">Roles</h2>
+                <p class="text-xs text-gray-500">Built-in roles cannot be deleted. Custom roles apply on next check.</p>
+              </div>
+              <button (click)="closeRoles()" class="text-gray-500 hover:text-gray-600" aria-label="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6 space-y-3">
+              <div *ngFor="let r of roles" class="border border-gray-200 rounded-lg">
+                <div class="flex items-center justify-between gap-2 px-4 py-2.5">
+                  <div class="min-w-0">
+                    <span class="font-bold text-gray-800 text-sm">{{ r.name }}</span>
+                    <span *ngIf="isBuiltinRole(r.name)" class="ml-2 text-[10px] font-bold uppercase text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">built-in</span>
+                    <span class="ml-2 text-xs text-gray-500">{{ (r.permissions || []).length }} permissions · {{ userCountFor(r.name) }} users</span>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button (click)="editRole(r)" class="text-xs text-blue-600 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded">Edit</button>
+                    <button *ngIf="!isBuiltinRole(r.name)" (click)="deleteRoleUI(r.name)" class="text-xs text-red-600 border border-red-200 hover:bg-red-50 px-2.5 py-1 rounded">Delete</button>
+                  </div>
+                </div>
+                <div *ngIf="editingRole && !editingRole.isNew && editingRole.name === r.name" class="border-t px-4 py-3 space-y-2 bg-gray-50/50">
+                  <p class="text-[11px] text-gray-500">Clinical mutations and admin tools are excluded: their handlers admit only fixed role strings, so a custom-role grant would not take effect.</p>
+                  <div class="max-h-56 overflow-y-auto space-y-2">
+                    <div *ngFor="let group of pickableCatalog">
+                      <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">{{ group.label }}</div>
+                      <div class="flex flex-wrap gap-1.5 mt-1">
+                        <button *ngFor="let m of group.methods" type="button" (click)="toggleRolePermission(m)"
+                                class="px-2 py-1 rounded border font-mono text-[11px] transition"
+                                [ngClass]="editingRole.permissions.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'">{{ m }}</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex justify-end gap-2">
+                    <button (click)="editingRole = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded border bg-white transition-colors">Cancel</button>
+                    <button (click)="saveRole()" class="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 transition-colors">Save role</button>
+                  </div>
+                </div>
+              </div>
+              <div *ngIf="!editingRole || !editingRole.isNew">
+                <button (click)="startNewRole()" class="text-sm text-blue-600 border border-blue-200 hover:bg-blue-50 px-4 py-2 rounded font-medium transition-colors">+ New role</button>
+              </div>
+              <div *ngIf="editingRole?.isNew" class="border border-blue-200 rounded-lg p-4 space-y-2 bg-blue-50/40">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <input [(ngModel)]="editingRole!.name" placeholder="Role name (e.g. billing-clerk)"
+                         aria-label="New role name"
+                         class="border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                  <select [(ngModel)]="roleTemplateName" (ngModelChange)="applyRoleTemplate($event)" aria-label="Start from a permission template" class="border p-2 rounded text-sm bg-white">
+                    <option value="">Start from...</option>
+                    <option *ngFor="let t of ROLE_TEMPLATES" [value]="t.name">{{ t.name }} — {{ t.description }}</option>
+                  </select>
+                </div>
+                <div class="max-h-56 overflow-y-auto space-y-2 bg-white rounded border border-gray-200 p-3">
+                  <div *ngFor="let group of pickableCatalog">
+                    <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500">{{ group.label }}</div>
+                    <div class="flex flex-wrap gap-1.5 mt-1">
+                      <button *ngFor="let m of group.methods" type="button" (click)="toggleRolePermission(m)"
+                              class="px-2 py-1 rounded border font-mono text-[11px] transition"
+                              [ngClass]="editingRole!.permissions.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'">{{ m }}</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="flex justify-end gap-2">
+                  <button (click)="editingRole = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded border bg-white transition-colors">Cancel</button>
+                  <button (click)="saveRole()" [disabled]="!editingRole!.name.trim()" class="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors">Create role</button>
                 </div>
               </div>
             </div>
@@ -765,10 +845,7 @@
                         [class.border-red-500]="(role.invalid && role.touched) || (formSubmitted && !editingUser.role)"
                         [class.bg-gray-100]="editingUser.username === 'admin'"
                         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2">
-                        <option value="doctor">Doctor</option>
-                        <option value="nurse">Nurse</option>
-                        <option value="receptionist">Receptionist</option>
-                        <option value="admin">Admin</option>
+                        <option *ngFor="let r of availableRoleNames" [value]="r">{{ r.charAt(0).toUpperCase() + r.slice(1) }}</option>
                     </select>
                     <p *ngIf="editingUser.username === 'admin'" class="text-[10px] text-blue-600 mt-1 font-medium">
                         System Administrator role is mandatory.</p>

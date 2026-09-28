@@ -890,7 +890,6 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         });
 
         it('manages per-user permission overrides with mandatory reasons', () => {
-            expect(service.getUserOverrides(20)).toEqual([]);
             expect(() => service.setUserOverride({ userId: 20, action: 'updateQueueStatus', effect: 'maybe', reason: 'x' }, 99))
                 .toThrow('Unknown override effect');
             expect(() => service.setUserOverride({ userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: '  ' }, 99))
@@ -920,6 +919,33 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             const del = afterDelete.find((a: any) =>
                 a.action === 'DELETE' && a.table_name === 'user_permission_overrides');
             expect(del.record_id).toBe(updated.id);
+            service.deleteUserOverride(20, 'updateQueueStatus', 99);
+            expect(service.getUserOverrides(20)).toEqual([]);
+        });
+
+        it('protects built-in and assigned roles from deletion', () => {
+            expect(() => service.deleteRole('admin', 99)).toThrow('Built-in');
+            expect(() => service.deleteRole('Doctor', 99)).toThrow('Built-in');
+            expect(() => service.saveRole('', [])).toThrow('required');
+            expect(() => service.saveRole('x', [])).toThrow('2-40 chars');
+            expect(() => service.saveRole('bad name!', [])).toThrow('2-40 chars');
+            service.saveRole('Billing-Clerk', ['getDashboardStats']);
+            expect(service.getAllRoles().map((r: any) => r.name)).toContain('billing-clerk');
+            db.prepare("UPDATE users SET role = 'billing-clerk' WHERE id = 20").run();
+            expect(() => service.deleteRole('billing-clerk', 99)).toThrow('still assigned');
+            db.prepare("UPDATE users SET role = 'nurse' WHERE id = 20").run();
+            expect(() => service.deleteRole('billing-clerk', 99)).not.toThrow();
+            expect(service.getAllRoles().map((r: any) => r.name)).not.toContain('billing-clerk');
+        });
+
+        it('serves sanitized settings without secrets', () => {
+            db.prepare(`INSERT INTO settings (clinic_name, abdm_callback_secret)
+                VALUES ('Test Clinic', 'super-secret')`).run();
+            const settings: any = service.getSanitizedSettings();
+            expect(settings?.clinic_name).toBe('Test Clinic');
+            expect('abdm_callback_secret' in settings).toBe(false);
+            expect('callback_secret' in settings).toBe(false);
+        });
         });
 
         it('keeps consent transitions monotonic', () => {
@@ -981,4 +1007,3 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getFetchedRecords(1, true)).toHaveLength(2);
         });
     });
-});

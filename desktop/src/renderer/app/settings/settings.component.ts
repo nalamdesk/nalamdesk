@@ -11,6 +11,7 @@ import { DatePickerComponent } from '../shared/components/date-picker/date-picke
 import { CatalogSettingsComponent } from './catalog-settings.component';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
+import { METHOD_CATALOG, ROLE_TEMPLATES, HANDLER_GATED_ACTIONS } from '../../../shared/access';
 import { AppUpdateService } from '../services/update.service';
 
 @Component({
@@ -303,6 +304,7 @@ export class SettingsComponent implements OnInit {
     }
     if (this.currentUser?.role === 'admin') {
       this.loadUsers();
+      this.loadRoles();
     }
   }
 
@@ -718,6 +720,132 @@ export class SettingsComponent implements OnInit {
   // Batch Selection
   selectedUsers: any[] = [];
 
+  readonly METHOD_CATALOG = METHOD_CATALOG;
+  readonly ROLE_TEMPLATES = ROLE_TEMPLATES;
+
+  /** Catalog minus actions whose handler role-strings would reject custom roles. */
+  get pickableCatalog() {
+    return METHOD_CATALOG
+      .map((group) => ({
+        label: group.label,
+        methods: group.methods.filter((m) => !HANDLER_GATED_ACTIONS.has(m))
+      }))
+      .filter((group) => group.methods.length > 0);
+  }
+
+  isPickableAction(action: string): boolean {
+    return !HANDLER_GATED_ACTIONS.has(action);
+  }
+
+  // Custom roles (admin-only surface)
+  roles: any[] = [];
+  showRolesModal = false;
+  editingRole: { name: string; isNew: boolean; permissions: string[] } | null = null;
+  roleTemplateName = '';
+
+  get availableRoleNames(): string[] {
+    const names = (this.roles || []).map((r: any) => r?.name).filter(Boolean);
+    return names.length > 0 ? names : ['admin', 'doctor', 'nurse', 'receptionist'];
+  }
+
+  isBuiltinRole(name: string): boolean {
+    return ['admin', 'doctor', 'nurse', 'receptionist'].includes(String(name || '').toLowerCase());
+  }
+
+  userCountFor(roleName: string): number {
+    return (this.users || []).filter((u: any) =>
+      String(u?.role || '').toLowerCase() === String(roleName || '').toLowerCase()).length;
+  }
+
+  async openRoles(): Promise<void> {
+    this.showRolesModal = true;
+    this.editingRole = null;
+    await this.loadRoles();
+  }
+
+  closeRoles(): void {
+    this.showRolesModal = false;
+    this.editingRole = null;
+  }
+
+  async loadRoles(): Promise<void> {
+    try {
+      const rows = await this.dataService.invoke<any[]>('getAllRoles');
+      this.ngZone.run(() => { this.roles = rows || []; });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  startNewRole(): void {
+    this.roleTemplateName = '';
+    this.editingRole = { name: '', isNew: true, permissions: [] };
+  }
+
+  editRole(role: any): void {
+    this.roleTemplateName = '';
+    this.editingRole = {
+      name: role?.name || '',
+      isNew: false,
+      permissions: [...(role?.permissions || [])]
+    };
+  }
+
+  applyRoleTemplate(templateName: string): void {
+    if (!this.editingRole) return;
+    const template = ROLE_TEMPLATES.find((t) => t.name === templateName);
+    this.editingRole.permissions = template ? [...template.permissions] : [];
+  }
+
+  toggleRolePermission(method: string): void {
+    if (!this.editingRole) return;
+    const selected = this.editingRole.permissions;
+    this.editingRole.permissions = selected.includes(method)
+      ? selected.filter((m) => m !== method)
+      : [...selected, method];
+  }
+
+  async saveRole(): Promise<void> {
+    if (!this.editingRole || !this.editingRole.name.trim()) return;
+    try {
+      await this.dataService.invoke('saveRole', {
+        name: this.editingRole.name.trim(),
+        permissions: this.editingRole.permissions
+      });
+      this.toastService?.success('Role saved.', 'Saved');
+      this.editingRole = null;
+      await this.loadRoles();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Save failed',
+        message: e instanceof Error ? e.message : 'Could not save the role.',
+        type: 'error'
+      });
+    }
+  }
+
+  async deleteRoleUI(name: string): Promise<void> {
+    const confirmed = await this.dialogService?.open({
+      title: `Delete role '${name}'?`,
+      message: 'Users holding this role lose access until reassigned. Built-in roles cannot be deleted.',
+      type: 'confirm',
+      confirmText: 'Delete',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
+    try {
+      await this.dataService.invoke('deleteRole', name);
+      this.toastService?.success('Role deleted.', 'Saved');
+      await this.loadRoles();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Delete failed',
+        message: e instanceof Error ? e.message : 'Could not delete the role.',
+        type: 'error'
+      });
+    }
+  }
+
   /** Actions an admin may delegate to one user without changing their role. */
   readonly DELEGATEABLE_ACTIONS: string[] = [
     'getQueue', 'addToQueue', 'removeFromQueue', 'updateQueueStatus',
@@ -725,13 +853,11 @@ export class SettingsComponent implements OnInit {
     'getVitals', 'saveVitals', 'getEncounterVitals', 'getVitalsHistory',
     'getPatients', 'getPatientById', 'getVisits', 'getAllVisits',
     'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment',
-    'getAllergies', 'saveAllergy', 'deleteAllergy',
-    'getConditions', 'saveCondition', 'deleteCondition',
-    'getMedications', 'saveMedication', 'deleteMedication', 'getPatientSafetyContext',
+    'getAllergies', 'getConditions', 'getMedications', 'getPatientSafetyContext',
     'searchConditions', 'searchMedicines', 'createCondition', 'createMedicine',
     'abdmAbhaLookup', 'abdmAbhaRequestOtp', 'abdmAbhaConfirmOtp', 'abdmAbhaCard',
     'abdmLinkAbha', 'findPatientByAbha', 'abdmGetShareTokens', 'abdmAcceptShareToken',
-    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox', 'abdmGetConfig',
+    'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmGetConfig',
     'abdmHiuGetPublicKey', 'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords',
     'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'
   ];

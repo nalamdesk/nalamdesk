@@ -70,6 +70,14 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
         }
         case 'saveVitals':
             return [args[0], actingUserId];
+        case 'saveRole': {
+            const payload = payloadObject(args[0]);
+            return [payload['name'], payload['permissions'], actingUserId];
+        }
+        case 'deleteRole': {
+            const payload = payloadObject(args[0]);
+            return [payload['name'] ?? args[0], actingUserId];
+        }
         case 'saveUserOverride': {
             return [payloadObject(args[0]), actingUserId];
         }

@@ -419,8 +419,7 @@ describe('SettingsComponent Validation', () => {
         expect(payload2.callback_secret).toBe('a-very-long-shared-secret');
     });
 
-    it('manages per-user overrides through the admin IPC', async () => {
-        mockData.invoke.mockImplementation((method: string) => {
+    it('manages per-user overrides through the admin IPC', async () => {        mockData.invoke.mockImplementation((method: string) => {
             if (method === 'getUserOverrides') return Promise.resolve([{ action: 'updateQueueStatus', effect: 'allow' }]);
             if (method === 'saveUserOverride') return Promise.resolve({ id: 1 });
             return Promise.resolve(null);
@@ -446,6 +445,44 @@ describe('SettingsComponent Validation', () => {
         expect(component.permissionTarget).toBeNull();
     });
 
+    it('manages custom roles from templates', async () => {
+        (component as any).dialogService = { open: (...args: any[]) => Promise.resolve(true) };
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'getAllRoles') return Promise.resolve([
+                { name: 'admin', permissions: [] },
+                { name: 'billing-clerk', permissions: ['getDashboardStats'] }
+            ]);
+            return Promise.resolve(null);
+        });
+        await component.openRoles();
+        expect(component.roles).toHaveLength(2);
+        expect(component.availableRoleNames).toContain('billing-clerk');
+        expect(component.isBuiltinRole('admin')).toBe(true);
+        expect(component.isBuiltinRole('billing-clerk')).toBe(false);
+
+        component.startNewRole();
+        component.applyRoleTemplate('Front Desk');
+        expect(component.editingRole?.permissions).toContain('addToQueue');
+        expect(component.editingRole?.permissions).not.toContain('savePatient');
+        component.toggleRolePermission('addToQueue');
+        expect(component.editingRole?.permissions).not.toContain('addToQueue');
+
+        // Handler-gated clinical mutations stay out of the custom-role picker.
+        const pickable = component.pickableCatalog.flatMap((g: any) => g.methods);
+        expect(pickable).not.toContain('saveVisit');
+        expect(pickable).not.toContain('saveAllergy');
+        expect(pickable).toContain('addToQueue');
+
+        component.editingRole = { name: 'billing-clerk', isNew: false, permissions: ['getDashboardStats'] };
+        await component.saveRole();
+        expect(mockData.invoke).toHaveBeenCalledWith('saveRole', expect.objectContaining({
+            name: 'billing-clerk', permissions: ['getDashboardStats']
+        }));
+        expect(component.editingRole).toBeNull();
+
+        await component.deleteRoleUI('billing-clerk');
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteRole', 'billing-clerk');
+    });
     it('drives the row Permissions affordance through the grid params', () => {
         const actionsCol = (component as any).userColumnDefs.find((c: any) => c.headerName === 'Actions');
         const params = actionsCol.cellRendererParams;
@@ -471,6 +508,72 @@ describe('SettingsComponent Validation', () => {
         expect(component.permissionTarget.id).toBe(7);
         expect(component.permissionOverrides).toEqual([]);
         component.closePermissions();
+    });
+
+    it('covers role manager helpers, guards, and failure paths', async () => {
+        const dialogSpy = vi.fn(() => Promise.resolve(false));
+        (component as any).dialogService = { open: dialogSpy };
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        component.roles = [];
+        component.users = [];
+        expect(component.availableRoleNames).toEqual(['admin', 'doctor', 'nurse', 'receptionist']);
+        expect(component.userCountFor('nurse')).toBe(0);
+        expect(component.isPickableAction('saveVisit')).toBe(false);
+        expect(component.isPickableAction('addToQueue')).toBe(true);
+
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'getUsers') return Promise.resolve([{ id: 2, role: 'nurse' }]);
+            if (method === 'getAllRoles') return Promise.resolve([{ name: 'nurse', permissions: [] }]);
+            return Promise.resolve(null);
+        });
+        component.ngOnInit();
+        await vi.waitFor(() => expect(component.roles).toHaveLength(1));
+        expect(component.userCountFor('nurse')).toBe(1);
+
+        component.editRole({ name: 'nurse', permissions: ['getQueue'] });
+        expect(component.editingRole).toMatchObject({ name: 'nurse', isNew: false });
+        component.applyRoleTemplate('No such template');
+        expect(component.editingRole?.permissions).toEqual([]);
+        component.toggleRolePermission('getQueue');
+        expect(component.editingRole?.permissions).toEqual(['getQueue']);
+        component.editingRole = null;
+        component.toggleRolePermission('getQueue');
+        component.applyRoleTemplate('Front Desk');
+        component.closeRoles();
+        expect(component.showRolesModal).toBe(false);
+
+        component.editingRole = { name: '   ', isNew: true, permissions: [] };
+        mockData.invoke.mockClear();
+        await component.saveRole();
+        expect(mockData.invoke).not.toHaveBeenCalledWith('saveRole', expect.anything());
+
+        mockData.invoke.mockRejectedValue(new Error('db down'));
+        component.editingRole = { name: 'x-ray', isNew: true, permissions: [] };
+        await component.saveRole();
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Save failed' }));
+        await component.loadRoles();
+        expect(errorSpy).toHaveBeenCalled();
+
+        mockData.invoke.mockClear();
+        await component.deleteRoleUI('nurse');
+        expect(mockData.invoke).not.toHaveBeenCalledWith('deleteRole', expect.anything());
+        dialogSpy.mockResolvedValue(true);
+        mockData.invoke.mockRejectedValue(new Error('db down'));
+        await component.deleteRoleUI('nurse');
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Delete failed' }));
+
+        component.selectedUsers = [];
+        await component.deleteSelectedUsers();
+
+        component.selectedUsers = [{ id: 11 }, { id: 12 }];
+        mockData.invoke.mockResolvedValue({ changes: 1 });
+        dialogSpy.mockResolvedValue(true);
+        await component.deleteSelectedUsers();
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 11);
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 12);
+        expect(component.selectedUsers).toEqual([]);
+        errorSpy.mockRestore();
     });
 
     it('surfaces override load and mutation failures as dialogs', async () => {

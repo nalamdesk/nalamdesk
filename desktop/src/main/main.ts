@@ -893,6 +893,24 @@ handleGuardedDb('db:deleteUser', (_, id) => {
     if (user.role !== 'admin') throw new Error('Forbidden');
     return databaseService.deleteUser(id);
 });
+handleGuardedDb('db:saveRole', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    const args = input || {};
+    const result = databaseService.saveRole(args.name, Array.isArray(args.permissions) ? args.permissions : [], user.id);
+    refreshAccessPolicy();
+    return result;
+});
+handleGuardedDb('db:deleteRole', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    const args = typeof input === 'string' ? { name: input } : input || {};
+    const result = databaseService.deleteRole(args.name, user.id);
+    refreshAccessPolicy();
+    return result;
+});
 // Per-user permission overrides: admin-only. Every mutation rebuilds the
 // compiled policy set so the next check sees it.
 handleGuardedDb('db:getUserOverrides', (_, userId) => {

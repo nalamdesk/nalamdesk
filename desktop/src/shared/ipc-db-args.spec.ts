@@ -32,6 +32,15 @@ describe('resolveDbMethodArgs addToQueue', () => {
             .toEqual([{ tokenId: 7 }, 99]);
     });
 
+    it('unpacks role mutations for both transports', () => {
+        expect(resolveDbMethodArgs('saveRole', [{ name: 'Billing-Clerk', permissions: ['getQueue'] }], 99))
+            .toEqual(['Billing-Clerk', ['getQueue'], 99]);
+        expect(resolveDbMethodArgs('deleteRole', ['billing-clerk'], 99))
+            .toEqual(['billing-clerk', 99]);
+        expect(resolveDbMethodArgs('deleteRole', [{ name: 'billing-clerk' }], 99))
+            .toEqual(['billing-clerk', 99]);
+    });
+
     it('unpacks override mutations for both transports', () => {
         const input = { userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
         expect(resolveDbMethodArgs('saveUserOverride', [input], 99))

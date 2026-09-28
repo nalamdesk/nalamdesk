@@ -83,4 +83,28 @@ describe('preload bridge surface', () => {
         expect(electron.invoke).toHaveBeenCalledWith('db:saveUserOverride', input);
         expect(electron.invoke).toHaveBeenCalledWith('db:deleteUserOverride', { userId: 20, action: 'updateQueueStatus' });
     });
+
+    it('exposes custom role admin IPC', async () => {
+        await api.db.getAllRoles();
+        await api.db.saveRole({ name: 'billing-clerk', permissions: ['getQueue'] });
+        await api.db.deleteRole('billing-clerk');
+        expect(electron.invoke).toHaveBeenCalledWith('db:getAllRoles');
+        expect(electron.invoke).toHaveBeenCalledWith('db:saveRole', { name: 'billing-clerk', permissions: ['getQueue'] });
+        expect(electron.invoke).toHaveBeenCalledWith('db:deleteRole', 'billing-clerk');
+    });
+
+    it('exposes HIU record fetch and ABDM intake IPC', async () => {
+        await api.db.abdmHiuFetchRecords({ consentId: 1 });
+        await api.db.abdmHiuGetExternalRecords({ patientId: 1 });
+        await api.db.abdmHiuClearExternalRecords({ patientId: 1 });
+        await api.db.abdmHiuImportMedication({ patientId: 1, medicine_name: 'Amlodipine' });
+        await api.db.abdmAbhaLookup({ abhaAddress: 'x@sbx' });
+        await api.db.abdmAbhaCard({ id: 1 });
+        expect(electron.invoke).toHaveBeenCalledWith('db:abdmHiuFetchRecords', { consentId: 1 });
+        expect(electron.invoke).toHaveBeenCalledWith('db:abdmHiuGetExternalRecords', { patientId: 1 });
+        expect(electron.invoke).toHaveBeenCalledWith('db:abdmHiuClearExternalRecords', { patientId: 1 });
+        expect(electron.invoke).toHaveBeenCalledWith('db:abdmHiuImportMedication', { patientId: 1, medicine_name: 'Amlodipine' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:abdmAbhaLookup', { abhaAddress: 'x@sbx' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:abdmAbhaCard', { id: 1 });
+    });
 });

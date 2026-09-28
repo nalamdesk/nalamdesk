@@ -493,8 +493,9 @@
               <div *ngIf="editingRole?.isNew" class="border border-blue-200 rounded-lg p-4 space-y-2 bg-blue-50/40">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <input [(ngModel)]="editingRole!.name" placeholder="Role name (e.g. billing-clerk)"
+                         aria-label="New role name"
                          class="border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                  <select [(ngModel)]="roleTemplateName" (ngModelChange)="applyRoleTemplate($event)" class="border p-2 rounded text-sm bg-white">
+                  <select [(ngModel)]="roleTemplateName" (ngModelChange)="applyRoleTemplate($event)" aria-label="Start from a permission template" class="border p-2 rounded text-sm bg-white">
                     <option value="">Start from...</option>
                     <option *ngFor="let t of ROLE_TEMPLATES" [value]="t.name">{{ t.name }} — {{ t.description }}</option>
                   </select>

@@ -926,10 +926,25 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         it('protects built-in and assigned roles from deletion', () => {
             expect(() => service.deleteRole('admin', 99)).toThrow('Built-in');
             expect(() => service.deleteRole('Doctor', 99)).toThrow('Built-in');
+            expect(() => service.saveRole('', [])).toThrow('required');
+            expect(() => service.saveRole('x', [])).toThrow('2-40 chars');
+            expect(() => service.saveRole('bad name!', [])).toThrow('2-40 chars');
             service.saveRole('Billing-Clerk', ['getDashboardStats']);
             expect(service.getAllRoles().map((r: any) => r.name)).toContain('billing-clerk');
+            db.prepare("UPDATE users SET role = 'billing-clerk' WHERE id = 20").run();
+            expect(() => service.deleteRole('billing-clerk', 99)).toThrow('still assigned');
+            db.prepare("UPDATE users SET role = 'nurse' WHERE id = 20").run();
             expect(() => service.deleteRole('billing-clerk', 99)).not.toThrow();
             expect(service.getAllRoles().map((r: any) => r.name)).not.toContain('billing-clerk');
+        });
+
+        it('serves sanitized settings without secrets', () => {
+            db.prepare(`INSERT INTO settings (clinic_name, abdm_callback_secret)
+                VALUES ('Test Clinic', 'super-secret')`).run();
+            const settings: any = service.getSanitizedSettings();
+            expect(settings?.clinic_name).toBe('Test Clinic');
+            expect('abdm_callback_secret' in settings).toBe(false);
+            expect('callback_secret' in settings).toBe(false);
         });
         });
 

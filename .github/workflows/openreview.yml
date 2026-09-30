@@ -14,6 +14,12 @@ permissions:
   issues: write
   contents: read
 
+# Full re-review on every push until upstream incremental mode lands
+# (openreview#18) — cancel superseded runs to avoid burning provider budget.
+concurrency:
+  group: openreview-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     # Same-repo PRs only (no fork code near secrets), and /review restricted
@@ -24,11 +30,11 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event.issue.pull_request &&
        github.event.comment.body == '/review' &&
-       contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association))
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: sankara-sabapathy/openreview@v0.6.0
+      - uses: sankara-sabapathy/openreview@10c6c0db08f1d6e25591526d07f9a0093c0e72f3 # v0.6.0: exact SHA, tags are mutable
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           opencode-api-key: ${{ secrets.OPENCODE_API_KEY }}

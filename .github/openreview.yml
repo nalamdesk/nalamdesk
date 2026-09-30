@@ -26,7 +26,7 @@ providers:
     # DeepSeek reasons by default and may leave message.content empty (the
     # reviewer's parser reads content only). Disable thinking so the JSON
     # findings land in content. Revert if the gateway rejects the field.
-    extra_body: { thinking: { type: disabled } }
+    extra_body: { thinking: { type: 'disabled' } }
 
 reviews:
   - id: correctness

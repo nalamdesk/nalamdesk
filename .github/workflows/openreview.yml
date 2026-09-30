@@ -1,0 +1,26 @@
+name: OpenReview
+
+# AI code review (advisory only): runs on PR open and every push, plus
+# `/review` comments. Verdicts are comment-mode and never fail CI — the
+# human-enforced P1 rule in the merge workflow stays authoritative.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
+jobs:
+  review:
+    if: github.event_name == 'pull_request' || (github.event.issue.pull_request && contains(github.event.comment.body, '/review'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sankara-sabapathy/openreview@v0.6.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          opencode-api-key: ${{ secrets.OPENCODE_API_KEY }}

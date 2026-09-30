@@ -107,4 +107,13 @@ describe('preload bridge surface', () => {
         expect(electron.invoke).toHaveBeenCalledWith('db:abdmAbhaLookup', { abhaAddress: 'x@sbx' });
         expect(electron.invoke).toHaveBeenCalledWith('db:abdmAbhaCard', { id: 1 });
     });
+
+    it('exposes demo seed admin IPC', async () => {
+        await api.db.getDemoSeedState();
+        await api.db.seedDemoData();
+        await api.db.clearDemoData();
+        expect(electron.invoke).toHaveBeenCalledWith('db:getDemoSeedState');
+        expect(electron.invoke).toHaveBeenCalledWith('db:seedDemoData');
+        expect(electron.invoke).toHaveBeenCalledWith('db:clearDemoData');
+    });
 });

@@ -9,6 +9,7 @@ import { PatientService } from '../services/patient.service';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 import { QueueCountService } from '../shared/services/queue-count.service';
+import { TourService } from '../shared/services/tour.service';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -33,6 +34,36 @@ export function greetingForLocalHour(hour: number): string {
                 </h1>
                 <p class="text-base-content/60 mt-1">Here's what's happening at {{ clinicName || 'your clinic' }} today.</p>
             </div>
+        </div>
+
+        <!-- First-run onboarding banner -->
+        <div *ngIf="showWelcomeBanner" class="mb-8 rounded-2xl border border-blue-200 bg-blue-50/70 p-5 flex flex-col md:flex-row md:items-center gap-4">
+          <div class="flex-1">
+            <h2 class="text-lg font-bold text-gray-800" *ngIf="!demoSeeded">Welcome to NalamDesk</h2>
+            <h2 class="text-lg font-bold text-gray-800" *ngIf="demoSeeded">You are exploring demo data</h2>
+            <p class="text-sm text-gray-600 mt-1" *ngIf="!demoSeeded">
+              Take a 2-minute guided tour of the queue, patients, visits, and settings — or load a demo clinic to click through with realistic data.
+            </p>
+            <p class="text-sm text-gray-600 mt-1" *ngIf="demoSeeded">
+              5 demo patients with queue entries, vitals, and an appointment. Your own records stay untouched, and everything demo removes in one click.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 shrink-0">
+            <button (click)="startTour()" class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors">
+              {{ demoSeeded ? 'Take the tour' : 'Start guided tour' }}
+            </button>
+            <button *ngIf="!demoSeeded && currentUser?.role === 'admin'" (click)="loadDemoData()" [disabled]="demoSeedLoading"
+                    class="px-4 py-2 text-sm font-medium rounded border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors">
+              {{ demoSeedLoading ? 'Loading...' : 'Load demo data' }}
+            </button>
+            <button *ngIf="demoSeeded && currentUser?.role === 'admin'" (click)="removeDemoData()" [disabled]="demoSeedLoading"
+                    class="px-4 py-2 text-sm font-medium rounded border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors">
+              {{ demoSeedLoading ? 'Working...' : 'Remove demo data' }}
+            </button>
+            <button *ngIf="!demoSeeded" (click)="dismissWelcomeBanner()" class="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 px-1">
+              Dismiss
+            </button>
+          </div>
         </div>
 
         <!-- Stats Grid -->
@@ -214,6 +245,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   isSyncing = false;
   todayAppointments: any[] = [];
 
+  // First-run onboarding: demo seed state (admin-only IPC) and banner.
+  demoSeeded = false;
+  demoSeedLoading = false;
+  showWelcomeBanner = false;
+
   constructor(
     private router: Router,
     private ngZone: NgZone,
@@ -223,7 +259,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private patientService: PatientService,
     private dialogService?: DialogService,
     private toastService?: ToastService,
-    private queueCountService?: QueueCountService
+    private queueCountService?: QueueCountService,
+    private tourService?: TourService
   ) { }
 
   async refresh() {
@@ -240,7 +277,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.currentUser = this.authService.getUser();
-    this.loadData();
+    void this.loadData();
 
     // Live Clock
     this.timer = setInterval(() => {
@@ -262,6 +299,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       this.ngZone.run(() => {
         this.stats = dashboardStats || { totalPatients: 0, todayVisits: 0 };
       });
+      await this.loadOnboardingState();
 
       // Load Queue Count
       const queue = await this.dataService.invoke<any>('getQueue');
@@ -293,9 +331,106 @@ export class DashboardComponent implements OnInit, OnDestroy {
   async loadAppointments() {
     const today = new Date().toISOString().split('T')[0];
     const appts = await this.cloudService.getAppointments(today);
-    // Filter out Checked In? 
+    // Filter out Checked In?
     // Status: CONFIRMED, CHECKED_IN. We want to show CONFIRMED ones to check them in.
     this.todayAppointments = (appts || []).filter((a: any) => a.status === 'CONFIRMED');
+  }
+
+  // -- Onboarding -----------------------------------------------------
+  private static readonly DEMO_BANNER_DISMISSED_KEY = 'nd.demo-banner.dismissed';
+
+  private get isAdmin(): boolean {
+    return this.currentUser?.role === 'admin';
+  }
+
+  async loadOnboardingState(): Promise<void> {
+    let seeded = false;
+    if (this.isAdmin) {
+      try {
+        const state = await this.dataService.invoke<any>('getDemoSeedState');
+        seeded = !!state?.seeded;
+      } catch (e) {
+        console.error('[Dashboard] Demo seed state unavailable', e);
+      }
+    }
+    let dismissed = false;
+    try {
+      dismissed = localStorage.getItem(DashboardComponent.DEMO_BANNER_DISMISSED_KEY) === '1';
+    } catch { /* ignore */ }
+    this.ngZone.run(() => {
+      this.demoSeeded = seeded;
+      // Seeded clinics always show the banner (the only remove path).
+      // Empty clinics show it once until dismissed.
+      this.showWelcomeBanner = seeded || ((this.stats?.totalPatients || 0) === 0 && !dismissed);
+    });
+  }
+
+  startTour(): void {
+    this.tourService?.start(this.currentUser?.role || '');
+  }
+
+  dismissWelcomeBanner(): void {
+    try {
+      localStorage.setItem(DashboardComponent.DEMO_BANNER_DISMISSED_KEY, '1');
+    } catch { /* ignore */ }
+    this.showWelcomeBanner = false;
+  }
+
+  async loadDemoData(): Promise<void> {
+    await this.runDemoMutation({
+      method: 'seedDemoData',
+      confirmTitle: 'Load demo clinic data?',
+      confirmMessage: 'Adds 5 demo patients, queue entries, vitals, and an appointment so you can explore every page. Only available while the clinic is empty, and removable in one click.',
+      confirmText: 'Load demo data',
+      cancelText: 'Cancel',
+      successMessage: 'Demo clinic loaded.',
+      successTitle: 'Welcome',
+      failureTitle: 'Load failed',
+      failureMessage: 'Could not load demo data.'
+    });
+  }
+
+  async removeDemoData(): Promise<void> {
+    await this.runDemoMutation({
+      method: 'clearDemoData',
+      confirmTitle: 'Remove demo data?',
+      confirmMessage: 'Deletes exactly the demo patients, queue entries, vitals, and appointment created by the seed. Anything you added yourself stays.',
+      confirmText: 'Remove',
+      cancelText: 'Keep',
+      successMessage: 'Demo data removed.',
+      successTitle: 'Done',
+      failureTitle: 'Remove failed',
+      failureMessage: 'Could not remove demo data.'
+    });
+  }
+
+  private async runDemoMutation(options: {
+    method: string; confirmTitle: string; confirmMessage: string; confirmText: string; cancelText: string;
+    successMessage: string; successTitle: string; failureTitle: string; failureMessage: string;
+  }): Promise<void> {
+    if (!this.isAdmin || this.demoSeedLoading) return;
+    const confirmed = await this.dialogService?.open({
+      title: options.confirmTitle,
+      message: options.confirmMessage,
+      type: 'confirm',
+      confirmText: options.confirmText,
+      cancelText: options.cancelText
+    });
+    if (!confirmed) return;
+    this.demoSeedLoading = true;
+    try {
+      await this.dataService.invoke(options.method);
+      this.toastService?.success(options.successMessage, options.successTitle);
+      await this.loadData();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: options.failureTitle,
+        message: e instanceof Error ? e.message : options.failureMessage,
+        type: 'error'
+      });
+    } finally {
+      this.ngZone.run(() => { this.demoSeedLoading = false; });
+    }
   }
 
   async checkIn(appt: any) {
@@ -327,7 +462,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
         message: 'Some essentials are missing. Opened the patient chart to complete them before check-in.',
         type: 'warning'
       });
-      this.router.navigate(['/patients'], { queryParams: { editId: appt.patient_id } });
+      void this.router.navigate(['/patients'], { queryParams: { editId: appt.patient_id } });
       return;
     }
 
@@ -339,13 +474,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       this.toastService?.success(`${appt.patient_name} is now in the live queue.`, 'Checked in');
       void this.queueCountService?.refresh();
-      this.loadData(); // Refresh list
+      void this.loadData(); // Refresh list
     } catch (e: any) {
       console.error(e);
       if (e.message && e.message.includes('already in queue')) {
         // Just update status if already keyed
         await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
-        this.loadData();
+        void this.loadData();
       } else {
         await this.dialogService?.open({
           title: 'Check-in failed',
@@ -357,14 +492,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   goToPatients() {
-    this.router.navigate(['/patients']);
+    void this.router.navigate(['/patients']);
   }
 
   goToQueue() {
-    this.router.navigate(['/queue']);
+    void this.router.navigate(['/queue']);
   }
 
   goToSettings() {
-    this.router.navigate(['/settings']);
+    void this.router.navigate(['/settings']);
   }
 }

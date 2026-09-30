@@ -50,4 +50,10 @@ describe('resolveDbMethodArgs addToQueue', () => {
         expect(resolveDbMethodArgs('getUserOverrides', [20], 99))
             .toEqual([20]);
     });
+
+    it('unpacks demo seed mutations for both transports', () => {
+        expect(resolveDbMethodArgs('seedDemoData', [], 99)).toEqual([99]);
+        expect(resolveDbMethodArgs('clearDemoData', [], 99)).toEqual([99]);
+        expect(resolveDbMethodArgs('getDemoSeedState', [], 99)).toEqual([]);
+    });
 });

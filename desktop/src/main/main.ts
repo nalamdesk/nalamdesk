@@ -211,7 +211,7 @@ const restoreOperationGate = new RestoreOperationGate();
 // ... (cloud sync init logic)
 console.log('[Main] Starting ApiServer...');
 try {
-    apiServer.start(apiPort); // Fire and forget (it logs its own success)
+    void apiServer.start(apiPort); // Fire and forget (it logs its own success)
     console.log('[Main] ApiServer start command issued.');
 } catch (e) {
     console.error('[Main] ApiServer failed to start immediately:', e);
@@ -267,7 +267,7 @@ async function createWindow() {
 }
 
 function initializeApp() {
-    app.whenReady().then(() => {
+    void app.whenReady().then(() => {
         console.log('[Main] app.whenReady fired');
         // 1. CSP (Content Security Policy)
         session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -331,10 +331,10 @@ function initializeApp() {
             callback({ cancel: true });
         });
 
-        createWindow();
+        void createWindow();
 
         app.on('activate', () => {
-            if (BrowserWindow.getAllWindows().length === 0) createWindow();
+            if (BrowserWindow.getAllWindows().length === 0) void createWindow();
         });
     });
 }
@@ -910,6 +910,26 @@ handleGuardedDb('db:deleteRole', (_, input) => {
     const result = databaseService.deleteRole(args.name, user.id);
     refreshAccessPolicy();
     return result;
+});
+// Demo seed data (first-run onboarding): admin-only. No policy refresh:
+// grants are untouched, only clinic rows change.
+handleGuardedDb('db:getDemoSeedState', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return databaseService.getDemoSeedState();
+});
+handleGuardedDb('db:seedDemoData', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return databaseService.seedDemoData(user.id);
+});
+handleGuardedDb('db:clearDemoData', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return databaseService.clearDemoData(user.id);
 });
 // Per-user permission overrides: admin-only. Every mutation rebuilds the
 // compiled policy set so the next check sees it.

@@ -114,4 +114,116 @@ describe('DashboardComponent', () => {
         expect(mockDataService.invoke).not.toHaveBeenCalledWith('addToQueue', expect.anything());
         expect(cloud.saveAppointment).not.toHaveBeenCalled();
     });
+
+    describe('onboarding banner and demo seed', () => {
+        const tour = { start: vi.fn() };
+
+        beforeEach(() => {
+            localStorage.clear();
+            component.currentUser = { id: 1, role: 'admin', name: 'Admin' };
+        });
+
+        function fullComponent() {
+            return new DashboardComponent(
+                mockRouter, mockNgZone, mockDataService, mockAuthService,
+                { getAppointments: vi.fn().mockResolvedValue([]) } as any,
+                {} as any,
+                { open: vi.fn().mockResolvedValue(true) } as any,
+                { success: vi.fn() } as any,
+                undefined, tour as any
+            );
+        }
+
+        it('shows the welcome banner for an empty clinic', async () => {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getDashboardStats') return Promise.resolve({ totalPatients: 0, todayVisits: 0 });
+                if (method === 'getDemoSeedState') return Promise.resolve({ seeded: false });
+                return Promise.resolve(null);
+            });
+            await component.loadData();
+            expect(component.showWelcomeBanner).toBe(true);
+            expect(component.demoSeeded).toBe(false);
+        });
+
+        it('hides the banner for a working clinic until demo data lands', async () => {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getDashboardStats') return Promise.resolve({ totalPatients: 12, todayVisits: 3 });
+                if (method === 'getDemoSeedState') return Promise.resolve({ seeded: false });
+                return Promise.resolve(null);
+            });
+            await component.loadData();
+            expect(component.showWelcomeBanner).toBe(false);
+
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getDashboardStats') return Promise.resolve({ totalPatients: 17, todayVisits: 3 });
+                if (method === 'getDemoSeedState') return Promise.resolve({ seeded: true, patientIds: [1, 2, 3, 4, 5] });
+                return Promise.resolve(null);
+            });
+            await component.loadData();
+            expect(component.showWelcomeBanner).toBe(true);
+            expect(component.demoSeeded).toBe(true);
+        });
+
+        it('respects dismissal and starts the tour with the user role', async () => {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getDashboardStats') return Promise.resolve({ totalPatients: 0, todayVisits: 0 });
+                if (method === 'getDemoSeedState') return Promise.resolve({ seeded: false });
+                return Promise.resolve(null);
+            });
+            const full = fullComponent();
+            full.currentUser = { id: 2, role: 'nurse', name: 'Nancy' };
+            await full.loadData();
+            expect(full.showWelcomeBanner).toBe(true);
+            full.dismissWelcomeBanner();
+            expect(full.showWelcomeBanner).toBe(false);
+            full.startTour();
+            expect(tour.start).toHaveBeenCalledWith('nurse');
+        });
+
+        it('loads and removes demo data through admin confirms', async () => {
+            const dialog = { open: vi.fn().mockResolvedValue(true) };
+            const toast = { success: vi.fn() };
+            const full = new DashboardComponent(
+                mockRouter, mockNgZone, mockDataService, mockAuthService,
+                { getAppointments: vi.fn().mockResolvedValue([]) } as any,
+                {} as any, dialog as any, toast as any, undefined, tour as any
+            );
+            full.currentUser = { id: 1, role: 'admin', name: 'Admin' };
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getDashboardStats') return Promise.resolve({ totalPatients: 0, todayVisits: 0 });
+                if (method === 'getDemoSeedState') return Promise.resolve({ seeded: false });
+                return Promise.resolve(null);
+            });
+
+            await full.loadDemoData();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('seedDemoData');
+            expect(toast.success).toHaveBeenCalledWith('Demo clinic loaded.', 'Welcome');
+
+            dialog.open.mockResolvedValue(false);
+            mockDataService.invoke.mockClear();
+            await full.removeDemoData();
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('clearDemoData', expect.anything());
+
+            dialog.open.mockResolvedValue(true);
+            await full.removeDemoData();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('clearDemoData');
+        });
+
+        it('refuses demo actions for non-admins and handles failures', async () => {
+            const dialog = { open: vi.fn().mockResolvedValue(true) };
+            const full = new DashboardComponent(
+                mockRouter, mockNgZone, mockDataService, mockAuthService,
+                { getAppointments: vi.fn().mockResolvedValue([]) } as any,
+                {} as any, dialog as any, undefined, undefined, tour as any
+            );
+            full.currentUser = { id: 2, role: 'nurse', name: 'Nancy' };
+            await full.loadDemoData();
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('seedDemoData', expect.anything());
+
+            full.currentUser = { id: 1, role: 'admin', name: 'Admin' };
+            mockDataService.invoke.mockRejectedValue(new Error('db down'));
+            await full.loadDemoData();
+            expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Load failed' }));
+        });
+    });
 });

@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 33 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(33);
+        it('should have 34 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(34);
         });
     });
 
@@ -656,6 +656,15 @@ describe('Database Migrations', () => {
                     ['getPatientById', 'getAllVisits', 'getAppointmentRequests', 'updateAppointmentRequestStatus']));
             }
             expect(writes['admin']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v34 (app metadata store)', () => {
+        it('creates the app_meta key-value table', () => {
+            MIGRATIONS.find((m) => m.version === 34)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS app_meta');
+            expect(sql).toContain('PRIMARY KEY');
         });
     });
 });

@@ -938,6 +938,32 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getAllRoles().map((r: any) => r.name)).not.toContain('billing-clerk');
         });
 
+        it('seeds and clears a demo clinic without touching real data', () => {
+            expect(service.getDemoSeedState().seeded).toBe(false);
+            expect(() => service.clearDemoData(99)).toThrow('No demo data');
+            // Real patients present: refuse rather than mingle.
+            expect(() => service.seedDemoData(99)).toThrow('already has patients');
+            db.prepare('DELETE FROM patients').run();
+
+            const state: any = service.seedDemoData(99);
+            expect(state.seeded).toBe(true);
+            expect(state.patientIds).toHaveLength(5);
+            expect(service.getDemoSeedState().seeded).toBe(true);
+            expect(() => service.seedDemoData(99)).toThrow('already loaded');
+            expect(service.getPatients('')).toHaveLength(5);
+            expect(db.prepare('SELECT COUNT(*) as count FROM patient_queue').get()).toMatchObject({ count: 3 });
+
+            // A hand-deleted demo row must not break cleanup.
+            db.prepare('DELETE FROM patients WHERE id = ?').run(state.patientIds[0]);
+            const cleared: any = service.clearDemoData(99);
+            expect(cleared.seeded).toBe(false);
+            expect(service.getDemoSeedState().seeded).toBe(false);
+            expect(db.prepare('SELECT COUNT(*) as count FROM patients').get()).toMatchObject({ count: 0 });
+            expect(db.prepare('SELECT COUNT(*) as count FROM patient_queue').get()).toMatchObject({ count: 0 });
+            expect(db.prepare('SELECT COUNT(*) as count FROM vitals').get()).toMatchObject({ count: 0 });
+            expect(db.prepare('SELECT COUNT(*) as count FROM appointments').get()).toMatchObject({ count: 0 });
+        });
+
         it('serves sanitized settings without secrets', () => {
             db.prepare(`INSERT INTO settings (clinic_name, abdm_callback_secret)
                 VALUES ('Test Clinic', 'super-secret')`).run();

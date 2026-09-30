@@ -52,7 +52,8 @@ class ConformanceDatabase {
 
 const DESTRUCTIVE = [
     'deletePatient', 'deleteVisit', 'deleteUser', 'saveUser',
-    'saveSettings', 'deleteUserOverride', 'updateUserPassword'
+    'saveSettings', 'deleteUserOverride', 'updateUserPassword',
+    'seedDemoData', 'clearDemoData'
 ];
 
 describe('LAN access conformance', () => {

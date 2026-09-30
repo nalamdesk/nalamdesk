@@ -911,6 +911,26 @@ handleGuardedDb('db:deleteRole', (_, input) => {
     refreshAccessPolicy();
     return result;
 });
+// Demo seed data (first-run onboarding): admin-only. No policy refresh:
+// grants are untouched, only clinic rows change.
+handleGuardedDb('db:getDemoSeedState', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return databaseService.getDemoSeedState();
+});
+handleGuardedDb('db:seedDemoData', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return databaseService.seedDemoData(user.id);
+});
+handleGuardedDb('db:clearDemoData', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return databaseService.clearDemoData(user.id);
+});
 // Per-user permission overrides: admin-only. Every mutation rebuilds the
 // compiled policy set so the next check sees it.
 handleGuardedDb('db:getUserOverrides', (_, userId) => {

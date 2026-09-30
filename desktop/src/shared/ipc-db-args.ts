@@ -89,6 +89,9 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['userId'] ?? args[0])];
         }
+        case 'seedDemoData':
+        case 'clearDemoData':
+            return [actingUserId];
         default:
             if (ENCOUNTER_METHODS.has(method)) {
                 return [...args, actingUserId];

@@ -65,7 +65,7 @@ export const ALLOWED_IPC_METHODS = [
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword', 'getAllRoles',
-    'saveRole', 'deleteRole',
+    'saveRole', 'deleteRole', 'getDemoSeedState', 'seedDemoData', 'clearDemoData',
     'searchConditions', 'searchMedicines', 'createCondition', 'createMedicine',
     'getConditionMedPresets', 'listConditions', 'listMedicines',
     'updateCondition', 'updateMedicine', 'retireCondition', 'retireMedicine',

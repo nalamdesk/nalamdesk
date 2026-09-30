@@ -461,6 +461,125 @@ export class DatabaseService {
         return result;
     }
 
+    // ------------------------------------------------------------------
+    // Demo seed data (first-run onboarding). Admin-only surface.
+    // ------------------------------------------------------------------
+    private static readonly DEMO_SEED_META_KEY = 'demo_seed_snapshot';
+
+    /** Demo clinic patients: realistic Indian primary-care case mix. */
+    private static readonly DEMO_PATIENTS = [
+        { name: 'Meenakshi Sundaram', age: 54, gender: 'Female', mobile: '9840010001', address: '12 Mela Masi Street, Madurai', blood_group: 'B+' },
+        { name: 'Rajesh Kumar', age: 41, gender: 'Male', mobile: '9840010002', address: '45 Anna Nagar, Chennai', blood_group: 'O+' },
+        { name: 'Fatima Begum', age: 63, gender: 'Female', mobile: '9840010003', address: '8 Mosque Street, Trichy', blood_group: 'A+' },
+        { name: 'Arun Prakash', age: 29, gender: 'Male', mobile: '9840010004', address: '3 Gandhi Nagar, Coimbatore', blood_group: 'AB+' },
+        { name: 'Lakshmi Ammal', age: 71, gender: 'Female', mobile: '9840010005', address: '21 Temple Street, Tanjore', blood_group: 'O-' }
+    ];
+
+    getDemoSeedState() {
+        try {
+            const row = this.db.prepare('SELECT value FROM app_meta WHERE key = ?')
+                .get(DatabaseService.DEMO_SEED_META_KEY) as any;
+            if (!row?.value) return { seeded: false as boolean, seededAt: null as string | null, patientIds: [] as number[] };
+            const snapshot = JSON.parse(row.value);
+            return {
+                seeded: true as boolean,
+                seededAt: (snapshot.seededAt as string | null) ?? null,
+                patientIds: (snapshot.patientIds as number[]) ?? []
+            };
+        } catch {
+            return { seeded: false as boolean, seededAt: null as string | null, patientIds: [] as number[] };
+        }
+    }
+
+    /**
+     * Loads a small demo clinic so first-run users see live pages instead
+     * of empty tables. Refuses when already seeded or when real patients
+     * exist, so demo rows can never mingle silently with clinic data.
+     */
+    seedDemoData(actingUserId?: number) {
+        if (this.getDemoSeedState().seeded) throw new Error('Demo data is already loaded.');
+        const existing = this.db.prepare('SELECT COUNT(*) as count FROM patients').get() as any;
+        if (existing && Number(existing.count) > 0) {
+            throw new Error('Clinic already has patients. Remove demo data first or start from an empty clinic.');
+        }
+        const today = new Date().toISOString().slice(0, 10);
+        const snapshot: { seededAt: string; patientIds: number[]; queueIds: number[]; vitalIds: number[]; appointmentIds: number[] } = {
+            seededAt: new Date().toISOString(), patientIds: [], queueIds: [], vitalIds: [], appointmentIds: []
+        };
+        const seed = this.db.transaction(() => {
+            DatabaseService.DEMO_PATIENTS.forEach((demo, index) => {
+                const saved: any = this.savePatient({ ...demo });
+                const patientId = Number(saved?.lastInsertRowid ?? saved?.id);
+                if (!Number.isInteger(patientId) || patientId <= 0) {
+                    throw new Error('Demo seed could not create the patient record.');
+                }
+                snapshot.patientIds.push(patientId);
+                // First three patients are waiting; the fourth has vitals
+                // recorded; the fifth holds today's appointment.
+                if (index < 3) {
+                    const queued: any = this.addToQueue(
+                        patientId, { priority: index + 1, triage_notes: 'Demo walk-in' }, actingUserId);
+                    snapshot.queueIds.push(Number(queued.lastInsertRowid ?? queued.id));
+                }
+                if (index === 3) {
+                    const vital: any = this.saveVitals({
+                        patient_id: patientId,
+                        systolic_bp: 120, diastolic_bp: 80, pulse: 72, spo2: 98, temperature: 98.6
+                    }, actingUserId);
+                    snapshot.vitalIds.push(Number(vital.lastInsertRowid ?? vital.id));
+                }
+                if (index === 4) {
+                    const appt: any = this.saveAppointment({
+                        patient_id: patientId, date: today, time: '10:30', reason: 'Diabetes review'
+                    });
+                    snapshot.appointmentIds.push(Number(appt.lastInsertRowid));
+                }
+            });
+            this.db.prepare(`INSERT INTO app_meta (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`)
+                .run(DatabaseService.DEMO_SEED_META_KEY, JSON.stringify(snapshot));
+        });
+        seed();
+        this.logAudit('SEED', 'patients', 0, actingUserId,
+            `Loaded demo clinic (${snapshot.patientIds.length} patients)`);
+        return this.getDemoSeedState();
+    }
+
+    /**
+     * Removes exactly the rows recorded in the seed snapshot. Tolerates
+     * rows the user already deleted by hand; refuses when never seeded.
+     */
+    clearDemoData(actingUserId?: number) {
+        const state = this.getDemoSeedState();
+        if (!state.seeded) throw new Error('No demo data to remove.');
+        let snapshot: { patientIds?: number[]; queueIds?: number[]; vitalIds?: number[]; appointmentIds?: number[] };
+        try {
+            snapshot = JSON.parse((this.db.prepare('SELECT value FROM app_meta WHERE key = ?')
+                .get(DatabaseService.DEMO_SEED_META_KEY) as any)?.value || '{}');
+        } catch {
+            snapshot = {};
+        }
+        const clear = this.db.transaction(() => {
+            for (const id of snapshot.appointmentIds || []) {
+                this.db.prepare('DELETE FROM appointments WHERE id = ?').run(Number(id));
+            }
+            for (const id of snapshot.queueIds || []) {
+                this.db.prepare('DELETE FROM patient_queue WHERE id = ?').run(Number(id));
+            }
+            for (const id of snapshot.vitalIds || []) {
+                this.db.prepare('DELETE FROM vitals WHERE id = ?').run(Number(id));
+            }
+            for (const id of snapshot.patientIds || []) {
+                this.db.prepare('DELETE FROM patients WHERE id = ?').run(Number(id));
+            }
+            this.db.prepare('DELETE FROM app_meta WHERE key = ?').run(DatabaseService.DEMO_SEED_META_KEY);
+        });
+        clear();
+        this.logAudit('UNSEED', 'patients', 0, actingUserId, 'Removed demo clinic data');
+        return this.getDemoSeedState();
+    }
+
     /**
      * Per-user permission deltas over the role baseline (M3-RBAC). One row
      * allows or forbids a single action for a single user; reason is

@@ -7,11 +7,13 @@ import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { AuthService } from '../../services/auth.service';
 import { QueueCountService } from '../../shared/services/queue-count.service';
 import { RuntimeService } from '../../services/runtime.service';
+import { TourService } from '../../shared/services/tour.service';
+import { TourOverlayComponent } from '../../shared/components/tour-overlay/tour-overlay.component';
 
 @Component({
   selector: 'app-main-layout',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterModule],
+  imports: [CommonModule, RouterOutlet, RouterModule, TourOverlayComponent],
   template: `
     <div class="drawer lg:drawer-open font-sans">
       <input #drawerCheckbox id="main-drawer" type="checkbox" class="drawer-toggle" />
@@ -68,6 +70,7 @@ import { RuntimeService } from '../../services/runtime.service';
                     <!-- Add closeDrawer() to dropdown links too just in case -->
                     <ul tabindex="0" class="mt-3 z-[1] p-2 shadow-menu menu menu-sm dropdown-content bg-white rounded-box w-52">
                       <li><a routerLink="/profile" (click)="closeDrawer()">Change password</a></li>
+                      <li><a (click)="retakeTour(); closeDrawer()">Take a product tour</a></li>
                       <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Manage Profile</a></li>
                       <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Settings</a></li>
                       <li><a class="text-red-600" (click)="logout()">Logout</a></li>
@@ -80,6 +83,7 @@ import { RuntimeService } from '../../services/runtime.service';
         <!-- Global Layout: Parent is overflow-hidden, Child views MUST handle scrolling -->
         <main class="flex-1 h-full w-full overflow-hidden relative flex flex-col">
            <router-outlet></router-outlet>
+           <app-tour-overlay></app-tour-overlay>
         </main>
       </div> 
       
@@ -213,10 +217,18 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private ngZone: NgZone,
     public runtime: RuntimeService,
+    public tourService: TourService,
     public doctorPick?: DoctorPickService,
     private queueCountService?: QueueCountService
   ) {
     this.currentUser = this.authService.getUser();
+  }
+
+  retakeTour() {
+    try {
+      localStorage.removeItem('nd.tour.dismissed');
+    } catch { /* ignore */ }
+    this.tourService.start(this.currentUser?.role || '');
   }
 
   private badgeRefreshId: any;

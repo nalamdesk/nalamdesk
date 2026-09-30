@@ -75,6 +75,8 @@ export const METHOD_CATALOG: CatalogGroup[] = [
         label: 'Administration (admin-only recommended)',
         methods: [
             'getUsers', 'saveUser', 'deleteUser', 'getAllRoles',
+            'saveRole', 'deleteRole',
+            'getDemoSeedState', 'seedDemoData', 'clearDemoData',
             'getSettings', 'saveSettings', 'getAuditLogs',
             'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
             'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity', 'abdmSimulateShare'
@@ -108,6 +110,7 @@ export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
     'abdmAckInbox', 'abdmTransferBundle',
     'getUsers', 'saveUser', 'deleteUser', 'getAllRoles',
     'saveRole', 'deleteRole',
+    'getDemoSeedState', 'seedDemoData', 'clearDemoData',
     'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
     'saveSettings', 'abdmSaveConfig', 'abdmSetSecret',
     'abdmTestConnectivity', 'abdmSimulateShare'

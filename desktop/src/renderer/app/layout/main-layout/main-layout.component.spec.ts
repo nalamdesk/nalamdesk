@@ -110,6 +110,7 @@ describe('MainLayoutComponent', () => {
             mockNgZone,
             mockRuntimeService,
             undefined,
+            undefined,
             mockCount as any
         );
         expect(layout.queueCount).toBe(3);
@@ -120,5 +121,19 @@ describe('MainLayoutComponent', () => {
 
     it('shows zero badge without the service', () => {
         expect(component.queueCount).toBe(0);
+    });
+
+    it('relaunches the product tour from the user menu', () => {
+        const tours = { start: vi.fn() };
+        const layout = new MainLayoutComponent(
+            mockRouter,
+            mockDialogService,
+            mockAuthService,
+            mockNgZone,
+            mockRuntimeService,
+            tours as any
+        );
+        layout.retakeTour();
+        expect(tours.start).toHaveBeenCalledWith('doctor');
     });
 });

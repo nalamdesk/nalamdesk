@@ -1268,5 +1268,21 @@ export const MIGRATIONS = [
             };
             grantRoleMethods(db, grants);
         }
+    },
+    {
+        version: 34,
+        up: (db: any) => {
+            console.log('Running Migration v34 (app metadata store)...');
+            // Generic key-value store for clinic-level state that is not
+            // settings (demo-seed snapshot, feature flags). Keeps seed
+            // tracking out of the settings whitelist.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS app_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+        }
     }
 ];

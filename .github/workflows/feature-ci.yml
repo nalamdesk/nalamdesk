@@ -4,6 +4,13 @@ name: Feature Branch CI
 # squash-merges produce Electron artifacts. Restricting push to master avoids
 # duplicate runs on feature-branch commits (those already fire via pull_request).
 # Automated Release stays workflow_dispatch-only and is not used here.
+#
+# Cost control (private-repo minutes; macOS x10, Windows x2):
+# - PRs run ubuntu-only (tests + web build + tsc). Full 3-OS matrix + Electron
+#   packaging run on master pushes only; packaging breakage is release-time.
+# - Stacked PR pushes cancel superseded runs (master pushes never cancel:
+#   each merge must validate fully).
+# - Doc/config-only PRs skip CI entirely via paths-ignore.
 on:
   push:
     branches:
@@ -11,6 +18,15 @@ on:
   pull_request:
     branches:
       - master
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/openreview.yml'
+
+# Stacked pushes cancel dead runs; master merges always run to completion.
+concurrency:
+  group: feature-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-check:
@@ -20,7 +36,8 @@ jobs:
         working-directory: ./desktop
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # Full matrix on master (release artifacts); ubuntu-only on PRs.
+        os: ${{ github.event_name == 'push' && fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
 
     steps:
       - name: Checkout code
@@ -47,9 +64,10 @@ jobs:
 
       # Build Electron (no publish). Linux clinic artifact is the .deb;
       # AppImage is secondary and requires FUSE 2.
-      
+      # Packaging runs on master pushes only (see cost note at top).
+
       - name: Build Electron (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && github.event_name == 'push'
         # No GH_TOKEN needed for non-publishing builds usually, 
         # but required if electron-builder needs to read repo info or if we add code-signing later.
         env:
@@ -58,20 +76,21 @@ jobs:
         run: npm run dist:win
 
       - name: Build Electron (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:linux
 
       - name: Build Electron (Mac)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:mac
 
       - name: Assert packaged version agreement
+        if: github.event_name == 'push'
         env:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: node scripts/assert-packaged-version.js

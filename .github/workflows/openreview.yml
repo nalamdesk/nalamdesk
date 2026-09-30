@@ -1,0 +1,40 @@
+name: OpenReview
+
+# AI code review (advisory only): runs on PR open and every push, plus
+# `/review` comments. Verdicts are comment-mode and never fail CI — the
+# human-enforced P1 rule in the merge workflow stays authoritative.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
+# Full re-review on every push until upstream incremental mode lands
+# (openreview#18) — cancel superseded runs to avoid burning provider budget.
+concurrency:
+  group: openreview-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Same-repo PRs only (no fork code near secrets), and /review restricted
+    # to maintainers by exact match: substring triggers + open triggers let
+    # any commenter spend provider budget and reach for secrets.
+    if: >
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event.issue.pull_request &&
+       github.event.comment.body == '/review' &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sankara-sabapathy/openreview@10c6c0db08f1d6e25591526d07f9a0093c0e72f3 # v0.6.0: exact SHA, tags are mutable
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          opencode-api-key: ${{ secrets.OPENCODE_API_KEY }}

@@ -1,0 +1,86 @@
+version: 1
+# Floor for the action release; the workflow `uses:` ref selects it.
+requires_action: ">=0.6.0"
+
+defaults:
+  on: [opened, synchronize, ready_for_review]
+  command: "/review"
+  draft: false
+  lang: en
+  ignore: ["**.lock", "dist/**", "*.snap", "package-lock.json", "desktop/dist/**"]
+  max_diff_chars: 80000
+
+providers:
+  # Both models served through the single OpenCode Go subscription key.
+  # IDs from the official OpenCode Zen model table (opencode.ai/docs/zen).
+  glm:
+    protocol: openai-chat
+    model: glm-5.3-flash
+    base_url: https://opencode.ai/zen/go/v1
+    key_from: secrets.OPENCODE_API_KEY
+  deepseek:
+    protocol: openai-chat
+    model: deepseek-v4.1-flash
+    base_url: https://opencode.ai/zen/go/v1
+    key_from: secrets.OPENCODE_API_KEY
+    # DeepSeek reasons by default and may leave message.content empty (the
+    # reviewer's parser reads content only). Disable thinking so the JSON
+    # findings land in content. Revert if the gateway rejects the field.
+    extra_body: { thinking: { type: 'disabled' } }
+
+reviews:
+  - id: correctness
+    if_paths: ["**"]
+    strategy: majority
+    main:
+      provider: glm
+      instructions: >-
+        Synthesize sub-agent findings for the NalamDesk clinic desktop app
+        (Electron + Angular + SQLite). Strict on bugs and correctness, lenient
+        on style. Deduplicate overlapping findings. Every finding MUST carry
+        exactly one severity tag: [P1] Critical (correctness, security,
+        data-loss, or access-control defect — must fix before merge),
+        [P2] High (significant bug, likely-wrong behavior, missing coverage
+        on risky paths — should fix), [P3] Medium (minor issue, unlikely
+        edge case), [P4] Low/nit (post sparingly, never blocking).
+    subagents:
+      - name: deepseek-check
+        provider: deepseek
+        instructions: >-
+          Independent correctness pass: bugs, race conditions, null handling,
+          broken error paths, missing tests. Tag every finding [P1]–[P4]
+          per the main instructions.
+    verdict:
+      mode: comment
+      min_severity: medium
+      post_inline: true
+      deduplicate: true
+
+  - id: security
+    if_paths: ["desktop/src/main/**", "desktop/src/server/**", "desktop/src/shared/access.ts", "desktop/src/**/auth*", "desktop/src/**/settings/**"]
+    strategy: any
+    main:
+      provider: deepseek
+      instructions: >-
+        Staff security reviewer for a clinic app guarding patient data.
+        Focus: Cedar/RBAC default-deny, admin-only destructive actions,
+        auth/session handling, SQL injection, secret leakage, overly broad
+        permissions, insecure IPC exposure. Only high-confidence findings.
+        Tag every finding [P1] (critical, must fix) or [P2] (high, should
+        fix) — never P3/P4 here.
+    subagents:
+      - name: secrets-scan
+        provider: glm
+        instructions: >-
+          Find leaked secrets, hardcoded credentials, keys in logs or
+          comments, overly broad file/IPC permissions. Tag [P1]/[P2] only.
+    verdict:
+      mode: comment
+      min_severity: high
+      post_inline: true
+      deduplicate: true
+
+global_verdict:
+  strategy: any_blocking
+  sticky_comment: true
+  fail_check_on_request_changes: false

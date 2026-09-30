@@ -16,8 +16,10 @@ permissions:
 
 # Full re-review on every push until upstream incremental mode lands
 # (openreview#18) — cancel superseded runs to avoid burning provider budget.
+# Event name is part of the key: bot comments fire issue_comment runs in the
+# same PR, and without it they'd cancel the real pull_request review.
 concurrency:
-  group: openreview-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: openreview-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:

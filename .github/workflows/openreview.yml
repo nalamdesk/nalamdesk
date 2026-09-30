@@ -16,7 +16,15 @@ permissions:
 
 jobs:
   review:
-    if: github.event_name == 'pull_request' || (github.event.issue.pull_request && contains(github.event.comment.body, '/review'))
+    # Same-repo PRs only (no fork code near secrets), and /review restricted
+    # to maintainers by exact match: substring triggers + open triggers let
+    # any commenter spend provider budget and reach for secrets.
+    if: >
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event.issue.pull_request &&
+       github.event.comment.body == '/review' &&
+       contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

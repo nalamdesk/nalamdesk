@@ -277,7 +277,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.currentUser = this.authService.getUser();
-    this.loadData();
+    void this.loadData();
 
     // Live Clock
     this.timer = setInterval(() => {
@@ -377,50 +377,55 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async loadDemoData(): Promise<void> {
-    if (!this.isAdmin || this.demoSeedLoading) return;
-    const confirmed = await this.dialogService?.open({
-      title: 'Load demo clinic data?',
-      message: 'Adds 5 demo patients, queue entries, vitals, and an appointment so you can explore every page. Only available while the clinic is empty, and removable in one click.',
-      type: 'confirm',
+    await this.runDemoMutation({
+      method: 'seedDemoData',
+      confirmTitle: 'Load demo clinic data?',
+      confirmMessage: 'Adds 5 demo patients, queue entries, vitals, and an appointment so you can explore every page. Only available while the clinic is empty, and removable in one click.',
       confirmText: 'Load demo data',
-      cancelText: 'Cancel'
+      cancelText: 'Cancel',
+      successMessage: 'Demo clinic loaded.',
+      successTitle: 'Welcome',
+      failureTitle: 'Load failed',
+      failureMessage: 'Could not load demo data.'
     });
-    if (!confirmed) return;
-    this.demoSeedLoading = true;
-    try {
-      await this.dataService.invoke('seedDemoData');
-      this.toastService?.success('Demo clinic loaded.', 'Welcome');
-      await this.loadData();
-    } catch (e) {
-      await this.dialogService?.open({
-        title: 'Load failed',
-        message: e instanceof Error ? e.message : 'Could not load demo data.',
-        type: 'error'
-      });
-    } finally {
-      this.ngZone.run(() => { this.demoSeedLoading = false; });
-    }
   }
 
   async removeDemoData(): Promise<void> {
+    await this.runDemoMutation({
+      method: 'clearDemoData',
+      confirmTitle: 'Remove demo data?',
+      confirmMessage: 'Deletes exactly the demo patients, queue entries, vitals, and appointment created by the seed. Anything you added yourself stays.',
+      confirmText: 'Remove',
+      cancelText: 'Keep',
+      successMessage: 'Demo data removed.',
+      successTitle: 'Done',
+      failureTitle: 'Remove failed',
+      failureMessage: 'Could not remove demo data.'
+    });
+  }
+
+  private async runDemoMutation(options: {
+    method: string; confirmTitle: string; confirmMessage: string; confirmText: string; cancelText: string;
+    successMessage: string; successTitle: string; failureTitle: string; failureMessage: string;
+  }): Promise<void> {
     if (!this.isAdmin || this.demoSeedLoading) return;
     const confirmed = await this.dialogService?.open({
-      title: 'Remove demo data?',
-      message: 'Deletes exactly the demo patients, queue entries, vitals, and appointment created by the seed. Anything you added yourself stays.',
+      title: options.confirmTitle,
+      message: options.confirmMessage,
       type: 'confirm',
-      confirmText: 'Remove',
-      cancelText: 'Keep'
+      confirmText: options.confirmText,
+      cancelText: options.cancelText
     });
     if (!confirmed) return;
     this.demoSeedLoading = true;
     try {
-      await this.dataService.invoke('clearDemoData');
-      this.toastService?.success('Demo data removed.', 'Done');
+      await this.dataService.invoke(options.method);
+      this.toastService?.success(options.successMessage, options.successTitle);
       await this.loadData();
     } catch (e) {
       await this.dialogService?.open({
-        title: 'Remove failed',
-        message: e instanceof Error ? e.message : 'Could not remove demo data.',
+        title: options.failureTitle,
+        message: e instanceof Error ? e.message : options.failureMessage,
         type: 'error'
       });
     } finally {
@@ -457,7 +462,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
         message: 'Some essentials are missing. Opened the patient chart to complete them before check-in.',
         type: 'warning'
       });
-      this.router.navigate(['/patients'], { queryParams: { editId: appt.patient_id } });
+      void this.router.navigate(['/patients'], { queryParams: { editId: appt.patient_id } });
       return;
     }
 
@@ -469,13 +474,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       this.toastService?.success(`${appt.patient_name} is now in the live queue.`, 'Checked in');
       void this.queueCountService?.refresh();
-      this.loadData(); // Refresh list
+      void this.loadData(); // Refresh list
     } catch (e: any) {
       console.error(e);
       if (e.message && e.message.includes('already in queue')) {
         // Just update status if already keyed
         await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
-        this.loadData();
+        void this.loadData();
       } else {
         await this.dialogService?.open({
           title: 'Check-in failed',
@@ -487,14 +492,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   goToPatients() {
-    this.router.navigate(['/patients']);
+    void this.router.navigate(['/patients']);
   }
 
   goToQueue() {
-    this.router.navigate(['/queue']);
+    void this.router.navigate(['/queue']);
   }
 
   goToSettings() {
-    this.router.navigate(['/settings']);
+    void this.router.navigate(['/settings']);
   }
 }

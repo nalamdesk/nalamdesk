@@ -26,7 +26,7 @@ export class TourService {
     private readonly _role = signal<string>('');
     readonly index = this._index.asReadonly();
 
-    constructor(private router: Router) { }
+    constructor(private readonly router: Router) { }
 
     private static readonly BASE_STEPS: TourStep[] = [
         {

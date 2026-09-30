@@ -235,7 +235,7 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     if (!!(globalThis as any).electron) {
-      this.runtime.init();
+      void this.runtime.init();
     }
     void this.queueCountService?.refresh();
     // Backup cadence for mutations that don't navigate (same 30s as the queue page).

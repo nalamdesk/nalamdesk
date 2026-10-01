@@ -579,6 +579,30 @@
                     </div>
                 </div>
 
+                <!-- Backup health: durable status derived from files + audit, not memory -->
+                <div *ngIf="backupHealth || backupHealthLoading" class="mb-4 rounded-lg border p-3"
+                     [ngClass]="backupHealthStatus === 'healthy' ? 'border-green-200 bg-green-50' : backupHealthStatus === 'error' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'">
+                    <div class="flex items-center justify-between gap-2 mb-2">
+                        <span class="text-[11px] font-bold uppercase tracking-wider"
+                              [ngClass]="backupHealthStatus === 'healthy' ? 'text-green-700' : backupHealthStatus === 'error' ? 'text-red-700' : 'text-amber-700'">
+                            {{ backupHealthLoading ? 'Checking…' : backupHealthStatus === 'healthy' ? 'Backups healthy' : backupHealthStatus === 'error' ? 'Backup problem' : 'Attention needed' }}
+                        </span>
+                        <button *ngIf="backupHealth?.lastErrorAt" (click)="runLocalBackupNow()" [disabled]="isBackupLoading"
+                                class="text-xs text-blue-600 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded disabled:opacity-50">Retry now</button>
+                    </div>
+                    <div *ngIf="backupHealth" class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
+                        <div>Next run: <span class="font-medium text-gray-800">{{ backupHealth.nextRunAt ? (backupHealth.nextRunAt | date:'medium') : 'Not scheduled' }}</span></div>
+                        <div>Last backup: <span class="font-medium text-gray-800">{{ backupHealth.lastBackupAt ? (backupHealth.lastBackupAt | date:'medium') : 'None yet' }}</span>
+                            <span *ngIf="backupHealth.backupAgeHours != null" class="text-gray-400">({{ backupHealth.backupAgeHours }}h ago)</span></div>
+                        <div class="truncate">Location: <span class="font-mono" [title]="backupHealth.destination">{{ backupHealth.destination }}</span>
+                            <span *ngIf="!backupHealth.writable" class="text-red-600 font-medium">(not writable)</span></div>
+                        <div>Free space: <span class="font-medium text-gray-800">{{ formatBytes(backupHealth.freeBytes) }}</span></div>
+                        <div *ngIf="backupHealth.lastErrorAt" class="md:col-span-2 text-red-600">
+                            Last failure ({{ backupHealth.lastErrorAt | date:'medium' }}): {{ backupHealth.lastError }}
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex items-center gap-4 bg-gray-50 p-3 rounded border border-gray-200 mb-3">
                     <div class="flex-1 overflow-hidden">
                         <label class="text-xs text-gray-500 font-bold uppercase flex items-center gap-1">

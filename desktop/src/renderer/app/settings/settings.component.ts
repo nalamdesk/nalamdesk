@@ -98,6 +98,62 @@ export class SettingsComponent implements OnInit {
   message = '';
   success = false;
   backups: any[] = [];
+
+  // Local backup health (Settings → Data Redundancy)
+  backupHealth: any = null;
+  backupHealthLoading = false;
+
+  get backupHealthStatus(): 'healthy' | 'attention' | 'error' {
+    const h = this.backupHealth;
+    if (!h) return 'attention';
+    if (!h.writable) return 'error';
+    if (h.lastErrorAt && (!h.lastBackupAt || h.lastErrorAt > h.lastBackupAt)) return 'error';
+    if (h.missed) return 'attention';
+    return 'healthy';
+  }
+
+  formatBytes(bytes: number | null): string {
+    if (bytes == null) return 'Unknown';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes / 1024;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return `${value.toFixed(1)} ${units[unit]}`;
+  }
+
+  async loadBackupHealth(): Promise<void> {
+    if (!this.isElectron) return;
+    this.backupHealthLoading = true;
+    try {
+      const health = await (window as any).electron.backup.getLocalBackupHealth();
+      this.ngZone.run(() => {
+        this.backupHealth = health || null;
+        this.backupHealthLoading = false;
+      });
+    } catch (e) {
+      console.error(e);
+      this.ngZone.run(() => { this.backupHealthLoading = false; });
+    }
+  }
+
+  async runLocalBackupNow(): Promise<void> {
+    if (!this.isElectron || this.isBackupLoading) return;
+    this.isBackupLoading = true;
+    try {
+      await (window as any).electron.backup.runNow();
+      this.toastService?.success('Local backup finished.', 'Backup Complete');
+      await this.loadBackupHealth();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Backup failed',
+        message: e instanceof Error ? e.message : 'Local backup failed.',
+        type: 'error'
+      });
+    } finally {
+      this.ngZone.run(() => { this.isBackupLoading = false; });
+    }
+  }
   restoreBundle: { path: string; name: string } | null = null;
   restoreRecoveryCode = '';
   restoreAdminPassword = '';
@@ -301,6 +357,7 @@ export class SettingsComponent implements OnInit {
       this.listBackups();
       this.checkDriveStatus();
       this.loadCloudStatus();
+      void this.loadBackupHealth();
     }
     if (this.currentUser?.role === 'admin') {
       this.loadUsers();
@@ -381,7 +438,15 @@ export class SettingsComponent implements OnInit {
     try {
       await this.dataService.invoke('saveSettings', this.settings);
       this.ngZone.run(() => { this.settingsSaved = true; setTimeout(() => this.settingsSaved = false, 3000); });
-    } catch (e) { console.error(e); }
+      await this.loadBackupHealth();
+    } catch (e) {
+      console.error(e);
+      await this.dialogService?.open({
+        title: 'Save failed',
+        message: e instanceof Error ? e.message : 'Could not save settings.',
+        type: 'error'
+      });
+    }
   }
 
   async loadAbdmConfig() {

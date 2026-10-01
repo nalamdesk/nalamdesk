@@ -598,4 +598,71 @@ describe('SettingsComponent Validation', () => {
         await component.removePermissionOverride('updateQueueStatus');
         expect(mockData.invoke).not.toHaveBeenCalledWith('deleteUserOverride', expect.anything());
     });
+
+    describe('local backup health', () => {
+        const healthy = {
+            enabled: true, schedule: '13:00', destination: '/data/backups', writable: true,
+            freeBytes: 2_000_000_000, lastBackupAt: new Date().toISOString(),
+            lastBackupName: 'nalamdesk-auto-backup-x.ndbackup', backupAgeHours: 3,
+            lastErrorAt: null, lastError: null, nextRunAt: new Date().toISOString(), missed: false
+        };
+
+        beforeEach(() => {
+            component.isElectron = true;
+            (window as any).electron = { backup: {} };
+        });
+
+        it('loads health on electron and derives status', async () => {
+            (window as any).electron.backup.getLocalBackupHealth = vi.fn(async () => healthy);
+            await component.loadBackupHealth();
+            expect(component.backupHealth.schedule).toBe('13:00');
+            expect(component.backupHealthStatus).toBe('healthy');
+            expect(component.backupHealthLoading).toBe(false);
+
+            component.backupHealth = { ...healthy, writable: false };
+            expect(component.backupHealthStatus).toBe('error');
+            component.backupHealth = { ...healthy, lastErrorAt: new Date().toISOString(), lastBackupAt: null };
+            expect(component.backupHealthStatus).toBe('error');
+            component.backupHealth = { ...healthy, missed: true };
+            expect(component.backupHealthStatus).toBe('attention');
+            component.backupHealth = null;
+            expect(component.backupHealthStatus).toBe('attention');
+        });
+
+        it('tolerates health load failures', async () => {
+            (window as any).electron.backup.getLocalBackupHealth = vi.fn(async () => { throw new Error('ipc down'); });
+            await component.loadBackupHealth();
+            expect(component.backupHealth).toBeNull();
+            expect(component.backupHealthLoading).toBe(false);
+
+            component.isElectron = false;
+            await component.loadBackupHealth();
+        });
+
+        it('runs a local backup now and refreshes health', async () => {
+            const runNow = vi.fn(async () => undefined);
+            const toast = { success: vi.fn() };
+            (window as any).electron.backup = {
+                runNow,
+                getLocalBackupHealth: vi.fn(async () => healthy)
+            };
+            (component as any).toastService = toast;
+            await component.runLocalBackupNow();
+            expect(runNow).toHaveBeenCalled();
+            expect(toast.success).toHaveBeenCalledWith('Local backup finished.', 'Backup Complete');
+            expect(component.backupHealth.schedule).toBe('13:00');
+
+            runNow.mockRejectedValueOnce(new Error('disk full'));
+            (component as any).dialogService = { open: vi.fn(async () => true) };
+            await component.runLocalBackupNow();
+            expect((component as any).dialogService.open).toHaveBeenCalledWith(
+                expect.objectContaining({ title: 'Backup failed' }));
+        });
+
+        it('formats free-space bytes for display', () => {
+            expect(component.formatBytes(null)).toBe('Unknown');
+            expect(component.formatBytes(512)).toBe('512 B');
+            expect(component.formatBytes(2_000_000_000)).toBe('1.9 GB');
+        });
+    });
 });

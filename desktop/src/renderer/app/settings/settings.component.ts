@@ -357,7 +357,7 @@ export class SettingsComponent implements OnInit {
       this.listBackups();
       this.checkDriveStatus();
       this.loadCloudStatus();
-      this.loadBackupHealth();
+      void this.loadBackupHealth();
     }
     if (this.currentUser?.role === 'admin') {
       this.loadUsers();

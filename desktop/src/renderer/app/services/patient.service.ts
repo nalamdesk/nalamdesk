@@ -13,6 +13,9 @@ export interface Patient {
 
   // Demographics
   dob?: string;
+  dob_estimated?: boolean | number;
+  mrn?: string;
+  merged_into?: number | null;
   blood_group?: string;
   email?: string;
 

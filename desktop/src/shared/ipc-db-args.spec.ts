@@ -56,4 +56,9 @@ describe('resolveDbMethodArgs addToQueue', () => {
         expect(resolveDbMethodArgs('clearDemoData', [], 99)).toEqual([99]);
         expect(resolveDbMethodArgs('getDemoSeedState', [], 99)).toEqual([]);
     });
+
+    it('passes duplicate search input through untouched', () => {
+        const input = { name: 'Ravi', mobile: '9888877771' };
+        expect(resolveDbMethodArgs('findDuplicateCandidates', [input], 99)).toEqual([input]);
+    });
 });

@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
     db: {
         getPatients: (query: string) => ipcRenderer.invoke('db:getPatients', query),
+        findDuplicateCandidates: (input: any) => ipcRenderer.invoke('db:findDuplicateCandidates', input),
         getPatientById: (id: number) => ipcRenderer.invoke('db:getPatientById', id),
         savePatient: (patient: any) => ipcRenderer.invoke('db:savePatient', patient),
         deletePatient: (id: number) => ipcRenderer.invoke('db:deletePatient', id),

@@ -751,5 +751,15 @@ describe('PatientDetailsComponent', () => {
             patientId: 123, medicine_name: 'Penicillin-V', overrideReason: expect.stringContaining('override')
         }));
     });
+
+    it('derives chart age from DOB and shows the MRN', () => {
+        component.patient = { id: 1, name: 'Asha', dob: '1990-05-01', dob_estimated: 0, age: 99, gender: 'Female', mrn: 'ND-100001' } as any;
+        expect(component.displayAge).toMatch(/^\d+$/);
+        expect(component.displayAge).not.toBe('99');
+        component.patient = { id: 1, name: 'Asha', dob: '1990-05-01', dob_estimated: 1, age: 99, gender: 'Female' } as any;
+        expect(component.displayAge.startsWith('≈')).toBe(true);
+        component.patient = null;
+        expect(component.displayAge).toBe('—');
+    });
 });
 

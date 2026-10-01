@@ -12,6 +12,7 @@ import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactVie
 import { QueueCountService } from '../../shared/services/queue-count.service';
 import { PatientActionsRenderer } from './patient-actions.component';
 import { ColDef } from 'ag-grid-community';
+import { deriveAge } from '../../../../shared/patient-age';
 
 @Component({
   selector: 'app-patient-list',
@@ -121,7 +122,24 @@ import { ColDef } from 'ag-grid-community';
             <!-- Scrollable Body -->
             <div class="flex-1 overflow-y-auto p-6">
                 <form [formGroup]="patientForm" id="patientForm" (ngSubmit)="savePatient(!isEditMode)">
-                    
+                    <!-- Possible-duplicate warning: non-blocking, opens the chart -->
+                    <div *ngIf="duplicateCandidates.length > 0"
+                         class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                        <div class="text-xs font-bold uppercase tracking-wider text-amber-700 mb-1">
+                            Possible existing record{{ duplicateCandidates.length > 1 ? 's' : '' }}
+                        </div>
+                        <div *ngFor="let dup of duplicateCandidates"
+                             class="flex items-center justify-between gap-2 py-1 text-sm">
+                            <div class="min-w-0">
+                                <span class="font-medium text-gray-800">{{ dup.patient.name }}</span>
+                                <span *ngIf="dup.patient.mrn" class="font-mono text-xs text-gray-500 ml-1">{{ dup.patient.mrn }}</span>
+                                <span class="text-xs text-gray-500 ml-1">{{ dup.patient.mobile }}</span>
+                                <div class="text-[11px] text-gray-500">{{ dup.signals.map(duplicateSignalLabel.bind(this)).join(', ') }}</div>
+                            </div>
+                            <button type="button" (click)="goToVisit(dup.patient)"
+                                    class="shrink-0 text-xs text-blue-600 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded">Open</button>
+                        </div>
+                    </div>
                     <!-- Essential details: everything a walk-in needs, always visible -->
                     <div class="mb-6">
                         <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">Essential details</h3>
@@ -157,6 +175,10 @@ import { ColDef } from 'ag-grid-community';
                                         placeholder="Select DOB"
                                         helperText="Auto-calculates Age">
                                     </app-date-picker>
+                                    <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+                                        <input type="checkbox" formControlName="dob_estimated" class="checkbox checkbox-xs" />
+                                        Approximate date
+                                    </label>
                                 </div>
 
                                 <!-- Age -->
@@ -177,6 +199,7 @@ import { ColDef } from 'ag-grid-community';
                                         <option value="Male">Male</option>
                                         <option value="Female">Female</option>
                                         <option value="Other">Other</option>
+                                        <option value="Unknown">Unknown / not stated</option>
                                     </select>
                                     <p *ngIf="isFieldInvalid('gender')" class="text-xs text-red-500 mt-1">Required</p>
                                 </div>
@@ -316,12 +339,13 @@ export class PatientListComponent implements OnInit {
 
   // AG Grid Definitions
   colDefs: ColDef[] = [
+    { field: 'mrn', headerName: 'MRN', flex: 1, minWidth: 130 },
     { field: 'name', headerName: 'Name', flex: 2, minWidth: 200 },
     { field: 'mobile', headerName: 'Mobile', flex: 1, minWidth: 150 },
     {
       headerName: 'Age / Gender',
       flex: 1,
-      valueGetter: (p) => p.data.age + ' / ' + p.data.gender,
+      valueGetter: (p) => `${deriveAge(p.data.dob, p.data.dob_estimated, p.data.age).label} / ${p.data.gender}`,
       minWidth: 150
     },
     {
@@ -401,6 +425,12 @@ export class PatientListComponent implements OnInit {
 
   patientForm!: FormGroup;
 
+  // Possible duplicates for the in-progress registration (non-blocking).
+  duplicateCandidates: any[] = [];
+  checkingDuplicates = false;
+  private duplicateTimer: any = null;
+  private duplicateRequest = 0;
+
   initForm() {
     this.patientForm = this.fb.group({
       id: [null],
@@ -409,7 +439,8 @@ export class PatientListComponent implements OnInit {
       mobile: ['', [Validators.required, Validators.pattern(/^[0-9]{10}$/)]],
       age: [null, [Validators.required, Validators.min(0), Validators.max(110)]],
       dob: [null],
-      gender: ['Male', Validators.required],
+      dob_estimated: [false],
+      gender: ['', Validators.required],
       blood_group: [''],
       email: ['', [Validators.email]],
 
@@ -434,7 +465,60 @@ export class PatientListComponent implements OnInit {
         const age = this.calculateAge(new Date(dob));
         this.patientForm.patchValue({ age }, { emitEvent: false });
       }
+      this.scheduleDuplicateCheck();
     });
+    this.patientForm.get('name')?.valueChanges.subscribe(() => this.scheduleDuplicateCheck());
+    this.patientForm.get('mobile')?.valueChanges.subscribe(() => this.scheduleDuplicateCheck());
+  }
+
+  /** Debounced duplicate warning for the in-progress registration form. */
+  scheduleDuplicateCheck(): void {
+    if (this.duplicateTimer) clearTimeout(this.duplicateTimer);
+    this.duplicateTimer = setTimeout(() => void this.checkDuplicates(), 400);
+  }
+
+  async checkDuplicates(): Promise<void> {
+    const value = this.patientForm?.value;
+    if (!value || !this.showModal) return;
+    const input = {
+      name: value.name || '', dob: value.dob || null,
+      mobile: value.mobile || '', excludeId: value.id || 0
+    };
+    // Sequence guard starts here, not at the invoke: a cleared form must
+    // also retire any in-flight request, or its late response repopulates
+    // a blank banner.
+    const request = ++this.duplicateRequest;
+    if (!input.name && !input.mobile) {
+      this.ngZone.run(() => {
+        this.duplicateCandidates = [];
+        this.checkingDuplicates = false;
+      });
+      return;
+    }
+    // Sequence guard: a slow earlier request must not overwrite a newer one.
+    this.checkingDuplicates = true;
+    try {
+      const rows = await this.dataService.invoke<any[]>('findDuplicateCandidates', input);
+      if (request !== this.duplicateRequest) return;
+      this.ngZone.run(() => {
+        this.duplicateCandidates = rows || [];
+        this.checkingDuplicates = false;
+      });
+    } catch (e) {
+      console.error(e);
+      if (request !== this.duplicateRequest) return;
+      this.ngZone.run(() => { this.checkingDuplicates = false; });
+    }
+  }
+
+  duplicateSignalLabel(signal: string): string {
+    switch (signal) {
+      case 'mrn': return 'same MRN';
+      case 'name-dob': return 'same name + birth date';
+      case 'name': return 'same name';
+      case 'phone-shared-possible': return 'same phone (may be shared)';
+      default: return signal;
+    }
   }
 
   calculateAge(dob: Date): number {
@@ -509,9 +593,10 @@ export class PatientListComponent implements OnInit {
   }
 
   openAddModal() {
-    this.patientForm.reset({ gender: 'Male', age: null });
+    this.patientForm.reset({ gender: '', age: null, dob_estimated: false });
     this.showAdditional = false;
     this.showModal = true;
+    this.duplicateCandidates = [];
   }
 
   editPatient(patient: Patient) {
@@ -542,6 +627,11 @@ export class PatientListComponent implements OnInit {
       }
     } catch (e) {
       console.error('Failed to save patient', e);
+      await this.dialogService.open({
+        title: 'Save failed',
+        message: e instanceof Error ? e.message : 'Could not save the patient.',
+        type: 'error'
+      });
     }
   }
 

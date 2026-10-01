@@ -25,6 +25,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
         label: 'Patients & visits',
         methods: [
             'getPatients', 'getPatientById', 'savePatient', 'deletePatient',
+            'findDuplicateCandidates',
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
             'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests'
@@ -131,7 +132,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
         // doctor/receptionist/admin role strings, so a custom role grant
         // would pass Cedar yet still be rejected (see HANDLER_GATED_ACTIONS).
         permissions: [
-            'getPatients', 'getQueue', 'addToQueue', 'removeFromQueue',
+            'getPatients', 'findDuplicateCandidates', 'getQueue', 'addToQueue', 'removeFromQueue',
             'updateQueueStatus', 'updateQueueStatusByPatientId', 'getPublicSettings',
             'getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits',
             'getVitals', 'getVitalsHistory', 'getEncounterVitals',

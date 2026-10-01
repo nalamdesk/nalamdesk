@@ -10,6 +10,7 @@ import { DatePickerComponent } from '../../shared/components/date-picker/date-pi
 import { SharedTableComponent } from '../../shared/components/table/table.component';
 import { AbhaModalComponent } from '../abha-modal.component';
 import { buildOpConsultRecord } from '../../../../shared/fhir/serializer';
+import { deriveAge } from '../../../../shared/patient-age';
 import { ColDef } from 'ag-grid-community';
 import { newRequestId } from '../../services/request-id';
 
@@ -88,7 +89,8 @@ import { newRequestId } from '../../services/request-id';
                     <button class="text-gray-500 hover:text-blue-600 font-bold text-sm" (click)="openEditModal()">EDIT</button>
                 </div>
                 <h1 class="text-2xl font-bold text-gray-800 mb-1">{{ patient?.name }}</h1>
-                <p class="text-sm text-gray-500 font-medium mb-4">{{ patient?.age }} Years / {{ patient?.gender }}</p>
+                <p class="text-sm text-gray-500 font-medium mb-1">{{ displayAge }} Years / {{ patient?.gender }}</p>
+                <p *ngIf="patient?.mrn" class="text-xs text-gray-400 font-mono mb-4">MRN {{ patient?.mrn }}</p>
                 
                 <div class="space-y-3 pt-4 border-t border-gray-100">
                     <div class="flex items-center gap-3 text-sm text-gray-600">
@@ -445,6 +447,10 @@ import { newRequestId } from '../../services/request-id';
                                         placeholder="Select DOB"
                                         helperText="Auto-calculates Age">
                                     </app-date-picker>
+                                    <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+                                        <input type="checkbox" formControlName="dob_estimated" class="checkbox checkbox-xs" />
+                                        Approximate date
+                                    </label>
                                 </div>
 
                                 <!-- Age -->
@@ -465,6 +471,7 @@ import { newRequestId } from '../../services/request-id';
                                         <option value="Male">Male</option>
                                         <option value="Female">Female</option>
                                         <option value="Other">Other</option>
+                                        <option value="Unknown">Unknown / not stated</option>
                                     </select>
                                     <p *ngIf="isFieldInvalid('gender')" class="text-xs text-red-500 mt-1">Required</p>
                                 </div>
@@ -1253,6 +1260,7 @@ export class PatientDetailsComponent implements OnInit {
             address: ['', [Validators.required]],
             // Extended fields
             dob: [null],
+            dob_estimated: [false],
             blood_group: [''],
             email: ['', Validators.email],
             emergency_contact_name: [''],
@@ -1653,6 +1661,11 @@ export class PatientDetailsComponent implements OnInit {
 
     goBack() {
         this.router.navigate(['/patients']);
+    }
+
+    get displayAge(): string {
+        if (!this.patient) return '—';
+        return deriveAge(this.patient.dob, this.patient.dob_estimated, this.patient.age).label;
     }
 
     openEditModal() {

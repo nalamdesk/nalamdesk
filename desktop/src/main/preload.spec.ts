@@ -121,4 +121,9 @@ describe('preload bridge surface', () => {
         expect(electron.invoke).toHaveBeenCalledWith('db:seedDemoData');
         expect(electron.invoke).toHaveBeenCalledWith('db:clearDemoData');
     });
+
+    it('exposes duplicate-warning search IPC', async () => {
+        await api.db.findDuplicateCandidates({ name: 'Ravi', mobile: '9888877771' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:findDuplicateCandidates', { name: 'Ravi', mobile: '9888877771' });
+    });
 });

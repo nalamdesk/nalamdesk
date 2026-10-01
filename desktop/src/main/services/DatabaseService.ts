@@ -662,7 +662,7 @@ export class DatabaseService {
             'clinic_name', 'doctor_name', 'logo_path', 'license_key',
             'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
             'drive_client_id', 'drive_client_secret', 'local_backup_path',
-            'backup_schedule', 'cloud_backup_schedule',
+            'backup_schedule', 'cloud_backup_schedule', 'mrn_prefix',
             'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
             'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
             'abdm_hiu_public_key',
@@ -755,9 +755,53 @@ export class DatabaseService {
         const search = `%${query.trim()}%`;
         return this.db.prepare(`
         SELECT * FROM patients 
-      WHERE name LIKE ? OR mobile LIKE ?
+      WHERE name LIKE ? OR mobile LIKE ? OR mrn LIKE ?
             ORDER BY created_at DESC
-                `).all(search, search);
+                `).all(search, search, search);
+    }
+
+    /**
+     * Duplicate-warning candidates for registration: exact MRN, exact
+     * mobile, and name+DOB matches. Shared phone numbers score lower and
+     * are labeled as possible (never identical) — twins and families share
+     * numbers. Merged-away charts are excluded from results.
+     */
+    findDuplicateCandidates(input: {
+        name?: string; dob?: string | null; mobile?: string; mrn?: string; excludeId?: number;
+    }) {
+        const name = String(input?.name || '').trim();
+        const dob = input?.dob ? String(input.dob).slice(0, 10) : '';
+        const mobile = String(input?.mobile || '').trim();
+        const mrn = String(input?.mrn || '').trim();
+        const excludeId = Number(input?.excludeId) || 0;
+        if (!name && !mobile && !mrn) return [];
+        const rows = this.db.prepare(`SELECT id, uuid, mrn, name, mobile, age, gender, dob, dob_estimated
+            FROM patients WHERE (merged_into IS NULL) AND id != ?`).all(excludeId) as any[];
+        const scored: { patient: any; signals: string[]; score: number }[] = [];
+        for (const row of rows) {
+            const signals: string[] = [];
+            let score = 0;
+            if (mrn && row.mrn && String(row.mrn).toLowerCase() === mrn.toLowerCase()) {
+                signals.push('mrn');
+                score = Math.max(score, 100);
+            }
+            const rowDob = row.dob ? String(row.dob).slice(0, 10) : '';
+            if (name && row.name && String(row.name).trim().toLowerCase() === name.toLowerCase()) {
+                if (dob && rowDob && rowDob === dob) {
+                    signals.push('name-dob');
+                    score = Math.max(score, 85);
+                } else {
+                    signals.push('name');
+                    score = Math.max(score, 30);
+                }
+            }
+            if (mobile && row.mobile && String(row.mobile).trim() === mobile) {
+                signals.push('phone-shared-possible');
+                score = Math.max(score, 60);
+            }
+            if (signals.length > 0) scored.push({ patient: row, signals, score });
+        }
+        return scored.sort((a, b) => b.score - a.score).slice(0, 10);
     }
 
     getPatientById(id: number) {
@@ -1161,7 +1205,9 @@ export class DatabaseService {
                     name: token.patient_name,
                     mobile: token.mobile || '',
                     age: token.age ?? null,
-                    gender: token.gender || '',
+                    // Token payloads often lack gender: record an explicit
+                    // 'Unknown' (a stated value, never a UI default).
+                    gender: token.gender || 'Unknown',
                     abha_address: token.abha_address || null,
                     abha_name: token.abha_name || null
                 });
@@ -1193,18 +1239,21 @@ export class DatabaseService {
         return accept.immediate();
     }
 
+    static readonly PATIENT_GENDERS = ['Male', 'Female', 'Other', 'Unknown'];
+
     savePatient(patientData: any) {
         // Ensure all fields exist for named parameters
         const defaults = {
-            dob: null, blood_group: null, email: null,
+            dob: null, dob_estimated: 0, blood_group: null, email: null,
             emergency_contact_name: null, emergency_contact_mobile: null,
             street: null, city: null, state: null, zip_code: null,
             insurance_provider: null, policy_number: null,
             abha_address: null, abha_name: null,
-            address: '', age: 0, gender: 'Unknown', mobile: '', name: ''
+            address: '', age: 0, gender: '', mobile: '', name: ''
         };
 
         const patient = { ...defaults, ...patientData };
+        patient.dob_estimated = patient.dob_estimated ? 1 : 0;
 
         if (patient.id) {
             // Health ID links live outside demographic edits: an edit form
@@ -1218,6 +1267,18 @@ export class DatabaseService {
                     patient.abha_name = stored?.abha_name ?? null;
                 }
             }
+            // Gender is never blanked by an edit: omitted keeps the stored
+            // value, an explicit blank is rejected like on registration.
+            if (patientData?.gender == null) {
+                const stored = this.db.prepare(
+                    'SELECT gender FROM patients WHERE id = ?').get(patient.id) as any;
+                patient.gender = stored?.gender ?? '';
+            }
+            if (!DatabaseService.PATIENT_GENDERS.includes(patient.gender)) {
+                throw new Error('Gender must be Male, Female, Other, or Unknown.');
+            }
+            // MRN is immutable: assigned once at registration, never rewritten.
+            delete (patient as any).mrn;
             return this.db.prepare(`
         UPDATE patients SET
             name = @name,
@@ -1225,7 +1286,7 @@ export class DatabaseService {
             age = @age,
             gender = @gender,
             address = @address,
-            dob = @dob,
+            dob = @dob, dob_estimated = @dob_estimated,
             blood_group = @blood_group,
             email = @email,
             emergency_contact_name = @emergency_contact_name,
@@ -1243,20 +1304,38 @@ export class DatabaseService {
             if (!patient.uuid) {
                 patient.uuid = crypto.randomUUID();
             }
-            return this.db.prepare(`
+            if (!DatabaseService.PATIENT_GENDERS.includes(patient.gender)) {
+                throw new Error('Gender must be Male, Female, Other, or Unknown.');
+            }
+            if (patient.mrn != null && String(patient.mrn).trim() !== '') {
+                const taken = this.db.prepare('SELECT id FROM patients WHERE mrn = ?')
+                    .get(String(patient.mrn).trim()) as any;
+                if (taken) throw new Error('MRN is already registered.');
+                patient.mrn = String(patient.mrn).trim();
+            }
+            const created = this.db.prepare(`
         INSERT INTO patients(
-            uuid, name, mobile, age, gender, address, 
-            dob, blood_group, email, emergency_contact_name, emergency_contact_mobile,
+            uuid, name, mobile, age, gender, address,
+            dob, dob_estimated, blood_group, email, emergency_contact_name, emergency_contact_mobile,
             street, city, state, zip_code, insurance_provider, policy_number,
-            abha_address, abha_name
+            abha_address, abha_name, mrn
         )
         VALUES(
             @uuid, @name, @mobile, @age, @gender, @address,
-            @dob, @blood_group, @email, @emergency_contact_name, @emergency_contact_mobile,
+            @dob, @dob_estimated, @blood_group, @email, @emergency_contact_name, @emergency_contact_mobile,
             @street, @city, @state, @zip_code, @insurance_provider, @policy_number,
-            @abha_address, @abha_name
+            @abha_address, @abha_name, @mrn
         )
-            `).run(patient);
+            `).run({ ...patient, mrn: patient.mrn ?? null });
+            if (!patient.mrn) {
+                // Immutable clinic MRN from the rowid: collision-free by
+                // construction, never rewritten afterwards.
+                const prefix = String(this.getSettings()?.mrn_prefix || 'ND').trim() || 'ND';
+                const mrn = `${prefix}-${String(100000 + Number(created.lastInsertRowid)).slice(-6)}`;
+                this.db.prepare('UPDATE patients SET mrn = ? WHERE id = ?')
+                    .run(mrn, created.lastInsertRowid);
+            }
+            return created;
         }
     }
 

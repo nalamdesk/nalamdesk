@@ -705,6 +705,11 @@ handleGuardedDb('db:getPatients', (_, query) => {
     if (!user) throw new Error('Unauthorized');
     return databaseService.getPatients(query);
 });
+handleGuardedDb('db:findDuplicateCandidates', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return databaseService.findDuplicateCandidates(input || {});
+});
 handleGuardedDb('db:getPatientById', (_, id) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');

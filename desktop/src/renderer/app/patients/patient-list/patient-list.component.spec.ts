@@ -108,13 +108,13 @@ describe('PatientListComponent', () => {
 
     it('should keep the form valid without an address for rapid intake', () => {
         component.openAddModal();
-        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30 });
+        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30, gender: 'Male' });
         expect(component.patientForm.valid).toBe(true);
     });
 
     it('should save and queue a new walk-in in one action', async () => {
         component.openAddModal();
-        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30 });
+        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30, gender: 'Male' });
 
         await component.savePatient(true);
 
@@ -126,7 +126,7 @@ describe('PatientListComponent', () => {
 
     it('should save without queueing when asked', async () => {
         component.openAddModal();
-        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30 });
+        component.patientForm.patchValue({ name: 'Walk In', mobile: '9876543210', age: 30, gender: 'Male' });
 
         await component.savePatient(false);
 
@@ -227,5 +227,41 @@ describe('PatientListComponent', () => {
         component.enqueuedPatientIds = new Set();
         component.updateGridData();
         expect(component.selectedPatients.map((p: any) => p.id)).toEqual([9]);
+    });
+
+    it('requires an explicit gender selection (no silent default)', () => {
+        component.openAddModal();
+        expect(component.patientForm.get('gender')?.value).toBe('');
+        expect(component.patientForm.get('gender')?.valid).toBe(false);
+        component.patientForm.patchValue({ gender: 'Unknown' });
+        expect(component.patientForm.get('gender')?.valid).toBe(true);
+    });
+
+    it('warns on possible duplicates without blocking registration', async () => {
+        vi.useFakeTimers();
+        try {
+            component.openAddModal();
+            mockDataService.invoke.mockResolvedValue([
+                { patient: { id: 3, name: 'Ravi', mrn: 'ND-100003', mobile: '9888877771' }, signals: ['phone-shared-possible'], score: 60 }
+            ]);
+            component.patientForm.patchValue({ name: 'Ravi', mobile: '9888877771' });
+            await vi.advanceTimersByTimeAsync(500);
+            expect(mockDataService.invoke).toHaveBeenCalledWith('findDuplicateCandidates', expect.objectContaining({
+                name: 'Ravi', mobile: '9888877771'
+            }));
+            expect(component.duplicateCandidates).toHaveLength(1);
+            expect(component.duplicateSignalLabel('phone-shared-possible')).toContain('shared');
+            expect(component.duplicateSignalLabel('mrn')).toContain('MRN');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('clears duplicate warnings for a blank form', async () => {
+        component.openAddModal();
+        component.duplicateCandidates = [{ patient: { id: 1 } }];
+        component.patientForm.patchValue({ name: '', mobile: '' });
+        await component.checkDuplicates();
+        expect(component.duplicateCandidates).toEqual([]);
     });
 });

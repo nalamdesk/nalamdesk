@@ -945,8 +945,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getAllRoles().map((r: any) => r.name)).not.toContain('billing-clerk');
         });
 
-        it('seeds and clears a demo clinic without touching real data', () => {
-            expect(service.getDemoSeedState().seeded).toBe(false);
+        it('seeds and clears a demo clinic without touching real data', () => {            expect(service.getDemoSeedState().seeded).toBe(false);
             expect(() => service.clearDemoData(99)).toThrow('No demo data');
             // Real patients present: refuse rather than mingle.
             expect(() => service.seedDemoData(99)).toThrow('already has patients');
@@ -969,6 +968,73 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(db.prepare('SELECT COUNT(*) as count FROM patient_queue').get()).toMatchObject({ count: 0 });
             expect(db.prepare('SELECT COUNT(*) as count FROM vitals').get()).toMatchObject({ count: 0 });
             expect(db.prepare('SELECT COUNT(*) as count FROM appointments').get()).toMatchObject({ count: 0 });
+        });
+
+        it('assigns immutable clinic MRNs on registration', () => {
+            db.prepare('DELETE FROM patients').run();
+            const a: any = service.savePatient({ name: 'Asha', mobile: '9000000001', age: 30, gender: 'Female' });
+            const b: any = service.savePatient({ name: 'Bala', mobile: '9000000002', age: 40, gender: 'Male' });
+            const rowA = service.getPatientById(Number(a.lastInsertRowid));
+            const rowB = service.getPatientById(Number(b.lastInsertRowid));
+            expect(rowA.mrn).toMatch(/^ND-\d{6}$/);
+            expect(rowB.mrn).toMatch(/^ND-\d{6}$/);
+            expect(rowA.mrn).not.toBe(rowB.mrn);
+            // Custom MRN respected once, then protected from reuse and rewrite.
+            const c: any = service.savePatient({
+                name: 'Cena', mobile: '9000000003', age: 25, gender: 'Other', mrn: 'ND-000001'
+            });
+            expect(service.getPatientById(Number(c.lastInsertRowid)).mrn).toBe('ND-000001');
+            expect(() => service.savePatient({
+                name: 'Dup', mobile: '9000000004', age: 20, gender: 'Male', mrn: 'ND-000001'
+            })).toThrow('already registered');
+            service.savePatient({ id: rowA.id, name: 'Asha Updated', mrn: 'ND-999999' });
+            expect(service.getPatientById(rowA.id).mrn).toBe(rowA.mrn);
+        });
+
+        it('requires an explicit gender on registration and preserves it on edit', () => {
+            db.prepare('DELETE FROM patients').run();
+            expect(() => service.savePatient({ name: 'No Gender', mobile: '9000000010', age: 30 }))
+                .toThrow('Gender must be');
+            expect(() => service.savePatient({ name: 'Bad Gender', mobile: '9000000011', age: 30, gender: 'X' }))
+                .toThrow('Gender must be');
+            const created: any = service.savePatient({
+                name: 'Gendered', mobile: '9000000012', age: 30, gender: 'Female'
+            });
+            const id = Number(created.lastInsertRowid);
+            service.savePatient({ id, name: 'Gendered Edit' });
+            expect(service.getPatientById(id).gender).toBe('Female');
+            expect(() => service.savePatient({ id, name: 'X', gender: '' })).toThrow('Gender must be');
+        });
+
+        it('warns on duplicate signals without equating shared phones', () => {
+            db.prepare('DELETE FROM patients').run();
+            const r1: any = service.savePatient({
+                name: 'Ravi Kumar', mobile: '9888877771', age: 35, gender: 'Male', dob: '1990-05-01'
+            });
+            const r2: any = service.savePatient({
+                name: 'Ravi Kumar', mobile: '9888877771', age: 7, gender: 'Male', dob: '2018-05-01'
+            });
+            const id1 = Number(r1.lastInsertRowid);
+            const id2 = Number(r2.lastInsertRowid);
+            // Same name + same phone, different DOB: father and son, not duplicates.
+            const twins = service.findDuplicateCandidates({ name: 'Ravi Kumar', mobile: '9888877771', dob: '1990-05-01' });
+            expect(twins.map((t: any) => t.patient.id).sort()).toEqual([id1, id2].sort());
+            const father = twins.find((t: any) => t.patient.id === id1);
+            expect(father.signals).toContain('name-dob');
+            const son = twins.find((t: any) => t.patient.id === id2);
+            expect(son.signals).toContain('phone-shared-possible');
+            expect(son.signals).not.toContain('name-dob');
+            // Exact MRN short-circuits to the top.
+            const mrn = service.getPatientById(id2).mrn;
+            const byMrn = service.findDuplicateCandidates({ name: 'Nobody', mrn });
+            expect(byMrn).toHaveLength(1);
+            expect(byMrn[0].score).toBe(100);
+            // Merged-away charts stay out of results; self excluded.
+            db.prepare('UPDATE patients SET merged_into = ? WHERE id = ?').run(id2, id2);
+            const after = service.findDuplicateCandidates({ name: 'Ravi Kumar', mobile: '9888877771', dob: '1990-05-01', excludeId: id1 });
+            expect(after.map((t: any) => t.patient.id)).not.toContain(id2);
+            expect(after.map((t: any) => t.patient.id)).not.toContain(id1);
+            expect(service.findDuplicateCandidates({})).toEqual([]);
         });
 
         it('serves sanitized settings without secrets', () => {

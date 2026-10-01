@@ -160,7 +160,7 @@ describe('DatabaseService', () => {
             // Mock crypto.randomUUID
             global.crypto.randomUUID = vi.fn().mockReturnValue('mock-uuid');
 
-            const patient = { name: 'John Doe', mobile: '123' };
+            const patient = { name: 'John Doe', mobile: '123', gender: 'Male' };
             service.savePatient(patient);
 
             expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO patients'));
@@ -173,7 +173,8 @@ describe('DatabaseService', () => {
         it('should search patients', () => {
             service.getPatients('John');
             expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('WHERE name LIKE ?'));
-            expect(mockStatement.all).toHaveBeenCalledWith(expect.stringContaining('John'), expect.any(String));
+            expect(mockStatement.all).toHaveBeenCalledWith(
+                expect.stringContaining('John'), expect.any(String), expect.any(String));
         });
     });
 

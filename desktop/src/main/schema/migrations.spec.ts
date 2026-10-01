@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 34 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(34);
+        it('should have 35 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(35);
         });
     });
 
@@ -665,6 +665,37 @@ describe('Database Migrations', () => {
             const sql = executedSql.join('\n');
             expect(sql).toContain('CREATE TABLE IF NOT EXISTS app_meta');
             expect(sql).toContain('PRIMARY KEY');
+        });
+    });
+
+    describe('Migration v35 (patient identity)', () => {
+        it('adds MRN, DOB-estimate, and merge-link columns with backfill', () => {
+            MIGRATIONS.find((m) => m.version === 35)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('ADD COLUMN mrn');
+            expect(sql).toContain('ADD COLUMN dob_estimated');
+            expect(sql).toContain('ADD COLUMN merged_into');
+            expect(sql).toContain('idx_patients_mrn');
+            expect(sql).toContain('mrn_prefix');
+        });
+
+        it('grants duplicate search to registration roles', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 35)!.up(mockDb);
+            expect(JSON.parse(writes['doctor'])).toContain('findDuplicateCandidates');
+            expect(JSON.parse(writes['receptionist'])).toContain('findDuplicateCandidates');
+            expect(writes['nurse']).toBeUndefined();
         });
     });
 });

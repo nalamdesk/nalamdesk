@@ -115,6 +115,21 @@ export class DatabaseService {
             console.error('[DB] MIGRATION FAILED! Rolling back transaction.', err);
             throw err; // Critical failure
         }
+        this.repairMissingMrns();
+    }
+
+    /**
+     * Crash-window repair: a registration interrupted between INSERT and
+     * MRN assignment leaves a NULL-mrn chart. Re-mint on every launch
+     * (idempotent: only NULL/empty rows match, rowid-derived so unique).
+     */
+    private repairMissingMrns(): void {
+        try {
+            this.db.exec(`UPDATE patients SET mrn = 'ND-' || printf('%06d', 100000 + id)
+                WHERE mrn IS NULL OR mrn = ''`);
+        } catch (e) {
+            console.error('[DB] MRN repair failed:', e);
+        }
     }
 
     async backupDatabase(destPath: string) {
@@ -1363,15 +1378,18 @@ export class DatabaseService {
                 if (taken) throw new Error('MRN is already registered.');
                 patient.mrn = String(patient.mrn).trim();
             }
+            // Insert and MRN assignment stay nesting-safe on purpose (no
+            // transaction wrapper: savePatient also runs inside the
+            // share-token check-in and demo-seed transactions, and
+            // better-sqlite3 refuses nested transactions). A colliding
+            // hand-picked MRN removes the just-inserted row, and the
+            // launch-time repairMissingMrns covers the crash window — so a
+            // failed assignment never leaves a chart without an MRN.
             const created = this.insertPatientRow(patient);
             if (!patient.mrn) {
                 // Immutable clinic MRN from the rowid: collision-free by
-                // construction, never rewritten afterwards. Width grows past
-                // six digits instead of wrapping (no slice truncation).
-                // A colliding hand-picked MRN removes the just-inserted row
-                // (compensation, not a nested transaction: savePatient also
-                // runs inside the share-token check-in transaction) so a
-                // failed assignment never leaves a chart without an MRN.
+                // construction, never rewritten afterwards. Width grows
+                // past six digits instead of wrapping (no slice truncation).
                 const prefix = String(this.getSettings()?.mrn_prefix || 'ND').trim() || 'ND';
                 const mrn = `${prefix}-${String(100000 + Number(created.lastInsertRowid)).padStart(6, '0')}`;
                 try {

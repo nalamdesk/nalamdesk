@@ -991,8 +991,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getPatientById(rowA.id).mrn).toBe(rowA.mrn);
         });
 
-        it('rolls back the insert when a hand-picked MRN collides with auto-assignment', () => {
-            db.prepare('DELETE FROM patients').run();
+        it('rolls back the insert when a hand-picked MRN collides with auto-assignment', () => {            db.prepare('DELETE FROM patients').run();
             // Harness seeds ids 1-2, AUTOINCREMENT never reuses: claimant
             // takes id 3, so id 5's future MRN (ND-100005) is claimed by hand.
             service.savePatient({
@@ -1004,6 +1003,15 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 .toThrow('already registered');
             expect(db.prepare(`SELECT id FROM patients WHERE name = 'Collision'`).get()).toBeUndefined();
             expect(service.getPatients('')).toHaveLength(2);
+        });
+
+        it('re-mints MRNs for charts left behind by an interrupted registration', async () => {
+            db.prepare(`INSERT INTO patients (name, mobile, age, gender) VALUES ('Orphan', '9000000031', 40, 'Male')`).run();
+            const orphan = db.prepare(`SELECT id, mrn FROM patients WHERE name = 'Orphan'`).get() as any;
+            expect(orphan.mrn).toBeNull();
+            await service.migrate();
+            const repaired = db.prepare(`SELECT mrn FROM patients WHERE id = ?`).get(orphan.id) as any;
+            expect(repaired.mrn).toMatch(/^ND-\d{6,}$/);
         });
 
         it('requires an explicit gender on registration and preserves it on edit', () => {

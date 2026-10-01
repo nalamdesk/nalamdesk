@@ -1293,9 +1293,10 @@ export const MIGRATIONS = [
             try { db.exec('ALTER TABLE patients ADD COLUMN dob_estimated INTEGER NOT NULL DEFAULT 0'); } catch (e) { }
             try { db.exec('ALTER TABLE patients ADD COLUMN merged_into INTEGER NULL'); } catch (e) { }
             // Backfill clinic MRNs for existing rows before the unique index.
-            // Format ND-<zero-padded rowid offset>: immutable, collision-free
-            // by construction (rowids are unique).
-            db.exec(`UPDATE patients SET mrn = 'ND-' || substr('000000' || (100000 + id), -6, 6)
+            // PREFIX-<rowid offset, zero-padded to at least 6>: immutable and
+            // collision-free by construction (rowids are unique; the width
+            // grows rather than wrapping past 900k rows).
+            db.exec(`UPDATE patients SET mrn = 'ND-' || printf('%06d', 100000 + id)
                 WHERE mrn IS NULL OR mrn = ''`);
             db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_mrn ON patients(mrn)');
             // Configurable MRN prefix for newly registered patients.

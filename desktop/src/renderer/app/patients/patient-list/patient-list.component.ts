@@ -429,6 +429,7 @@ export class PatientListComponent implements OnInit {
   duplicateCandidates: any[] = [];
   checkingDuplicates = false;
   private duplicateTimer: any = null;
+  private duplicateRequest = 0;
 
   initForm() {
     this.patientForm = this.fb.group({
@@ -490,15 +491,19 @@ export class PatientListComponent implements OnInit {
       });
       return;
     }
+    // Sequence guard: a slow earlier request must not overwrite a newer one.
+    const request = ++this.duplicateRequest;
     this.checkingDuplicates = true;
     try {
       const rows = await this.dataService.invoke<any[]>('findDuplicateCandidates', input);
+      if (request !== this.duplicateRequest) return;
       this.ngZone.run(() => {
         this.duplicateCandidates = rows || [];
         this.checkingDuplicates = false;
       });
     } catch (e) {
       console.error(e);
+      if (request !== this.duplicateRequest) return;
       this.ngZone.run(() => { this.checkingDuplicates = false; });
     }
   }

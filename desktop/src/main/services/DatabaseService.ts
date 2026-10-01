@@ -761,6 +761,36 @@ export class DatabaseService {
     }
 
     /**
+     * Patient INSERT with the UNIQUE index as the final arbiter: the
+     * read-then-insert MRN check above narrows accidental reuse, but only
+     * the constraint closes the concurrent-registration race. Surfaces a
+     * friendly error instead of raw SQLite constraint text.
+     */
+    private insertPatientRow(patient: any) {
+        try {
+            return this.db.prepare(`
+        INSERT INTO patients(
+            uuid, name, mobile, age, gender, address,
+            dob, dob_estimated, blood_group, email, emergency_contact_name, emergency_contact_mobile,
+            street, city, state, zip_code, insurance_provider, policy_number,
+            abha_address, abha_name, mrn
+        )
+        VALUES(
+            @uuid, @name, @mobile, @age, @gender, @address,
+            @dob, @dob_estimated, @blood_group, @email, @emergency_contact_name, @emergency_contact_mobile,
+            @street, @city, @state, @zip_code, @insurance_provider, @policy_number,
+            @abha_address, @abha_name, @mrn
+        )
+            `).run({ ...patient, mrn: patient.mrn ?? null });
+        } catch (e: any) {
+            if (String(e?.message || '').includes('UNIQUE')) {
+                throw new Error('MRN is already registered.');
+            }
+            throw e;
+        }
+    }
+
+    /**
      * Duplicate-warning candidates for registration: exact MRN, exact
      * mobile, and name+DOB matches. Shared phone numbers score lower and
      * are labeled as possible (never identical) — twins and families share
@@ -775,8 +805,26 @@ export class DatabaseService {
         const mrn = String(input?.mrn || '').trim();
         const excludeId = Number(input?.excludeId) || 0;
         if (!name && !mobile && !mrn) return [];
+        // SQL prefilter first: JS scoring runs over the matching subset,
+        // never the whole chart table on every keystroke.
+        const filters: string[] = [];
+        const params: unknown[] = [];
+        if (mrn) {
+            filters.push('LOWER(mrn) = LOWER(?)');
+            params.push(mrn);
+        }
+        if (mobile) {
+            filters.push('mobile = ?');
+            params.push(mobile);
+        }
+        if (name) {
+            filters.push('LOWER(name) = LOWER(?)');
+            params.push(name);
+        }
+        params.push(excludeId);
         const rows = this.db.prepare(`SELECT id, uuid, mrn, name, mobile, age, gender, dob, dob_estimated
-            FROM patients WHERE (merged_into IS NULL) AND id != ?`).all(excludeId) as any[];
+            FROM patients WHERE (${filters.join(' OR ')}) AND (merged_into IS NULL) AND id != ?`)
+            .all(...params) as any[];
         const scored: { patient: any; signals: string[]; score: number }[] = [];
         for (const row of rows) {
             const signals: string[] = [];
@@ -1313,27 +1361,22 @@ export class DatabaseService {
                 if (taken) throw new Error('MRN is already registered.');
                 patient.mrn = String(patient.mrn).trim();
             }
-            const created = this.db.prepare(`
-        INSERT INTO patients(
-            uuid, name, mobile, age, gender, address,
-            dob, dob_estimated, blood_group, email, emergency_contact_name, emergency_contact_mobile,
-            street, city, state, zip_code, insurance_provider, policy_number,
-            abha_address, abha_name, mrn
-        )
-        VALUES(
-            @uuid, @name, @mobile, @age, @gender, @address,
-            @dob, @dob_estimated, @blood_group, @email, @emergency_contact_name, @emergency_contact_mobile,
-            @street, @city, @state, @zip_code, @insurance_provider, @policy_number,
-            @abha_address, @abha_name, @mrn
-        )
-            `).run({ ...patient, mrn: patient.mrn ?? null });
+            const created = this.insertPatientRow(patient);
             if (!patient.mrn) {
                 // Immutable clinic MRN from the rowid: collision-free by
-                // construction, never rewritten afterwards.
+                // construction, never rewritten afterwards. Width grows past
+                // six digits instead of wrapping (no slice truncation).
                 const prefix = String(this.getSettings()?.mrn_prefix || 'ND').trim() || 'ND';
-                const mrn = `${prefix}-${String(100000 + Number(created.lastInsertRowid)).slice(-6)}`;
-                this.db.prepare('UPDATE patients SET mrn = ? WHERE id = ?')
-                    .run(mrn, created.lastInsertRowid);
+                const mrn = `${prefix}-${String(100000 + Number(created.lastInsertRowid)).padStart(6, '0')}`;
+                try {
+                    this.db.prepare('UPDATE patients SET mrn = ? WHERE id = ?')
+                        .run(mrn, created.lastInsertRowid);
+                } catch (e: any) {
+                    if (String(e?.message || '').includes('UNIQUE')) {
+                        throw new Error('MRN is already registered.');
+                    }
+                    throw e;
+                }
             }
             return created;
         }

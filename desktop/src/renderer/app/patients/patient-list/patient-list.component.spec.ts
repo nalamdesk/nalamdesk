@@ -264,4 +264,24 @@ describe('PatientListComponent', () => {
         await component.checkDuplicates();
         expect(component.duplicateCandidates).toEqual([]);
     });
+
+    it('ignores stale duplicate responses', async () => {
+        component.openAddModal();
+        component.patientForm.patchValue({ name: 'Ravi', mobile: '9888877771' });
+        let resolveFirst!: (rows: any[]) => void;
+        const first = new Promise<any[]>((resolve) => { resolveFirst = resolve; });
+        let secondCalled = false;
+        mockDataService.invoke.mockImplementationOnce(() => first);
+        mockDataService.invoke.mockImplementationOnce(() => {
+            secondCalled = true;
+            return Promise.resolve([]);
+        });
+        const p1 = component.checkDuplicates();
+        component.patientForm.patchValue({ name: 'Ravi Updated', mobile: '9888877771' });
+        const p2 = component.checkDuplicates();
+        resolveFirst([{ patient: { id: 9 } }]);
+        await Promise.all([p1, p2]);
+        expect(secondCalled).toBe(true);
+        expect(component.duplicateCandidates).toEqual([]);
+    });
 });

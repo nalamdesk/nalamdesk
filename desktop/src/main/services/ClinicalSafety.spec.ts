@@ -976,8 +976,8 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             const b: any = service.savePatient({ name: 'Bala', mobile: '9000000002', age: 40, gender: 'Male' });
             const rowA = service.getPatientById(Number(a.lastInsertRowid));
             const rowB = service.getPatientById(Number(b.lastInsertRowid));
-            expect(rowA.mrn).toMatch(/^ND-\d{6}$/);
-            expect(rowB.mrn).toMatch(/^ND-\d{6}$/);
+            expect(rowA.mrn).toMatch(/^ND-\d{6,}$/);
+            expect(rowB.mrn).toMatch(/^ND-\d{6,}$/);
             expect(rowA.mrn).not.toBe(rowB.mrn);
             // Custom MRN respected once, then protected from reuse and rewrite.
             const c: any = service.savePatient({

@@ -125,8 +125,10 @@ export class DatabaseService {
      */
     private repairMissingMrns(): void {
         try {
-            this.db.exec(`UPDATE patients SET mrn = 'ND-' || printf('%06d', 100000 + id)
-                WHERE mrn IS NULL OR mrn = ''`);
+            const prefix = String((this.getSettings() as any)?.mrn_prefix || 'ND').trim() || 'ND';
+            // Prefix is data, not SQL: quote it as a bound parameter.
+            this.db.prepare(`UPDATE patients SET mrn = ? || printf('%06d', 100000 + id)
+                WHERE mrn IS NULL OR mrn = ''`).run(prefix + '-');
         } catch (e) {
             console.error('[DB] MRN repair failed:', e);
         }

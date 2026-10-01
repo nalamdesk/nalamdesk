@@ -985,6 +985,9 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             });
             expect(service.getPatientById(Number(c.lastInsertRowid)).mrn).toBe('ND-000001');
             expect(() => service.savePatient({
+                name: 'Bad Format', mobile: '9000000005', age: 20, gender: 'Male', mrn: 'not an mrn!'
+            })).toThrow('must look like');
+            expect(() => service.savePatient({
                 name: 'Dup', mobile: '9000000004', age: 20, gender: 'Male', mrn: 'ND-000001'
             })).toThrow('already registered');
             service.savePatient({ id: rowA.id, name: 'Asha Updated', mrn: 'ND-999999' });

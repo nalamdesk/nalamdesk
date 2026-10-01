@@ -1373,6 +1373,11 @@ export class DatabaseService {
                 throw new Error('Gender must be Male, Female, Other, or Unknown.');
             }
             if (patient.mrn != null && String(patient.mrn).trim() !== '') {
+                // Custom MRNs must look like MRNs (clinic prefix + digits);
+                // anything else is a typo the uniqueness check would bless.
+                if (!/^[A-Za-z0-9]+-\d{4,}$/.test(String(patient.mrn).trim())) {
+                    throw new Error('MRN must look like ND-100001 (prefix, hyphen, digits).');
+                }
                 const taken = this.db.prepare('SELECT id FROM patients WHERE mrn = ?')
                     .get(String(patient.mrn).trim()) as any;
                 if (taken) throw new Error('MRN is already registered.');

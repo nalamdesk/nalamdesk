@@ -1596,6 +1596,7 @@ ipcMain.handle('backup:useDefaultPath', async () => {
 ipcMain.handle('backup:runNow', async () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
     // Manual trigger for testing
     console.log('[Main] Manual backup triggered via IPC');
     await backupService.performBackup();
@@ -1605,6 +1606,7 @@ ipcMain.handle('backup:runNow', async () => {
 ipcMain.handle('backup:listSystemBackups', async () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
     return backupService.listSystemBackups();
 });
 

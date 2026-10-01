@@ -63,6 +63,14 @@ describe('BackupService recoverable bundles', () => {
         expect(CronJob).toHaveBeenCalledWith('0 45 03 * * *', expect.any(Function));
     });
 
+    it('falls back to the default when stored schedules predate validation', () => {
+        const db = database(sourceDb);
+        (db.getSettings as any).mockReturnValue({ backup_schedule: '99:99', cloud_backup_schedule: null });
+        new BackupService(db, drive(), sourceSecurity(), sourceUserData).initAutomatedBackup();
+        expect(CronJob).toHaveBeenCalledWith('0 00 13 * * *', expect.any(Function));
+        expect(CronJob).not.toHaveBeenCalledWith(expect.stringContaining('99'), expect.anything());
+    });
+
     it('keeps the running job when a reschedule expression is invalid', () => {
         const db = database(sourceDb);
         const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData);

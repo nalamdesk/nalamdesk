@@ -74,8 +74,12 @@ export class BackupService {
     setLocalBackupPath(backupPath: string) { this.localBackupPath = backupPath; }
     initAutomatedBackup() {
         const settings = this.dbService.getSettings();
-        this.scheduleLocalBackup(settings?.backup_schedule || '13:00');
-        this.scheduleCloudBackup(settings?.cloud_backup_schedule || '13:00');
+        // Stored values predate validation (or were hand-edited): fall back
+        // to the default rather than leaving the schedule silently dead.
+        const local = settings?.backup_schedule;
+        const cloud = settings?.cloud_backup_schedule;
+        this.scheduleLocalBackup(BackupService.isValidScheduleTime(local) ? local : '13:00');
+        this.scheduleCloudBackup(BackupService.isValidScheduleTime(cloud) ? cloud : '13:00');
     }
     private convertToCron(time: string): string {
         if (!/^\d{2}:\d{2}$/.test(time)) return time;
@@ -107,8 +111,8 @@ export class BackupService {
      * Shape-only checks admit '99:99', which cron rejects and date math
      * silently rolls over — validate before persisting or scheduling.
      */
-    static isValidScheduleTime(time: string): boolean {
-        return /^([01]\d|2[0-3]):([0-5]\d)$/.test(time);
+    static isValidScheduleTime(time: unknown): time is string {
+        return typeof time === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.test(time);
     }
 
     /**

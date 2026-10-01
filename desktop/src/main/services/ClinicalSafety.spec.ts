@@ -991,6 +991,21 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.getPatientById(rowA.id).mrn).toBe(rowA.mrn);
         });
 
+        it('rolls back the insert when a hand-picked MRN collides with auto-assignment', () => {
+            db.prepare('DELETE FROM patients').run();
+            // Harness seeds ids 1-2, AUTOINCREMENT never reuses: claimant
+            // takes id 3, so id 5's future MRN (ND-100005) is claimed by hand.
+            service.savePatient({
+                name: 'Claimant', mobile: '9000000021', age: 30, gender: 'Male', mrn: 'ND-100005'
+            });
+            const auto: any = service.savePatient({ name: 'Auto', mobile: '9000000022', age: 30, gender: 'Male' });
+            expect(service.getPatientById(Number(auto.lastInsertRowid)).mrn).toBe('ND-100004');
+            expect(() => service.savePatient({ name: 'Collision', mobile: '9000000023', age: 30, gender: 'Male' }))
+                .toThrow('already registered');
+            expect(db.prepare(`SELECT id FROM patients WHERE name = 'Collision'`).get()).toBeUndefined();
+            expect(service.getPatients('')).toHaveLength(2);
+        });
+
         it('requires an explicit gender on registration and preserves it on edit', () => {
             db.prepare('DELETE FROM patients').run();
             expect(() => service.savePatient({ name: 'No Gender', mobile: '9000000010', age: 30 }))

@@ -1368,12 +1368,20 @@ export class DatabaseService {
                 // Immutable clinic MRN from the rowid: collision-free by
                 // construction, never rewritten afterwards. Width grows past
                 // six digits instead of wrapping (no slice truncation).
+                // A colliding hand-picked MRN removes the just-inserted row
+                // (compensation, not a nested transaction: savePatient also
+                // runs inside the share-token check-in transaction) so a
+                // failed assignment never leaves a chart without an MRN.
                 const prefix = String(this.getSettings()?.mrn_prefix || 'ND').trim() || 'ND';
                 const mrn = `${prefix}-${String(100000 + Number(created.lastInsertRowid)).padStart(6, '0')}`;
                 try {
                     this.db.prepare('UPDATE patients SET mrn = ? WHERE id = ?')
                         .run(mrn, created.lastInsertRowid);
                 } catch (e: any) {
+                    try {
+                        this.db.prepare('DELETE FROM patients WHERE id = ?')
+                            .run(created.lastInsertRowid);
+                    } catch { /* best-effort cleanup */ }
                     if (/UNIQUE constraint failed: patients\.mrn/.test(String(e?.message || ''))) {
                         throw new Error('MRN is already registered.');
                     }

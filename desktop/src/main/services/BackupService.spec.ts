@@ -71,6 +71,16 @@ describe('BackupService recoverable bundles', () => {
         expect(CronJob).not.toHaveBeenCalledWith(expect.stringContaining('99'), expect.anything());
     });
 
+    it('repairs an invalid stored schedule with an audit trail', () => {
+        const db = database(sourceDb) as any;
+        db.saveSettings = vi.fn();
+        (db.getSettings as any).mockReturnValue({ backup_schedule: '99:99' });
+        new BackupService(db, drive(), sourceSecurity(), sourceUserData).initAutomatedBackup();
+        expect(db.saveSettings).toHaveBeenCalledWith({ backup_schedule: '13:00' });
+        expect(db.logAudit).toHaveBeenCalledWith('BACKUP_ERROR', 'system', 0, 0,
+            expect.stringContaining('reset to 13:00'));
+    });
+
     it('keeps the running job when a reschedule expression is invalid', () => {
         const db = database(sourceDb);
         const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData);

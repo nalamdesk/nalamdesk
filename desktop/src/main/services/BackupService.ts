@@ -74,12 +74,24 @@ export class BackupService {
     setLocalBackupPath(backupPath: string) { this.localBackupPath = backupPath; }
     initAutomatedBackup() {
         const settings = this.dbService.getSettings();
-        // Stored values predate validation (or were hand-edited): fall back
-        // to the default rather than leaving the schedule silently dead.
-        const local = settings?.backup_schedule;
-        const cloud = settings?.cloud_backup_schedule;
-        this.scheduleLocalBackup(BackupService.isValidScheduleTime(local) ? local : '13:00');
-        this.scheduleCloudBackup(BackupService.isValidScheduleTime(cloud) ? cloud : '13:00');
+        // Stored values predate validation (or were hand-edited): repair to
+        // the default with an audit trail instead of leaving the schedule
+        // silently dead on every launch.
+        this.scheduleLocalBackup(this.validatedStoredSchedule(settings?.backup_schedule, 'backup_schedule', 'local'));
+        this.scheduleCloudBackup(this.validatedStoredSchedule(settings?.cloud_backup_schedule, 'cloud_backup_schedule', 'cloud'));
+    }
+
+    private validatedStoredSchedule(
+        stored: unknown, column: 'backup_schedule' | 'cloud_backup_schedule', label: string
+    ): string {
+        if (stored == null || stored === '') return '13:00';
+        if (BackupService.isValidScheduleTime(stored)) return stored;
+        try {
+            this.dbService.saveSettings({ [column]: '13:00' });
+            this.dbService.logAudit('BACKUP_ERROR', 'system', 0, 0,
+                `Invalid stored ${label} backup schedule '${stored}': reset to 13:00`);
+        } catch { /* repair is best-effort at boot; schedule still fires */ }
+        return '13:00';
     }
     private convertToCron(time: string): string {
         if (!/^\d{2}:\d{2}$/.test(time)) return time;

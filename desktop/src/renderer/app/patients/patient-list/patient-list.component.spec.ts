@@ -284,4 +284,19 @@ describe('PatientListComponent', () => {
         expect(secondCalled).toBe(true);
         expect(component.duplicateCandidates).toEqual([]);
     });
+
+    it('retires in-flight requests when the form is cleared', async () => {
+        component.openAddModal();
+        component.patientForm.patchValue({ name: 'Ravi', mobile: '9888877771' });
+        let resolveSlow!: (rows: any[]) => void;
+        const slow = new Promise<any[]>((resolve) => { resolveSlow = resolve; });
+        mockDataService.invoke.mockImplementationOnce(() => slow);
+        const pending = component.checkDuplicates();
+        component.patientForm.patchValue({ name: '', mobile: '' });
+        await component.checkDuplicates();
+        expect(component.duplicateCandidates).toEqual([]);
+        resolveSlow([{ patient: { id: 9 } }]);
+        await pending;
+        expect(component.duplicateCandidates).toEqual([]);
+    });
 });

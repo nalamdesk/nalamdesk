@@ -783,7 +783,9 @@ export class DatabaseService {
         )
             `).run({ ...patient, mrn: patient.mrn ?? null });
         } catch (e: any) {
-            if (String(e?.message || '').includes('UNIQUE')) {
+            // Narrow to the MRN index: any other constraint failure (uuid,
+            // future unique columns) must surface unmasked.
+            if (/UNIQUE constraint failed: patients\.mrn/.test(String(e?.message || ''))) {
                 throw new Error('MRN is already registered.');
             }
             throw e;
@@ -1372,7 +1374,7 @@ export class DatabaseService {
                     this.db.prepare('UPDATE patients SET mrn = ? WHERE id = ?')
                         .run(mrn, created.lastInsertRowid);
                 } catch (e: any) {
-                    if (String(e?.message || '').includes('UNIQUE')) {
+                    if (/UNIQUE constraint failed: patients\.mrn/.test(String(e?.message || ''))) {
                         throw new Error('MRN is already registered.');
                     }
                     throw e;

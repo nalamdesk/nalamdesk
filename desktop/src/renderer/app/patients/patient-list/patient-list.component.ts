@@ -484,6 +484,10 @@ export class PatientListComponent implements OnInit {
       name: value.name || '', dob: value.dob || null,
       mobile: value.mobile || '', excludeId: value.id || 0
     };
+    // Sequence guard starts here, not at the invoke: a cleared form must
+    // also retire any in-flight request, or its late response repopulates
+    // a blank banner.
+    const request = ++this.duplicateRequest;
     if (!input.name && !input.mobile) {
       this.ngZone.run(() => {
         this.duplicateCandidates = [];
@@ -492,7 +496,6 @@ export class PatientListComponent implements OnInit {
       return;
     }
     // Sequence guard: a slow earlier request must not overwrite a newer one.
-    const request = ++this.duplicateRequest;
     this.checkingDuplicates = true;
     try {
       const rows = await this.dataService.invoke<any[]>('findDuplicateCandidates', input);

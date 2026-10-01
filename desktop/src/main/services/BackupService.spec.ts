@@ -92,6 +92,19 @@ describe('BackupService recoverable bundles', () => {
         it('rejects non-HH:MM expressions', () => {
             expect(BackupService.nextDailyRun('bogus')).toBeNull();
             expect(BackupService.nextDailyRun('0 0 13 * * *')).toBeNull();
+            expect(BackupService.nextDailyRun('99:99')).toBeNull();
+            expect(BackupService.nextDailyRun('25:70')).toBeNull();
+        });
+
+        it('range-checks schedule times', () => {
+            expect(BackupService.isValidScheduleTime('13:00')).toBe(true);
+            expect(BackupService.isValidScheduleTime('00:00')).toBe(true);
+            expect(BackupService.isValidScheduleTime('23:59')).toBe(true);
+            expect(BackupService.isValidScheduleTime('99:99')).toBe(false);
+            expect(BackupService.isValidScheduleTime('24:00')).toBe(false);
+            expect(BackupService.isValidScheduleTime('13:60')).toBe(false);
+            expect(BackupService.isValidScheduleTime('13:0')).toBe(false);
+            expect(BackupService.isValidScheduleTime('bogus')).toBe(false);
         });
     });
 

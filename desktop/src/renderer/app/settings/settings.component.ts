@@ -107,9 +107,24 @@ export class SettingsComponent implements OnInit {
     const h = this.backupHealth;
     if (!h) return 'attention';
     if (!h.writable) return 'error';
-    if (h.lastErrorAt && (!h.lastBackupAt || h.lastErrorAt > h.lastBackupAt)) return 'error';
+    // Timestamps arrive in mixed formats (SQLite 'YYYY-MM-DD HH:mm:ss' UTC
+    // vs ISO): compare epoch millis, never raw strings.
+    const errAt = SettingsComponent.toEpoch(h.lastErrorAt);
+    const okAt = SettingsComponent.toEpoch(h.lastBackupAt);
+    if (errAt != null && (okAt == null || errAt > okAt)) return 'error';
     if (h.missed) return 'attention';
     return 'healthy';
+  }
+
+  /** Parses SQLite UTC timestamps and ISO strings to epoch millis. */
+  private static toEpoch(value: string | null | undefined): number | null {
+    if (!value) return null;
+    const text = String(value).trim();
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(text)
+      ? text.replace(' ', 'T') + 'Z'
+      : text;
+    const time = new Date(normalized).getTime();
+    return Number.isNaN(time) ? null : time;
   }
 
   formatBytes(bytes: number | null): string {

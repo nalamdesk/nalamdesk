@@ -984,12 +984,13 @@ handleGuardedDb('db:saveSettings', async (_, settings) => {
     if (user.role !== 'admin') throw new Error('Forbidden');
 
     // Validate schedule times BEFORE persisting: an invalid value must
-    // neither be saved nor silently kill the running cron job.
-    const timePattern = /^\d{2}:\d{2}$/;
-    if (settings.backup_schedule && !timePattern.test(settings.backup_schedule)) {
+    // neither be saved nor silently kill the running cron job. Range-checked
+    // (HH 00-23, MM 00-59): shape-only checks admit '99:99', which cron
+    // rejects and next-run math rolls over.
+    if (settings.backup_schedule && !BackupService.isValidScheduleTime(settings.backup_schedule)) {
         throw new Error('Invalid backup schedule time.');
     }
-    if (settings.cloud_backup_schedule && !timePattern.test(settings.cloud_backup_schedule)) {
+    if (settings.cloud_backup_schedule && !BackupService.isValidScheduleTime(settings.cloud_backup_schedule)) {
         throw new Error('Invalid cloud backup schedule time.');
     }
 
@@ -1610,6 +1611,7 @@ ipcMain.handle('backup:listSystemBackups', async () => {
 ipcMain.handle('backup:getLocalBackupHealth', async () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
     return backupService.getLocalBackupHealth();
 });
 

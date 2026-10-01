@@ -103,12 +103,21 @@ export class BackupService {
     }
 
     /**
+     * HH:MM schedule times with range checking (HH 00-23, MM 00-59).
+     * Shape-only checks admit '99:99', which cron rejects and date math
+     * silently rolls over — validate before persisting or scheduling.
+     */
+    static isValidScheduleTime(time: string): boolean {
+        return /^([01]\d|2[0-3]):([0-5]\d)$/.test(time);
+    }
+
+    /**
      * Next daily fire for an HH:MM schedule in local time. Pure function of
      * (time, now) so restarts, DST boundaries, and display math stay
      * testable without touching the live cron job.
      */
     static nextDailyRun(time: string, now: Date = new Date()): string | null {
-        const match = /^(\d{2}):(\d{2})$/.exec(time);
+        const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
         if (!match) return null;
         const candidate = new Date(now);
         candidate.setHours(Number(match[1]), Number(match[2]), 0, 0);

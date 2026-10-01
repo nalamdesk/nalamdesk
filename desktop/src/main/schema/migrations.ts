@@ -1308,5 +1308,37 @@ export const MIGRATIONS = [
                 receptionist: ['findDuplicateCandidates']
             });
         }
+    },
+    {
+        version: 36,
+        up: (db: any) => {
+            console.log('Running Migration v36 (patient merge ledger)...');
+            // Reversible merge ledger: every moved row recorded so unmerge
+            // replays exactly. Merge itself is doctor/admin-only (grants).
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS patient_merges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    survivor_id INTEGER NOT NULL,
+                    duplicate_id INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    merged_by INTEGER NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    undone_at TEXT NULL
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS patient_merge_items (
+                    merge_id INTEGER NOT NULL,
+                    table_name TEXT NOT NULL,
+                    row_id INTEGER NOT NULL
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_merge_items_merge
+                ON patient_merge_items(merge_id)`);
+            grantRoleMethods(db, {
+                doctor: ['previewPatientMerge', 'mergePatients', 'unmergePatients'],
+                admin: ['previewPatientMerge', 'mergePatients', 'unmergePatients']
+            });
+        }
     }
 ];

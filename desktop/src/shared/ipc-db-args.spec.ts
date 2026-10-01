@@ -61,4 +61,13 @@ describe('resolveDbMethodArgs addToQueue', () => {
         const input = { name: 'Ravi', mobile: '9888877771' };
         expect(resolveDbMethodArgs('findDuplicateCandidates', [input], 99)).toEqual([input]);
     });
+
+    it('unpacks merge workflow calls for both transports', () => {
+        const preview = { survivorId: 1, duplicateId: 2 };
+        expect(resolveDbMethodArgs('previewPatientMerge', [preview], 99)).toEqual([preview]);
+        const merge = { survivorId: 1, duplicateId: 2, reason: 'Dup' };
+        expect(resolveDbMethodArgs('mergePatients', [merge], 99)).toEqual([merge, 99]);
+        expect(resolveDbMethodArgs('unmergePatients', [{ duplicateId: 2 }], 99)).toEqual([2, 99]);
+        expect(resolveDbMethodArgs('unmergePatients', [2], 99)).toEqual([2, 99]);
+    });
 });

@@ -761,5 +761,52 @@ describe('PatientDetailsComponent', () => {
         component.patient = null;
         expect(component.displayAge).toBe('—');
     });
+
+    it('walks the merge flow from search to confirm', async () => {
+        component.patient = { id: 1, name: 'Asha', mrn: 'ND-100001' } as any;
+        component.openMergeModal();
+        expect(component.showMergeModal).toBe(true);
+        expect(component.mergeSurvivorId).toBe(1);
+
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'findDuplicateCandidates') {
+                return Promise.resolve([{ patient: { id: 2, name: 'Asha S', mrn: 'ND-100002' }, signals: ['name'], score: 30 }]);
+            }
+            if (endpoint === 'previewPatientMerge') {
+                return Promise.resolve({
+                    survivor: { id: 1, name: 'Asha' },
+                    duplicate: { id: 2, name: 'Asha S' },
+                    counts: { visits: 2, vitals: 1 }, warnings: []
+                });
+            }
+            return Promise.resolve(null);
+        });
+        component.mergeQuery = 'Asha';
+        await component.searchMergeCandidates();
+        expect(component.mergeCandidates).toHaveLength(1);
+
+        await component.selectMergeCandidate({ id: 2, name: 'Asha S' });
+        expect(component.mergePreview.duplicate.id).toBe(2);
+        expect(component.mergeMoveTotal).toBe(3);
+        expect(component.mergeMoveSummary).toContain('2 visits');
+
+        component.mergeReason = 'Same person';
+        await component.confirmMerge();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('mergePatients', expect.objectContaining({
+            survivorId: 1, duplicateId: 2, reason: 'Same person'
+        }));
+        expect(component.showMergeModal).toBe(false);
+    });
+
+    it('unmerges an absorbed chart after confirm', async () => {
+        component.patient = { id: 2, name: 'Asha S', merged_into: 1 } as any;
+        await component.unmergeChart();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('unmergePatients', 2);
+
+        mockDialogService.open.mockResolvedValueOnce(false);
+        mockDataService.invoke.mockClear();
+        await component.unmergeChart();
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('unmergePatients', expect.anything());
+    });
 });
 

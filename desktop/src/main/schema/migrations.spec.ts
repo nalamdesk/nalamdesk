@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 35 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(35);
+        it('should have 36 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(36);
         });
     });
 
@@ -668,8 +668,7 @@ describe('Database Migrations', () => {
         });
     });
 
-    describe('Migration v35 (patient identity)', () => {
-        it('adds MRN, DOB-estimate, and merge-link columns with backfill', () => {
+    describe('Migration v35 (patient identity)', () => {        it('adds MRN, DOB-estimate, and merge-link columns with backfill', () => {
             MIGRATIONS.find((m) => m.version === 35)!.up(mockDb);
             const sql = executedSql.join('\n');
             expect(sql).toContain('ADD COLUMN mrn');
@@ -695,6 +694,36 @@ describe('Database Migrations', () => {
             MIGRATIONS.find((m) => m.version === 35)!.up(mockDb);
             expect(JSON.parse(writes['doctor'])).toContain('findDuplicateCandidates');
             expect(JSON.parse(writes['receptionist'])).toContain('findDuplicateCandidates');
+            expect(writes['nurse']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v36 (patient merge ledger)', () => {
+        it('creates the reversible merge ledger and grants merge to clinical roles', () => {
+            MIGRATIONS.find((m) => m.version === 36)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS patient_merges');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS patient_merge_items');
+        });
+
+        it('grants merge workflow to doctor and admin only', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 36)!.up(mockDb);
+            for (const method of ['previewPatientMerge', 'mergePatients', 'unmergePatients']) {
+                expect(JSON.parse(writes['doctor'])).toContain(method);
+            }
+            expect(writes['receptionist']).toBeUndefined();
             expect(writes['nurse']).toBeUndefined();
         });
     });

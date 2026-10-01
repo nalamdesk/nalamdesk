@@ -172,7 +172,7 @@ describe('DatabaseService', () => {
 
         it('should search patients', () => {
             service.getPatients('John');
-            expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('WHERE name LIKE ?'));
+            expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('name LIKE ?'));
             expect(mockStatement.all).toHaveBeenCalledWith(
                 expect.stringContaining('John'), expect.any(String), expect.any(String));
         });

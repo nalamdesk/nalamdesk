@@ -1063,6 +1063,84 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.findDuplicateCandidates({})).toEqual([]);
         });
 
+        it('previews merge candidates with move counts and warnings', () => {
+            db.prepare('DELETE FROM patients').run();
+            const s: any = service.savePatient({ name: 'Survivor', mobile: '9111111111', age: 40, gender: 'Male' });
+            const d: any = service.savePatient({ name: 'Duplicate', mobile: '9222222222', age: 38, gender: 'Male' });
+            const sid = Number(s.lastInsertRowid);
+            const did = Number(d.lastInsertRowid);
+            service.saveVitals({ patient_id: did, pulse: 70, systolic_bp: 120, diastolic_bp: 80 }, 99);
+            const preview: any = service.previewPatientMerge({ survivorId: sid, duplicateId: did });
+            expect(preview.survivor.id).toBe(sid);
+            expect(preview.warnings).toEqual([]);
+            expect(preview.counts.vitals).toBe(1);
+            expect(() => service.previewPatientMerge({ survivorId: sid, duplicateId: sid }))
+                .toThrow('must differ');
+            expect(() => service.previewPatientMerge({ survivorId: sid, duplicateId: 424242 }))
+                .toThrow('not found');
+        });
+
+        it('merges charts, reassigns rows, and rolls back exactly', () => {
+            db.prepare('DELETE FROM patients').run();
+            const s: any = service.savePatient({ name: 'Survivor', mobile: '9111111111', age: 40, gender: 'Male' });
+            const d: any = service.savePatient({
+                name: 'Duplicate', mobile: '9222222222', age: 38, gender: 'Male',
+                abha_address: 'dup@sbx', abha_name: 'Dup'
+            });
+            const sid = Number(s.lastInsertRowid);
+            const did = Number(d.lastInsertRowid);
+            service.saveVitals({ patient_id: did, pulse: 70, systolic_bp: 120, diastolic_bp: 80 }, 99);
+            service.addToQueue(did, 2, 99);
+            db.prepare(`INSERT INTO patient_allergies (patient_id, substance, severity, status)
+                VALUES (?, 'Penicillin', 'high', 'active')`).run(did);
+
+            expect(() => service.mergePatients({ survivorId: sid, duplicateId: did, reason: '' }, 99))
+                .toThrow('reason is required');
+            const merged: any = service.mergePatients(
+                { survivorId: sid, duplicateId: did, reason: 'Same person, two spellings' }, 99);
+            expect(merged.moved).toBeGreaterThan(0);
+            // Rows moved, duplicate linked away, ABHA followed the survivor.
+            expect(db.prepare('SELECT COUNT(*) as count FROM vitals WHERE patient_id = ?').get(did))
+                .toMatchObject({ count: 0 });
+            expect(db.prepare('SELECT COUNT(*) as count FROM vitals WHERE patient_id = ?').get(sid))
+                .toMatchObject({ count: 1 });
+            expect(service.getPatientById(did).merged_into).toBe(sid);
+            expect(service.getPatientById(sid).abha_address).toBe('dup@sbx');
+            // Merged charts vanish from lists and duplicate search.
+            expect(service.getPatients('Duplicate')).toEqual([]);
+            expect(service.findDuplicateCandidates({ name: 'Duplicate' })).toEqual([]);
+            // Second merge of the same pair is refused.
+            expect(() => service.mergePatients({ survivorId: sid, duplicateId: did, reason: 'x' }, 99))
+                .toThrow('already merged');
+
+            const undone: any = service.unmergePatients(did, 99);
+            expect(undone.movedBack).toBeGreaterThan(0);
+            expect(db.prepare('SELECT COUNT(*) as count FROM vitals WHERE patient_id = ?').get(did))
+                .toMatchObject({ count: 1 });
+            expect(service.getPatientById(did).merged_into).toBeNull();
+            expect(service.getPatientById(did).abha_address).toBe('dup@sbx');
+            expect(service.getPatientById(sid).abha_address).toBeNull();
+            expect(() => service.unmergePatients(did, 99)).toThrow('No open merge');
+        });
+
+        it('refuses merges that would strand active or doubly-linked charts', () => {
+            db.prepare('DELETE FROM patients').run();
+            const s: any = service.savePatient({ name: 'S', mobile: '9333333333', age: 40, gender: 'Male' });
+            const d: any = service.savePatient({
+                name: 'D', mobile: '9444444444', age: 40, gender: 'Male',
+                abha_address: 'd@sbx', abha_name: 'D'
+            });
+            const sid = Number(s.lastInsertRowid);
+            const did = Number(d.lastInsertRowid);
+            db.prepare(`INSERT INTO visits (patient_id, status) VALUES (?, 'in-progress')`).run(did);
+            expect(() => service.mergePatients({ survivorId: sid, duplicateId: did, reason: 'x' }, 99))
+                .toThrow('active encounter');
+            db.prepare(`DELETE FROM visits WHERE patient_id = ?`).run(did);
+            service.savePatient({ id: sid, name: 'S', abha_address: 's@sbx', abha_name: 'S' });
+            expect(() => service.mergePatients({ survivorId: sid, duplicateId: did, reason: 'x' }, 99))
+                .toThrow('health IDs');
+        });
+
         it('serves sanitized settings without secrets', () => {
             db.prepare(`INSERT INTO settings (clinic_name, abdm_callback_secret)
                 VALUES ('Test Clinic', 'super-secret')`).run();

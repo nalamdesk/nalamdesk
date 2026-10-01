@@ -752,7 +752,7 @@ export class DatabaseService {
         return (save as any).immediate ? (save as any).immediate() : (save as any)();
     }
 
-    getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients').get().count;
+    getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL').get().count;
         // Today's visits: date >= start of day
         const today = new Date().toISOString().split('T')[0];
         const todayVisits = this.db.prepare("SELECT count(*) as count FROM visits WHERE date(date) = ? AND status = 'finished'").get(today).count;
@@ -767,12 +767,12 @@ export class DatabaseService {
     // Patients
     getPatients(query: string = '') {
         if (!query) {
-            return this.db.prepare('SELECT * FROM patients ORDER BY created_at DESC LIMIT 50').all();
+            return this.db.prepare('SELECT * FROM patients WHERE merged_into IS NULL ORDER BY created_at DESC LIMIT 50').all();
         }
         const search = `%${query.trim()}%`;
         return this.db.prepare(`
-        SELECT * FROM patients 
-      WHERE name LIKE ? OR mobile LIKE ? OR mrn LIKE ?
+        SELECT * FROM patients
+      WHERE (name LIKE ? OR mobile LIKE ? OR mrn LIKE ?) AND merged_into IS NULL
             ORDER BY created_at DESC
                 `).all(search, search, search);
     }
@@ -869,6 +869,159 @@ export class DatabaseService {
             if (signals.length > 0) scored.push({ patient: row, signals, score });
         }
         return scored.sort((a, b) => b.score - a.score).slice(0, 10);
+    }
+
+    /** Tables whose patient_id rows move on merge (queue history follows queue rows). */
+    private static readonly MERGE_TABLES = [
+        'visits', 'vitals', 'patient_queue', 'appointments', 'encounter_requests',
+        'patient_allergies', 'patient_conditions', 'patient_medications',
+        'abdm_consents', 'abdm_fetched_records'
+    ];
+
+    private mergeableChart(id: number) {
+        const row = this.db.prepare(`SELECT id, name, mrn, mobile, gender, dob, abha_address, abha_name, merged_into
+            FROM patients WHERE id = ?`).get(Number(id)) as any;
+        if (!row) throw new Error(`Patient #${id} not found.`);
+        if (row.merged_into != null) throw new Error(`${row.name || `Patient #${id}`} is already merged and cannot be merged again.`);
+        return row;
+    }
+
+    /**
+     * Merge preview: both charts, per-table move counts, and hard stops.
+     * Refuses nothing itself — mergePatients enforces the same rules.
+     */
+    previewPatientMerge(input: { survivorId: number; duplicateId: number }) {
+        const survivorId = Number(input?.survivorId);
+        const duplicateId = Number(input?.duplicateId);
+        const survivor = this.mergeableChart(survivorId);
+        const duplicate = this.mergeableChart(duplicateId);
+        if (Number(survivorId) === Number(duplicateId)) throw new Error('Survivor and duplicate must differ.');
+        const counts: Record<string, number> = {};
+        for (const table of DatabaseService.MERGE_TABLES) {
+            try {
+                counts[table] = Number((this.db.prepare(
+                    `SELECT COUNT(*) as count FROM ${table} WHERE patient_id = ?`).get(duplicate.id) as any)?.count || 0);
+            } catch { counts[table] = 0; }
+        }
+        const warnings: string[] = [];
+        for (const pid of [survivor.id, duplicate.id]) {
+            const active = this.db.prepare(
+                `SELECT id FROM visits WHERE patient_id = ? AND status = 'in-progress' LIMIT 1`).get(pid) as any;
+            if (active) warnings.push(`Patient #${pid} has an active encounter: resolve it before merging.`);
+        }
+        if (duplicate.abha_address && survivor.abha_address
+            && String(duplicate.abha_address) !== String(survivor.abha_address)) {
+            warnings.push('Both charts hold different health IDs: unlink one before merging.');
+        }
+        return { survivor, duplicate, counts, warnings };
+    }
+
+    /**
+     * Merges duplicateId into survivorId: reassigns related rows, moves an
+     * uncontested health-ID link, links the absorbed chart, and records
+     * every moved row for rollback. Doctor/admin-only at the IPC layer.
+     */
+    mergePatients(input: { survivorId: number; duplicateId: number; reason: string }, actingUserId?: number) {
+        const reason = String(input?.reason || '').trim();
+        if (!reason) throw new Error('A reason is required for merging charts.');
+        const survivorId = Number(input?.survivorId);
+        const duplicateId = Number(input?.duplicateId);
+        if (!Number.isInteger(survivorId) || !Number.isInteger(duplicateId)) {
+            throw new Error('Survivor and duplicate ids are required.');
+        }
+        if (survivorId === duplicateId) throw new Error('Survivor and duplicate must differ.');
+        const merge = this.db.transaction(() => {
+            const survivor = this.mergeableChart(survivorId);
+            const duplicate = this.mergeableChart(duplicateId);
+            for (const pid of [survivor.id, duplicate.id]) {
+                const active = this.db.prepare(
+                    `SELECT id FROM visits WHERE patient_id = ? AND status = 'in-progress' LIMIT 1`).get(pid) as any;
+                if (active) throw new Error(`Patient #${pid} has an active encounter: resolve it before merging.`);
+            }
+            if (duplicate.abha_address && survivor.abha_address
+                && String(duplicate.abha_address) !== String(survivor.abha_address)) {
+                throw new Error('Both charts hold different health IDs: unlink one before merging.');
+            }
+            const moved: { table: string; rowId: number }[] = [];
+            const moveQueueIds: number[] = [];
+            for (const table of DatabaseService.MERGE_TABLES) {
+                let rows: any[] = [];
+                try {
+                    rows = this.db.prepare(`SELECT id FROM ${table} WHERE patient_id = ?`).all(duplicate.id) as any[];
+                } catch { continue; }
+                for (const row of rows) {
+                    this.db.prepare(`UPDATE ${table} SET patient_id = ? WHERE id = ?`).run(survivor.id, row.id);
+                    moved.push({ table, rowId: Number(row.id) });
+                    if (table === 'patient_queue') moveQueueIds.push(Number(row.id));
+                }
+            }
+            if (moveQueueIds.length > 0) {
+                const placeholders = moveQueueIds.map(() => '?').join(',');
+                const histories = this.db.prepare(
+                    `SELECT id FROM queue_triage_history WHERE queue_id IN (${placeholders})`).all(...moveQueueIds) as any[];
+                for (const history of histories) moved.push({ table: 'queue_triage_history', rowId: Number(history.id) });
+            }
+            if (duplicate.abha_address && !survivor.abha_address) {
+                // Clear first, then set: the unique index forbids two rows
+                // holding the same health ID even mid-move.
+                this.db.prepare('UPDATE patients SET abha_address = NULL, abha_name = NULL WHERE id = ?')
+                    .run(duplicate.id);
+                this.db.prepare('UPDATE patients SET abha_address = ?, abha_name = ? WHERE id = ?')
+                    .run(duplicate.abha_address, duplicate.abha_name, survivor.id);
+                moved.push({ table: 'patients_abha', rowId: duplicate.id });
+            }
+            this.db.prepare('UPDATE patients SET merged_into = ? WHERE id = ?').run(survivor.id, duplicate.id);
+            const record = this.db.prepare(`INSERT INTO patient_merges
+                (survivor_id, duplicate_id, reason, merged_by) VALUES (?, ?, ?, ?)`)
+                .run(survivor.id, duplicate.id, reason, actingUserId ?? null) as any;
+            const mergeId = Number(record.lastInsertRowid);
+            const addItem = this.db.prepare(`INSERT INTO patient_merge_items
+                (merge_id, table_name, row_id) VALUES (?, ?, ?)`);
+            for (const item of moved) addItem.run(mergeId, item.table, item.rowId);
+            return { mergeId, moved: moved.length };
+        });
+        const result = merge();
+        this.logAudit('MERGE', 'patients', duplicateId, actingUserId,
+            `Merged patient #${duplicateId} into #${survivorId} (${result.moved} rows): ${reason}`);
+        return { ...result, survivorId, duplicateId };
+    }
+
+    /**
+     * Reverses a merge via its ledger: rows move back, the link clears, the
+     * merge is stamped undone (ledger itself is append-only history).
+     */
+    unmergePatients(duplicateId: number, actingUserId?: number) {
+        const dup = Number(duplicateId);
+        const open = this.db.prepare(`SELECT * FROM patient_merges
+            WHERE duplicate_id = ? AND undone_at IS NULL ORDER BY id DESC LIMIT 1`).get(dup) as any;
+        if (!open) throw new Error('No open merge found for this chart.');
+        const undo = this.db.transaction(() => {
+            const items = this.db.prepare(`SELECT table_name, row_id FROM patient_merge_items
+                WHERE merge_id = ?`).all(open.id) as any[];
+            for (const item of items) {
+                if (item.table_name === 'queue_triage_history') continue;
+                if (item.table_name === 'patients_abha') {
+                    const current = this.db.prepare(
+                        'SELECT abha_address, abha_name FROM patients WHERE id = ?').get(open.survivor_id) as any;
+                    // Clear first, then restore: the unique index forbids
+                    // two rows holding the same health ID even mid-move.
+                    this.db.prepare('UPDATE patients SET abha_address = NULL, abha_name = NULL WHERE id = ?')
+                        .run(open.survivor_id);
+                    this.db.prepare('UPDATE patients SET abha_address = ?, abha_name = ? WHERE id = ?')
+                        .run(current?.abha_address ?? null, current?.abha_name ?? null, open.duplicate_id);
+                    continue;
+                }
+                this.db.prepare(`UPDATE ${item.table_name} SET patient_id = ? WHERE id = ?`)
+                    .run(open.duplicate_id, item.row_id);
+            }
+            this.db.prepare('UPDATE patients SET merged_into = NULL WHERE id = ?').run(open.duplicate_id);
+            this.db.prepare(`UPDATE patient_merges SET undone_at = CURRENT_TIMESTAMP WHERE id = ?`).run(open.id);
+            return items.length;
+        });
+        const movedBack = undo();
+        this.logAudit('UNMERGE', 'patients', open.duplicate_id, actingUserId,
+            `Unmerged patient #${open.duplicate_id} from #${open.survivor_id} (${movedBack} rows restored)`);
+        return { mergeId: open.id, movedBack };
     }
 
     getPatientById(id: number) {

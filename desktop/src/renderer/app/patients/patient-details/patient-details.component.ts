@@ -69,6 +69,7 @@ import { newRequestId } from '../../services/request-id';
         </div>
         <div class="flex gap-3">
              <button *ngIf="currentUser?.role === 'admin'" (click)="deletePatient()" class="text-red-500 hover:bg-red-50 px-3 py-1 rounded text-sm font-medium transition border border-transparent hover:border-red-100">Delete Patient</button>
+             <button *ngIf="currentUser?.role === 'admin' || currentUser?.role === 'doctor'" (click)="openMergeModal()" class="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded text-sm font-medium transition border border-blue-200">Merge</button>
              <button *ngIf="currentUser?.role === 'admin' || currentUser?.role === 'doctor'" (click)="startConsult()" [disabled]="startingConsult" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-bold shadow-sm flex items-center gap-2 transition disabled:opacity-50">
                 Start Consultation
              </button>
@@ -91,6 +92,15 @@ import { newRequestId } from '../../services/request-id';
                 <h1 class="text-2xl font-bold text-gray-800 mb-1">{{ patient?.name }}</h1>
                 <p class="text-sm text-gray-500 font-medium mb-1">{{ displayAge }} Years / {{ patient?.gender }}</p>
                 <p *ngIf="patient?.mrn" class="text-xs text-gray-400 font-mono mb-4">MRN {{ patient?.mrn }}</p>
+                <!-- Absorbed chart banner: read-only pointer to the survivor -->
+                <div *ngIf="patient?.merged_into" class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+                    <div class="font-bold text-amber-800 text-xs uppercase tracking-wider mb-1">Merged chart</div>
+                    <p class="text-gray-600 text-xs mb-2">This record was merged into chart #{{ patient?.merged_into }}. Its history moved with it.</p>
+                    <div class="flex gap-2">
+                        <button (click)="goToPatient(patient.merged_into)" class="text-xs text-blue-600 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded">Open surviving chart</button>
+                        <button *ngIf="currentUser?.role === 'admin' || currentUser?.role === 'doctor'" (click)="unmergeChart()" class="text-xs text-gray-600 border border-gray-300 hover:bg-gray-100 px-2.5 py-1 rounded">Unmerge</button>
+                    </div>
+                </div>
                 
                 <div class="space-y-3 pt-4 border-t border-gray-100">
                     <div class="flex items-center gap-3 text-sm text-gray-600">
@@ -569,6 +579,71 @@ import { newRequestId } from '../../services/request-id';
           </div>
       </div>
 
+      <!-- Merge Charts Modal -->
+      <div *ngIf="showMergeModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
+                <div>
+                    <h2 class="text-lg font-bold text-gray-800">Merge duplicate charts</h2>
+                    <p class="text-xs text-gray-500">History moves to the survivor. Reversible from the absorbed chart.</p>
+                </div>
+                <button (click)="closeMergeModal()" class="text-gray-500 hover:text-gray-600" aria-label="Close">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Find the other chart</label>
+                    <div class="flex gap-2">
+                        <input [(ngModel)]="mergeQuery" (ngModelChange)="searchMergeCandidates()"
+                               placeholder="Name, mobile, or MRN" class="flex-1 border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div *ngIf="mergeCandidates.length > 0" class="mt-2 border border-gray-200 rounded divide-y max-h-44 overflow-y-auto">
+                        <button *ngFor="let c of mergeCandidates" type="button" (click)="selectMergeCandidate(c.patient)"
+                                class="w-full text-left px-3 py-2 hover:bg-blue-50 flex justify-between items-center gap-2">
+                            <span class="text-sm text-gray-800">{{ c.patient.name }}
+                                <span *ngIf="c.patient.mrn" class="font-mono text-xs text-gray-400 ml-1">{{ c.patient.mrn }}</span></span>
+                            <span class="text-[11px] text-gray-500">{{ c.signals.join(', ') }}</span>
+                        </button>
+                    </div>
+                </div>
+                <div *ngIf="mergePreview" class="border border-gray-200 rounded-lg p-4 space-y-3 bg-gray-50/50">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <label class="border rounded-lg p-3 cursor-pointer bg-white"
+                               [ngClass]="mergeSurvivorId === patient?.id ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200'">
+                            <input type="radio" name="survivor" class="mr-1" [checked]="mergeSurvivorId === patient?.id" (change)="pickSurvivor(patient?.id)" />
+                            <span class="text-sm font-bold text-gray-800">Keep this chart</span>
+                            <div class="text-xs text-gray-500">{{ patient?.name }} · <span class="font-mono">{{ patient?.mrn }}</span></div>
+                        </label>
+                        <label class="border rounded-lg p-3 cursor-pointer bg-white"
+                               [ngClass]="mergeSurvivorId === mergePreview.duplicate.id ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200'">
+                            <input type="radio" name="survivor" class="mr-1" [checked]="mergeSurvivorId === mergePreview.duplicate.id" (change)="pickSurvivor(mergePreview.duplicate.id)" />
+                            <span class="text-sm font-bold text-gray-800">Keep the other chart</span>
+                            <div class="text-xs text-gray-500">{{ mergePreview.duplicate.name }} · <span class="font-mono">{{ mergePreview.duplicate.mrn }}</span></div>
+                        </label>
+                    </div>
+                    <div class="text-xs text-gray-600">
+                        Moves <span class="font-bold text-gray-800">{{ mergeMoveTotal }} record{{ mergeMoveTotal === 1 ? '' : 's' }}</span>
+                        ({{ mergeMoveSummary }}).
+                    </div>
+                    <div *ngIf="mergePreview.warnings.length > 0" class="rounded border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 space-y-1">
+                        <div *ngFor="let w of mergePreview.warnings">{{ w }}</div>
+                    </div>
+                    <div *ngIf="mergePreviewError" class="rounded border border-red-200 bg-red-50 p-2.5 text-xs text-red-700">{{ mergePreviewError }}</div>
+                    <input [(ngModel)]="mergeReason" placeholder="Reason (required, audited)"
+                           class="w-full border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                    <div class="flex justify-end gap-2">
+                        <button (click)="closeMergeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded border bg-white">Cancel</button>
+                        <button (click)="confirmMerge()" [disabled]="mergeBusy || !mergeReason.trim()"
+                                class="px-4 py-2 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50">
+                            {{ mergeBusy ? 'Merging…' : 'Merge charts' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      </div>
+
       <!-- Visit Detail Modal (Receipt View) -->
       <div *ngIf="showVisitModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print-scope-receipt" (click)="closeModal()">
         <div class="bg-white rounded-lg shadow-lg w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]" (click)="$event.stopPropagation()">
@@ -1028,6 +1103,16 @@ export class PatientDetailsComponent implements OnInit {
     // Edit Patient Modal
     showEditModal = false;
     patientForm!: FormGroup;
+
+    // Merge duplicate charts (doctor/admin)
+    showMergeModal = false;
+    mergeQuery = '';
+    mergeCandidates: any[] = [];
+    mergePreview: any = null;
+    mergePreviewError = '';
+    mergeSurvivorId: number | null = null;
+    mergeReason = '';
+    mergeBusy = false;
 
     // Clinical Modals
     showAllergyModal = false;
@@ -1666,6 +1751,148 @@ export class PatientDetailsComponent implements OnInit {
     get displayAge(): string {
         if (!this.patient) return '—';
         return deriveAge(this.patient.dob, this.patient.dob_estimated, this.patient.age).label;
+    }
+
+    goToPatient(id: number): void {
+        this.router.navigate(['/patients', id]);
+    }
+
+    openMergeModal(): void {
+        this.mergeQuery = '';
+        this.mergeCandidates = [];
+        this.mergePreview = null;
+        this.mergePreviewError = '';
+        this.mergeSurvivorId = this.patient?.id ?? null;
+        this.mergeReason = '';
+        this.mergeBusy = false;
+        this.showMergeModal = true;
+    }
+
+    closeMergeModal(): void {
+        this.showMergeModal = false;
+        this.mergePreview = null;
+        this.mergePreviewError = '';
+    }
+
+    async searchMergeCandidates(): Promise<void> {
+        const q = (this.mergeQuery || '').trim();
+        if (q.length < 2 || !this.patient) {
+            this.mergeCandidates = [];
+            return;
+        }
+        try {
+            const rows = await this.dataService.invoke<any[]>('findDuplicateCandidates', {
+                name: q, mobile: q, mrn: q, excludeId: this.patient.id
+            });
+            this.mergeCandidates = rows || [];
+        } catch (e) {
+            console.error(e);
+            this.mergeCandidates = [];
+        }
+    }
+
+    async selectMergeCandidate(other: any): Promise<void> {
+        if (!this.patient || !other) return;
+        this.mergeSurvivorId = this.patient.id;
+        await this.loadMergePreview(other.id);
+    }
+
+    async pickSurvivor(id: number | null | undefined): Promise<void> {
+        if (id == null || !this.mergePreview) return;
+        this.mergeSurvivorId = Number(id);
+        await this.loadMergePreview(
+            this.mergeSurvivorId === this.patient?.id
+                ? this.mergePreview.duplicate.id
+                : this.patient!.id
+        );
+    }
+
+    private otherIdForPreview(): number | null {
+        if (!this.mergePreview || this.mergeSurvivorId == null) return null;
+        return this.mergeSurvivorId === this.patient?.id
+            ? this.mergePreview.duplicate.id
+            : this.patient!.id;
+    }
+
+    async loadMergePreview(otherId: number): Promise<void> {
+        if (!this.patient) return;
+        const survivorId = this.mergeSurvivorId ?? this.patient.id;
+        const duplicateId = survivorId === this.patient.id ? otherId : this.patient.id;
+        this.mergePreviewError = '';
+        try {
+            this.mergePreview = await this.dataService.invoke<any>('previewPatientMerge', {
+                survivorId, duplicateId
+            });
+        } catch (e) {
+            this.mergePreview = null;
+            this.mergePreviewError = e instanceof Error ? e.message : 'Could not preview this merge.';
+        }
+    }
+
+    get mergeMoveTotal(): number {
+        const counts = this.mergePreview?.counts || {};
+        return Object.values(counts).reduce((sum: number, n: any) => sum + (Number(n) || 0), 0);
+    }
+
+    get mergeMoveSummary(): string {
+        const counts = this.mergePreview?.counts || {};
+        return Object.entries(counts)
+            .filter(([, n]) => Number(n) > 0)
+            .map(([table, n]) => `${n} ${table}`)
+            .join(', ') || 'no linked records';
+    }
+
+    async confirmMerge(): Promise<void> {
+        if (!this.mergePreview || this.mergeSurvivorId == null || !this.mergeReason.trim() || this.mergeBusy) return;
+        const otherId = this.otherIdForPreview();
+        if (otherId == null) return;
+        const duplicateId = this.mergeSurvivorId === this.patient?.id ? otherId : this.patient!.id;
+        const confirmed = await this.dialogService.open({
+            title: 'Merge these charts?',
+            message: `History moves to chart #${this.mergeSurvivorId}. The absorbed chart stays reachable and the merge is reversible.`,
+            type: 'confirm',
+            confirmText: 'Merge charts',
+            cancelText: 'Cancel'
+        });
+        if (!confirmed) return;
+        this.mergeBusy = true;
+        try {
+            await this.dataService.invoke('mergePatients', {
+                survivorId: this.mergeSurvivorId, duplicateId, reason: this.mergeReason.trim()
+            });
+            this.closeMergeModal();
+            if (duplicateId === this.patient?.id) {
+                this.router.navigate(['/patients', this.mergeSurvivorId]);
+            } else {
+                await this.loadData();
+            }
+        } catch (e) {
+            this.mergePreviewError = e instanceof Error ? e.message : 'Could not merge these charts.';
+        } finally {
+            this.mergeBusy = false;
+        }
+    }
+
+    async unmergeChart(): Promise<void> {
+        if (!this.patient?.merged_into) return;
+        const confirmed = await this.dialogService.open({
+            title: 'Unmerge this chart?',
+            message: 'Its history moves back and the merge link is cleared. The merge stays in the audit trail.',
+            type: 'confirm',
+            confirmText: 'Unmerge',
+            cancelText: 'Keep merged'
+        });
+        if (!confirmed) return;
+        try {
+            await this.dataService.invoke('unmergePatients', this.patient.id);
+            await this.loadData();
+        } catch (e) {
+            await this.dialogService.open({
+                title: 'Unmerge failed',
+                message: e instanceof Error ? e.message : 'Could not unmerge.',
+                type: 'error'
+            });
+        }
     }
 
     openEditModal() {

@@ -126,4 +126,13 @@ describe('preload bridge surface', () => {
         await api.db.findDuplicateCandidates({ name: 'Ravi', mobile: '9888877771' });
         expect(electron.invoke).toHaveBeenCalledWith('db:findDuplicateCandidates', { name: 'Ravi', mobile: '9888877771' });
     });
+
+    it('exposes merge workflow IPC', async () => {
+        await api.db.previewPatientMerge({ survivorId: 1, duplicateId: 2 });
+        await api.db.mergePatients({ survivorId: 1, duplicateId: 2, reason: 'Dup' });
+        await api.db.unmergePatients(2);
+        expect(electron.invoke).toHaveBeenCalledWith('db:previewPatientMerge', { survivorId: 1, duplicateId: 2 });
+        expect(electron.invoke).toHaveBeenCalledWith('db:mergePatients', { survivorId: 1, duplicateId: 2, reason: 'Dup' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:unmergePatients', 2);
+    });
 });

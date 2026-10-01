@@ -74,8 +74,26 @@ export class BackupService {
     setLocalBackupPath(backupPath: string) { this.localBackupPath = backupPath; }
     initAutomatedBackup() {
         const settings = this.dbService.getSettings();
-        this.scheduleLocalBackup(settings?.backup_schedule || '13:00');
-        this.scheduleCloudBackup(settings?.cloud_backup_schedule || '13:00');
+        // Stored values predate validation (or were hand-edited): repair to
+        // the default with an audit trail instead of leaving the schedule
+        // silently dead on every launch.
+        this.scheduleLocalBackup(this.validatedStoredSchedule(settings?.backup_schedule, 'backup_schedule', 'local'));
+        this.scheduleCloudBackup(this.validatedStoredSchedule(settings?.cloud_backup_schedule, 'cloud_backup_schedule', 'cloud'));
+    }
+
+    private validatedStoredSchedule(
+        stored: unknown, column: 'backup_schedule' | 'cloud_backup_schedule', label: string
+    ): string {
+        if (stored == null || stored === '') return '13:00';
+        if (BackupService.isValidScheduleTime(stored)) return stored;
+        try {
+            this.dbService.saveSettings({ [column]: '13:00' });
+        } catch { /* repair must not break startup; schedule still fires */ }
+        try {
+            this.dbService.logAudit('BACKUP_ERROR', 'system', 0, 0,
+                `Invalid stored ${label} backup schedule '${stored}': reset to 13:00`);
+        } catch { /* audit is best-effort at boot */ }
+        return '13:00';
     }
     private convertToCron(time: string): string {
         if (!/^\d{2}:\d{2}$/.test(time)) return time;
@@ -103,12 +121,21 @@ export class BackupService {
     }
 
     /**
+     * HH:MM schedule times with range checking (HH 00-23, MM 00-59).
+     * Shape-only checks admit '99:99', which cron rejects and date math
+     * silently rolls over — validate before persisting or scheduling.
+     */
+    static isValidScheduleTime(time: unknown): time is string {
+        return typeof time === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.test(time);
+    }
+
+    /**
      * Next daily fire for an HH:MM schedule in local time. Pure function of
      * (time, now) so restarts, DST boundaries, and display math stay
      * testable without touching the live cron job.
      */
     static nextDailyRun(time: string, now: Date = new Date()): string | null {
-        const match = /^(\d{2}):(\d{2})$/.exec(time);
+        const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
         if (!match) return null;
         const candidate = new Date(now);
         candidate.setHours(Number(match[1]), Number(match[2]), 0, 0);

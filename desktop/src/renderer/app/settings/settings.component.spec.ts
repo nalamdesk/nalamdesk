@@ -639,6 +639,28 @@ describe('SettingsComponent Validation', () => {
             await component.loadBackupHealth();
         });
 
+        it('compares failure and backup timestamps as instants, not strings', () => {
+            const base = {
+                enabled: true, schedule: '13:00', destination: '/data', writable: true,
+                freeBytes: 1, backupAgeHours: 1, nextRunAt: null, missed: false
+            };
+            // Same instant in SQLite vs ISO format must NOT read as an error.
+            component.backupHealth = {
+                ...base,
+                lastBackupAt: '2026-03-10T12:00:00.000Z',
+                lastBackupName: 'x.ndbackup',
+                lastErrorAt: '2026-03-10 12:00:00', lastError: 'old failure'
+            };
+            expect(component.backupHealthStatus).toBe('healthy');
+            // A genuinely newer failure still surfaces.
+            component.backupHealth = {
+                ...base, lastBackupAt: '2026-03-10T12:00:00.000Z',
+                lastBackupName: 'x.ndbackup',
+                lastErrorAt: '2026-03-10 13:00:00', lastError: 'new failure'
+            };
+            expect(component.backupHealthStatus).toBe('error');
+        });
+
         it('runs a local backup now and refreshes health', async () => {
             const runNow = vi.fn(async () => undefined);
             const toast = { success: vi.fn() };

@@ -39,19 +39,22 @@ reviews:
         (Electron + Angular + SQLite). Report at most 5 findings, P1/P2 only,
         high confidence: real bugs, security holes, or data-loss risks.
         Skip style, nits, hypotheticals, and anything already obviously
-        handled. Deduplicate overlapping findings. Every finding MUST carry
-        exactly one severity tag: [P1] Critical (correctness, security,
-        data-loss, or access-control defect — must fix before merge),
-        [P2] High (significant bug, likely-wrong behavior, missing coverage
-        on risky paths — should fix). Never emit P3/P4.
+        handled. Deduplicate overlapping findings. Format contract (the
+        consumer parses severity separately, so the tag must be literal
+        text): begin EVERY finding comment with exactly "[P1] " or "[P2] "
+        as its first four characters, and set the severity field to "high"
+        for both. [P1] Critical (correctness, security, data-loss, or
+        access-control defect — must fix before merge), [P2] High
+        (significant bug, likely-wrong behavior, missing coverage on risky
+        paths — should fix). Never emit P3/P4 or untagged findings.
     subagents:
       - name: deepseek-check
         provider: deepseek
         instructions: >-
           Independent correctness pass: real bugs, race conditions, null
           handling, broken error paths. At most 5 findings, high confidence
-          only, no nits. Tag every finding [P1] or [P2] per the main
-          instructions.
+          only, no nits. Begin every finding comment with "[P1] " or "[P2] "
+          and set severity field to "high".
     verdict:
       mode: comment
       min_severity: high
@@ -70,13 +73,16 @@ reviews:
         permissions, insecure IPC exposure. At most 5 findings, high
         confidence only — no hypotheticals, no style. Tag every finding
         [P1] (critical, must fix) or [P2] (high, should fix) — never P3/P4.
+        Begin every finding comment with "[P1] " or "[P2] " as its first
+        four characters with severity field "high".
     subagents:
       - name: secrets-scan
         provider: glm
         instructions: >-
           Find leaked secrets, hardcoded credentials, keys in logs or
           comments, overly broad file/IPC permissions. At most 5 findings,
-          high confidence only. Tag [P1]/[P2] only.
+          high confidence only. Begin every finding comment with "[P1] " or
+          "[P2] " with severity field "high".
     verdict:
       mode: comment
       min_severity: high

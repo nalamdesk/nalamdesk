@@ -63,6 +63,24 @@ describe('BackupService recoverable bundles', () => {
         expect(CronJob).toHaveBeenCalledWith('0 45 03 * * *', expect.any(Function));
     });
 
+    it('falls back to the default when stored schedules predate validation', () => {
+        const db = database(sourceDb);
+        (db.getSettings as any).mockReturnValue({ backup_schedule: '99:99', cloud_backup_schedule: null });
+        new BackupService(db, drive(), sourceSecurity(), sourceUserData).initAutomatedBackup();
+        expect(CronJob).toHaveBeenCalledWith('0 00 13 * * *', expect.any(Function));
+        expect(CronJob).not.toHaveBeenCalledWith(expect.stringContaining('99'), expect.anything());
+    });
+
+    it('repairs an invalid stored schedule with an audit trail', () => {
+        const db = database(sourceDb) as any;
+        db.saveSettings = vi.fn();
+        (db.getSettings as any).mockReturnValue({ backup_schedule: '99:99' });
+        new BackupService(db, drive(), sourceSecurity(), sourceUserData).initAutomatedBackup();
+        expect(db.saveSettings).toHaveBeenCalledWith({ backup_schedule: '13:00' });
+        expect(db.logAudit).toHaveBeenCalledWith('BACKUP_ERROR', 'system', 0, 0,
+            expect.stringContaining('reset to 13:00'));
+    });
+
     it('keeps the running job when a reschedule expression is invalid', () => {
         const db = database(sourceDb);
         const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData);
@@ -92,6 +110,19 @@ describe('BackupService recoverable bundles', () => {
         it('rejects non-HH:MM expressions', () => {
             expect(BackupService.nextDailyRun('bogus')).toBeNull();
             expect(BackupService.nextDailyRun('0 0 13 * * *')).toBeNull();
+            expect(BackupService.nextDailyRun('99:99')).toBeNull();
+            expect(BackupService.nextDailyRun('25:70')).toBeNull();
+        });
+
+        it('range-checks schedule times', () => {
+            expect(BackupService.isValidScheduleTime('13:00')).toBe(true);
+            expect(BackupService.isValidScheduleTime('00:00')).toBe(true);
+            expect(BackupService.isValidScheduleTime('23:59')).toBe(true);
+            expect(BackupService.isValidScheduleTime('99:99')).toBe(false);
+            expect(BackupService.isValidScheduleTime('24:00')).toBe(false);
+            expect(BackupService.isValidScheduleTime('13:60')).toBe(false);
+            expect(BackupService.isValidScheduleTime('13:0')).toBe(false);
+            expect(BackupService.isValidScheduleTime('bogus')).toBe(false);
         });
     });
 

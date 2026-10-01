@@ -662,6 +662,7 @@ export class DatabaseService {
             'clinic_name', 'doctor_name', 'logo_path', 'license_key',
             'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
             'drive_client_id', 'drive_client_secret', 'local_backup_path',
+            'backup_schedule', 'cloud_backup_schedule',
             'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
             'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
             'abdm_hiu_public_key',

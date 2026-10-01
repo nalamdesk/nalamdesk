@@ -21,7 +21,8 @@ contextBridge.exposeInMainWorld('electron', {
         selectRestoreBundle: () => ipcRenderer.invoke('backup:selectRestoreBundle'),
         useDefaultPath: () => ipcRenderer.invoke('backup:useDefaultPath'),
         runNow: () => ipcRenderer.invoke('backup:runNow'),
-        listSystemBackups: () => ipcRenderer.invoke('backup:listSystemBackups')
+        listSystemBackups: () => ipcRenderer.invoke('backup:listSystemBackups'),
+        getLocalBackupHealth: () => ipcRenderer.invoke('backup:getLocalBackupHealth'),
     },
     db: {
         getPatients: (query: string) => ipcRenderer.invoke('db:getPatients', query),

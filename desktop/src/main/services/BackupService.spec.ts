@@ -63,6 +63,86 @@ describe('BackupService recoverable bundles', () => {
         expect(CronJob).toHaveBeenCalledWith('0 45 03 * * *', expect.any(Function));
     });
 
+    it('keeps the running job when a reschedule expression is invalid', () => {
+        const db = database(sourceDb);
+        const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData);
+        service.scheduleLocalBackup('14:00');
+        const stopsBefore = (cron.stop as any).mock.calls.length;
+        vi.mocked(CronJob).mockImplementationOnce(((expr: unknown) => {
+            throw new Error(`bad cron: ${expr}`);
+        }) as any);
+        expect(() => service.scheduleLocalBackup('not-a-time')).not.toThrow();
+        // Old job untouched: build-first-swap means no stop without a replacement.
+        expect((cron.stop as any).mock.calls.length).toBe(stopsBefore);
+        service.scheduleLocalBackup('15:00');
+        expect(CronJob).toHaveBeenCalledWith('0 00 15 * * *', expect.any(Function));
+    });
+
+    describe('nextDailyRun', () => {
+        it('fires later today when the time is ahead', () => {
+            const at = BackupService.nextDailyRun('13:00', new Date('2026-03-10T09:00:00'));
+            expect(at).toBe(new Date('2026-03-10T13:00:00').toISOString());
+        });
+
+        it('rolls to tomorrow once the time has passed', () => {
+            const at = BackupService.nextDailyRun('06:30', new Date('2026-03-10T18:00:00'));
+            expect(at).toBe(new Date('2026-03-11T06:30:00').toISOString());
+        });
+
+        it('rejects non-HH:MM expressions', () => {
+            expect(BackupService.nextDailyRun('bogus')).toBeNull();
+            expect(BackupService.nextDailyRun('0 0 13 * * *')).toBeNull();
+        });
+    });
+
+    describe('getLocalBackupHealth', () => {
+        function healthService(audits: any[] = []) {
+            const db = database(sourceDb);
+            (db.getSettings as any).mockReturnValue({ backup_schedule: '13:00' });
+            (db as any).getAuditLogs = vi.fn(() => audits);
+            return new BackupService(db, drive(), sourceSecurity(), sourceUserData);
+        }
+
+        it('reports a healthy recent backup with free space', async () => {
+            const service = healthService();
+            vi.spyOn(service, 'listSystemBackups').mockResolvedValue([{
+                name: 'nalamdesk-auto-backup-fresh.ndbackup', path: 'x',
+                createdTime: new Date(), size: 10, format: 'bundle-v1', recoverable: true
+            } as any]);
+            const health = await service.getLocalBackupHealth(new Date());
+            expect(health.schedule).toBe('13:00');
+            expect(health.writable).toBe(true);
+            expect(health.lastBackupName).toContain('nalamdesk-auto-backup-');
+            expect(health.missed).toBe(false);
+            expect(health.nextRunAt).not.toBeNull();
+            expect(typeof health.freeBytes === 'number' || health.freeBytes === null).toBe(true);
+        });
+
+        it('flags missing backups and surfaces the latest failure', async () => {
+            const service = healthService([{
+                action: 'BACKUP_ERROR', details: 'disk full', timestamp: '2026-03-10 12:00:00'
+            }]);
+            vi.spyOn(service, 'listSystemBackups').mockResolvedValue([]);
+            const health = await service.getLocalBackupHealth(new Date('2026-03-12T12:00:00'));
+            expect(health.lastBackupAt).toBeNull();
+            expect(health.missed).toBe(true);
+            expect(health.lastError).toBe('disk full');
+            expect(health.lastErrorAt).toBe('2026-03-10 12:00:00');
+        });
+
+        it('reports an unwritable destination instead of throwing', async () => {
+            const fileAsDir = path.join(root, 'not-a-dir');
+            fs.writeFileSync(fileAsDir, 'x');
+            const db = database(sourceDb);
+            (db.getSettings as any).mockReturnValue({ backup_schedule: '13:00' });
+            (db as any).getAuditLogs = vi.fn(() => []);
+            const service = new BackupService(db, drive(), sourceSecurity(), fileAsDir);
+            const health = await service.getLocalBackupHealth();
+            expect(health.writable).toBe(false);
+            expect(health.enabled).toBe(false);
+        });
+    });
+
     it('uploads cloud independently when local bundle creation fails', async () => {
         const db = database(sourceDb);
         (db.backupDatabase as any).mockRejectedValue(new Error('local disk full'));

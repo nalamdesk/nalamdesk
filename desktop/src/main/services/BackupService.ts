@@ -83,15 +83,94 @@ export class BackupService {
         return `0 ${minutes} ${hours} * * *`;
     }
     scheduleLocalBackup(time: string) {
-        this.localJob?.stop();
-        try { this.localJob = new CronJob(this.convertToCron(time), () => void this.performLocalBackup().catch(error =>
-            console.error('[Backup] Scheduled local backup failed:', error))); this.localJob.start(); }
-        catch (error) { console.error('[Backup] Failed to schedule local backup:', error); }
+        // Build before swapping: a bad expression keeps the previous job
+        // alive instead of silently disabling the schedule.
+        try {
+            const next = new CronJob(this.convertToCron(time), () => void this.performLocalBackup().catch(error =>
+                console.error('[Backup] Scheduled local backup failed:', error)));
+            this.localJob?.stop();
+            this.localJob = next;
+            this.localJob.start();
+        } catch (error) { console.error('[Backup] Failed to schedule local backup:', error); }
     }
     scheduleCloudBackup(time: string) {
-        this.cloudJob?.stop();
-        try { this.cloudJob = new CronJob(this.convertToCron(time), () => void this.performCloudBackup()); this.cloudJob.start(); }
-        catch (error) { console.error('[Backup] Failed to schedule cloud backup:', error); }
+        try {
+            const next = new CronJob(this.convertToCron(time), () => void this.performCloudBackup());
+            this.cloudJob?.stop();
+            this.cloudJob = next;
+            this.cloudJob.start();
+        } catch (error) { console.error('[Backup] Failed to schedule cloud backup:', error); }
+    }
+
+    /**
+     * Next daily fire for an HH:MM schedule in local time. Pure function of
+     * (time, now) so restarts, DST boundaries, and display math stay
+     * testable without touching the live cron job.
+     */
+    static nextDailyRun(time: string, now: Date = new Date()): string | null {
+        const match = /^(\d{2}):(\d{2})$/.exec(time);
+        if (!match) return null;
+        const candidate = new Date(now);
+        candidate.setHours(Number(match[1]), Number(match[2]), 0, 0);
+        if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 1);
+        return candidate.toISOString();
+    }
+
+    /**
+     * Durable backup health for the Settings UI: schedule, destination
+     * readiness, newest valid backup + age, last recorded failure, and the
+     * next scheduled fire. File state and the audit trail (not memory) are
+     * the sources, so a restart reports the same health the last run left.
+     */
+    async getLocalBackupHealth(now: Date = new Date()) {
+        const schedule = this.dbService.getSettings()?.backup_schedule || '13:00';
+        const destination = this.localBackupPath;
+        let writable = false;
+        let freeBytes: number | null = null;
+        try {
+            fs.mkdirSync(destination, { recursive: true });
+            fs.accessSync(destination, fs.constants.W_OK);
+            writable = true;
+            const stats = fs.statfsSync(destination);
+            freeBytes = Number(stats.bfree) * Number(stats.bsize);
+        } catch { /* destReady stays false; surfaced, not thrown */ }
+
+        let lastBackupAt: string | null = null;
+        let lastBackupName: string | null = null;
+        try {
+            const backups = await this.listSystemBackups();
+            const latest = backups
+                .filter((b) => b.name.startsWith('nalamdesk-auto-backup-') && b.recoverable !== false)[0];
+            if (latest) {
+                lastBackupAt = latest.createdTime instanceof Date
+                    ? latest.createdTime.toISOString() : new Date(latest.createdTime).toISOString();
+                lastBackupName = latest.name;
+            }
+        } catch { /* no backups yet */ }
+
+        let lastErrorAt: string | null = null;
+        let lastError: string | null = null;
+        try {
+            const audits = this.dbService.getAuditLogs(100) as any[];
+            const failure = (audits || []).find((a) => a?.action === 'BACKUP_ERROR');
+            if (failure) {
+                lastErrorAt = failure.created_at || failure.timestamp || null;
+                lastError = String(failure.details || 'Backup failed.');
+            }
+        } catch { /* audit unavailable */ }
+
+        const nextRunAt = BackupService.nextDailyRun(schedule, now);
+        const ageHours = lastBackupAt
+            ? (now.getTime() - new Date(lastBackupAt).getTime()) / 3_600_000 : null;
+        return {
+            enabled: writable, schedule, destination, writable, freeBytes,
+            lastBackupAt, lastBackupName,
+            backupAgeHours: ageHours == null ? null : Math.round(ageHours * 10) / 10,
+            lastErrorAt, lastError, nextRunAt,
+            // A schedule that never produced a backup within ~2 daily windows
+            // is either failing silently or never firing: surface, don't guess.
+            missed: lastBackupAt == null || (ageHours != null && ageHours > 49)
+        };
     }
     updateSchedule(type: 'local' | 'cloud', time: string) {
         type === 'local' ? this.scheduleLocalBackup(time) : this.scheduleCloudBackup(time);

@@ -680,6 +680,13 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.callbackSecretMatches('wrong', true)).toBe(false);
         });
 
+        it('persists backup schedules through the settings whitelist', () => {
+            service.saveSettings({ backup_schedule: '02:30', cloud_backup_schedule: '03:45' });
+            const settings: any = service.getSettings();
+            expect(settings.backup_schedule).toBe('02:30');
+            expect(settings.cloud_backup_schedule).toBe('03:45');
+        });
+
         it('preserves per-doctor registry IDs across unrelated edits', async () => {
             await service.saveUser({
                 username: 'drhpr', password: 'Password1!', role: 'doctor',

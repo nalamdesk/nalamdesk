@@ -88,9 +88,11 @@ export class BackupService {
         if (BackupService.isValidScheduleTime(stored)) return stored;
         try {
             this.dbService.saveSettings({ [column]: '13:00' });
+        } catch { /* repair must not break startup; schedule still fires */ }
+        try {
             this.dbService.logAudit('BACKUP_ERROR', 'system', 0, 0,
                 `Invalid stored ${label} backup schedule '${stored}': reset to 13:00`);
-        } catch { /* repair is best-effort at boot; schedule still fires */ }
+        } catch { /* audit is best-effort at boot */ }
         return '13:00';
     }
     private convertToCron(time: string): string {

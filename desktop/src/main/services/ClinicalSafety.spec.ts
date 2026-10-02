@@ -1127,8 +1127,29 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(() => service.unmergePatients(did, 99)).toThrow('No open merge');
         });
 
-        it('refuses merges that would strand active or doubly-linked charts', () => {
+        it('moves rows in text-PK tables and restores them on unmerge', () => {
             db.prepare('DELETE FROM patients').run();
+            const s: any = service.savePatient({ name: 'Survivor', mobile: '9555555555', age: 40, gender: 'Male' });
+            const d: any = service.savePatient({ name: 'Duplicate', mobile: '9666666666', age: 38, gender: 'Male' });
+            const sid = Number(s.lastInsertRowid);
+            const did = Number(d.lastInsertRowid);
+            const queue: any = service.addToQueue(did, 1, 99);
+            const qid = Number(queue.lastInsertRowid);
+            const visit = db.prepare(`INSERT INTO visits (patient_id, queue_entry_id, status)
+                VALUES (?, ?, 'finished')`).run(did, qid);
+            db.prepare(`INSERT INTO encounter_requests
+                (request_id, operation, encounter_id, patient_id, queue_entry_id, actor_id)
+                VALUES ('req-merge-1', 'begin', ?, ?, ?, 99)`)
+                .run(Number(visit.lastInsertRowid), did, qid);
+            service.mergePatients({ survivorId: sid, duplicateId: did, reason: 'text PK move' }, 99);
+            expect(db.prepare(`SELECT patient_id FROM encounter_requests WHERE request_id = 'req-merge-1'`).get())
+                .toMatchObject({ patient_id: sid });
+            service.unmergePatients(did, 99);
+            expect(db.prepare(`SELECT patient_id FROM encounter_requests WHERE request_id = 'req-merge-1'`).get())
+                .toMatchObject({ patient_id: did });
+        });
+
+        it('refuses merges that would strand active or doubly-linked charts', () => {            db.prepare('DELETE FROM patients').run();
             const s: any = service.savePatient({ name: 'S', mobile: '9333333333', age: 40, gender: 'Male' });
             const d: any = service.savePatient({
                 name: 'D', mobile: '9444444444', age: 40, gender: 'Male',

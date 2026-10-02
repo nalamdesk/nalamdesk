@@ -1322,6 +1322,8 @@ export const MIGRATIONS = [
                     duplicate_id INTEGER NOT NULL,
                     reason TEXT NOT NULL,
                     merged_by INTEGER NULL,
+                    moved_abha_address TEXT NULL,
+                    moved_abha_name TEXT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     undone_at TEXT NULL
                 );
@@ -1330,7 +1332,8 @@ export const MIGRATIONS = [
                 CREATE TABLE IF NOT EXISTS patient_merge_items (
                     merge_id INTEGER NOT NULL,
                     table_name TEXT NOT NULL,
-                    row_id INTEGER NOT NULL
+                    id_column TEXT NOT NULL DEFAULT 'id',
+                    row_id TEXT NOT NULL
                 );
             `);
             db.exec(`CREATE INDEX IF NOT EXISTS idx_merge_items_merge

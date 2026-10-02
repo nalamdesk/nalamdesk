@@ -1091,6 +1091,9 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 const invoice: any = service.createInvoice({
                     visitId, items: [{ description: 'Dressing', quantity: 1, rate: 500 }]
                 }, 99);
+                const other: any = service.createInvoice({
+                    visitId, items: [{ description: 'Bandage', quantity: 1, rate: 300 }]
+                }, 99);
                 const first: any = service.recordPayment({
                     invoiceId: invoice.id, amount: 200, method: 'cash', clientKey: 'pay-1'
                 }, 99);
@@ -1102,6 +1105,9 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 }, 99);
                 expect(retry.duplicate).toBe(true);
                 expect(retry.receipt_no).toBe(first.receipt_no);
+                expect(() => service.recordPayment({
+                    invoiceId: other.id, amount: 50, method: 'cash', clientKey: 'pay-1'
+                }, 99)).toThrow('already used on another invoice');
                 expect(() => service.recordPayment({ invoiceId: invoice.id, amount: 400, method: 'upi' }, 99))
                     .toThrow('exceeds the amount due');
                 service.recordPayment({ invoiceId: invoice.id, amount: 300, method: 'upi' }, 99);

@@ -1722,12 +1722,19 @@ export class DatabaseService {
         const clientKey = input?.clientKey != null ? String(input.clientKey).trim() : '';
         const record = this.db.transaction(() => {
             if (clientKey) {
-                // Idempotent retry: the UNIQUE index on client_key is the
-                // real guard under concurrency; the pre-check is a fast path.
-                const existing = this.db.prepare('SELECT id FROM payments WHERE client_key = ?')
+                const existing = this.db.prepare('SELECT id, invoice_id FROM payments WHERE client_key = ?')
                     .get(clientKey) as any;
-                if (existing) return { id: Number(existing.id), duplicate: true };
+                if (existing && Number(existing.invoice_id) === invoiceId) {
+                    return { id: Number(existing.id), duplicate: true };
+                }
+                if (existing) {
+                    throw new Error('Duplicate submit key was already used on another invoice.');
+                }
             }
+            const live = this.db.prepare('SELECT id, status FROM invoices WHERE id = ?')
+                .get(invoiceId) as any;
+            if (!live) throw new Error(`Invoice #${invoiceId} not found.`);
+            if (live.status === 'voided') throw new Error('Voided invoices cannot take payments.');
             const balance = this.invoiceBalance(invoiceId);
             if (amount > balance.due + 0.009) {
                 throw new Error(`Payment exceeds the amount due (${balance.due}).`);

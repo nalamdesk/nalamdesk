@@ -777,7 +777,10 @@ handleGuardedDb('db:getDailyClose', (_, date) => {
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
     const day = typeof date === 'string' ? date : (date as any)?.date;
-    return databaseService.getDailyClose(day || new Date().toISOString().slice(0, 10));
+    if (day) return databaseService.getDailyClose(day);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return databaseService.getDailyClose(today);
 });
 handleGuardedDb('db:getPatientById', (_, id) => {
     const user = sessionService.getUser();

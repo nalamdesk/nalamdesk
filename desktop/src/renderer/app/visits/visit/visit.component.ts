@@ -391,7 +391,7 @@ interface Visit {
                                     <label class="block text-[11px] font-bold text-gray-500 uppercase">Reference</label>
                                     <input [(ngModel)]="payFormFor(invoice.id).reference" [ngModelOptions]="{standalone: true}" placeholder="Txn / bill no." class="w-full border p-1.5 rounded text-sm font-mono" />
                                 </div>
-                                <button (click)="recordPayment(invoice)" class="px-4 py-1.5 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700">Record payment</button>
+                                <button (click)="recordPayment(invoice)" [disabled]="billingLoading" class="px-4 py-1.5 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50">Record payment</button>
                             </div>
                             <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
                                 <button (click)="openReceipt(invoice, invoice.payments?.[invoice.payments.length - 1] || null, true)" [disabled]="!invoice.payments?.length" class="text-xs text-blue-600 hover:underline disabled:opacity-40">Print last receipt</button>
@@ -420,7 +420,7 @@ interface Visit {
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
                             <button (click)="addChargeLine()" class="text-sm text-blue-600 border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded">+ Charge line</button>
-                            <button (click)="createInvoice()" [disabled]="billingLoading" class="px-4 py-1.5 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50">Create invoice</button>
+                            <button (click)="createInvoice()" [disabled]="billingLoading || !hasManualChargeLines()" class="px-4 py-1.5 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50">Create invoice</button>
                             <span class="text-[11px] text-gray-400">Consultation fee auto-added per clinic settings.</span>
                         </div>
                     </div>
@@ -813,6 +813,7 @@ export class VisitComponent implements OnInit {
     const items = this.newChargeItems
       .filter((l) => l.description.trim())
       .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity) || 1, rate: Number(l.rate) || 0 }));
+    if (items.length === 0) return;
     try {
       await this.dataService.invoke('createInvoice', {
         visitId: this.billingVisitId,
@@ -925,6 +926,10 @@ export class VisitComponent implements OnInit {
 
   printReceipt(): void {
     window.print();
+  }
+
+  hasManualChargeLines(): boolean {
+    return this.newChargeItems.some((l) => l.description.trim().length > 0);
   }
 
   isRefunding(invoice: any): boolean {

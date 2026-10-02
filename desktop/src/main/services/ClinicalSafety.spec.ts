@@ -1164,7 +1164,8 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             });
 
             it('closes the day from the ledger with review flags', () => {
-                const today = new Date().toISOString().slice(0, 10);
+                const now = new Date();
+                const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
                 const invoice: any = service.createInvoice({
                     visitId, items: [{ description: 'Dressing', quantity: 1, rate: 500 }]
                 }, 99);
@@ -1182,6 +1183,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 expect(flagged).not.toContain('reversal');
                 expect(close.review.find((r: any) => r.method === 'upi').reference).toBeNull();
                 expect(() => service.getDailyClose('not-a-date')).toThrow('YYYY-MM-DD');
+                expect(() => service.getDailyClose('2026-13-99')).toThrow('real calendar day');
                 expect(() => service.getDailyClose('')).toThrow('YYYY-MM-DD');
             });
         });

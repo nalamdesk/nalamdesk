@@ -265,7 +265,7 @@ export function greetingForLocalHour(hour: number): string {
                 <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">By method</div>
                 <div *ngFor="let entry of dailyClose.byMethod" class="flex justify-between text-sm py-1 border-b border-dashed border-gray-100">
                   <span class="text-gray-600">{{ entry.method }} <span class="text-gray-400">({{ entry.kind }} × {{ entry.count }})</span></span>
-                  <span class="font-mono">₹{{ entry.total }}</span>
+                  <span class="font-mono">{{ entry.kind === 'reversal' ? '−' : '' }}₹{{ entry.total }}</span>
                 </div>
                 <div *ngIf="!dailyClose.byMethod?.length" class="text-sm text-gray-400">No payments recorded today.</div>
               </div>
@@ -392,11 +392,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
       // Load Today's Appointments
       await this.loadAppointments();
 
-      // Daily close for billing roles
+      // Daily close for billing roles (clinic-local day, matching the ledger)
       if (this.canSeeBilling) {
         try {
-          const close = await this.dataService.invoke<any>('getDailyClose',
-            new Date().toISOString().slice(0, 10));
+          const now = new Date();
+          const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const close = await this.dataService.invoke<any>('getDailyClose', today);
           this.ngZone.run(() => { this.dailyClose = close || null; });
         } catch (e) {
           console.error('[Dashboard] Daily close unavailable', e);

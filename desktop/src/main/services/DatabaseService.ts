@@ -1650,24 +1650,31 @@ export class DatabaseService {
 
     /**
      * Daily close: money movement grouped by method/kind for one calendar
-     * day (local), invoice status counts, and review flags — voided/refunded
-     * rows and non-cash payments missing a reference. Derived purely from
-     * the ledger, so totals always reconcile with stored rows.
+     * day in the clinic's local timezone (SQLite stores UTC; the localtime
+     * shift keeps near-midnight payments on the right clinic day).
+     * Derived purely from the ledger, so totals always reconcile.
      */
     getDailyClose(date: string) {
-        const day = String(date || '').slice(0, 10);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('Date must be YYYY-MM-DD.');
+        const raw = String(date || '').slice(0, 10);
+        const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+        if (!parts) throw new Error('Date must be YYYY-MM-DD.');
+        const check = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])));
+        if (check.getUTCFullYear() !== Number(parts[1]) || check.getUTCMonth() !== Number(parts[2]) - 1
+            || check.getUTCDate() !== Number(parts[3])) {
+            throw new Error('Date must be a real calendar day.');
+        }
+        const day = raw;
         const byMethod = this.db.prepare(`SELECT method, kind,
                 COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-            FROM payments WHERE date(created_at) = ?
+            FROM payments WHERE date(created_at, 'localtime') = ?
             GROUP BY method, kind`).all(day) as any[];
         const invoices = this.db.prepare(`SELECT status, COUNT(*) as count,
                 COALESCE(SUM(total), 0) as total
-            FROM invoices WHERE date(created_at) = ? GROUP BY status`).all(day) as any[];
+            FROM invoices WHERE date(created_at, 'localtime') = ? GROUP BY status`).all(day) as any[];
         const review = this.db.prepare(`SELECT p.id, p.receipt_no, p.kind, p.amount, p.method,
                 p.reference, p.reason, p.invoice_id, i.number as invoice_number
             FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id
-            WHERE date(p.created_at) = ?
+            WHERE date(p.created_at, 'localtime') = ?
               AND (p.kind = 'reversal' OR (p.method != 'cash' AND (p.reference IS NULL OR p.reference = '')))
             ORDER BY p.id ASC`).all(day) as any[];
         const nets: Record<string, number> = {};

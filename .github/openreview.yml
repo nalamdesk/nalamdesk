@@ -18,15 +18,14 @@ providers:
     model: glm-5.3-flash
     base_url: https://opencode.ai/zen/go/v1
     key_from: secrets.OPENCODE_API_KEY
-  deepseek:
+  # Anonymous free reasoning model (1M ctx, multimodal, zero retention).
+  # Free window is explicitly temporary — if agents start skipping, check
+  # availability and fall back to deepseek-v4.1-flash (same endpoint).
+  spacebunny:
     protocol: openai-chat
-    model: deepseek-v4.1-flash
+    model: space-bunny-free
     base_url: https://opencode.ai/zen/go/v1
     key_from: secrets.OPENCODE_API_KEY
-    # DeepSeek reasons by default and may leave message.content empty (the
-    # reviewer's parser reads content only). Disable thinking so the JSON
-    # findings land in content. Revert if the gateway rejects the field.
-    extra_body: { thinking: { type: 'disabled' } }
 
 reviews:
   - id: correctness
@@ -48,8 +47,8 @@ reviews:
         (significant bug, likely-wrong behavior, missing coverage on risky
         paths — should fix). Never emit P3/P4 or untagged findings.
     subagents:
-      - name: deepseek-check
-        provider: deepseek
+      - name: spacebunny-check
+        provider: spacebunny
         instructions: >-
           Independent correctness pass: real bugs, race conditions, null
           handling, broken error paths. At most 5 findings, high confidence
@@ -65,7 +64,7 @@ reviews:
     if_paths: ["desktop/src/main/**", "desktop/src/server/**", "desktop/src/shared/access.ts", "desktop/src/**/auth*", "desktop/src/**/settings/**"]
     strategy: any
     main:
-      provider: deepseek
+      provider: spacebunny
       instructions: >-
         Staff security reviewer for a clinic app guarding patient data.
         Focus: Cedar/RBAC default-deny, admin-only destructive actions,

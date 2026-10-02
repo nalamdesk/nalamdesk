@@ -1343,5 +1343,66 @@ export const MIGRATIONS = [
                 admin: ['previewPatientMerge', 'mergePatients', 'unmergePatients']
             });
         }
+    },
+    {
+        version: 37,
+        up: (db: any) => {
+            console.log('Running Migration v37 (billing ledger)...');
+            // Immutable money trail: invoices with charge lines, payments as
+            // append-only rows (refunds/reversals are rows, never edits),
+            // receipt identity per payment. Corrections never overwrite.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS invoices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    number TEXT UNIQUE,
+                    visit_id INTEGER NOT NULL,
+                    patient_id INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'unpaid',
+                    subtotal REAL NOT NULL DEFAULT 0,
+                    discount REAL NOT NULL DEFAULT 0,
+                    tax REAL NOT NULL DEFAULT 0,
+                    total REAL NOT NULL DEFAULT 0,
+                    void_reason TEXT NULL,
+                    created_by INTEGER NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS invoice_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    invoice_id INTEGER NOT NULL,
+                    description TEXT NOT NULL,
+                    quantity REAL NOT NULL DEFAULT 1,
+                    rate REAL NOT NULL DEFAULT 0,
+                    amount REAL NOT NULL DEFAULT 0
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_no TEXT UNIQUE,
+                    invoice_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'payment',
+                    amount REAL NOT NULL DEFAULT 0,
+                    method TEXT NOT NULL DEFAULT 'cash',
+                    reference TEXT NULL,
+                    reason TEXT NULL,
+                    reversal_of INTEGER NULL,
+                    client_key TEXT UNIQUE NULL,
+                    received_by INTEGER NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_number ON invoices(number)`);
+            db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_receipt ON payments(receipt_no)`);
+            try { db.exec(`ALTER TABLE settings ADD COLUMN consultation_fee REAL DEFAULT 0`); } catch (e) { }
+            const billing = ['getInvoice', 'getVisitInvoices', 'createInvoice',
+                'recordPayment', 'refundPayment', 'voidInvoice'];
+            grantRoleMethods(db, {
+                doctor: billing,
+                receptionist: billing,
+                admin: billing
+            });
+        }
     }
 ];

@@ -1063,6 +1063,101 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(service.findDuplicateCandidates({})).toEqual([]);
         });
 
+        describe('billing ledger', () => {
+            let visitId: number;
+            beforeEach(() => {
+                db.prepare('DELETE FROM patients').run();
+                const p: any = service.savePatient({ name: 'Bill Payer', mobile: '9777777777', age: 45, gender: 'Male' });
+                const pid = Number(p.lastInsertRowid);
+                db.prepare(`INSERT INTO visits (patient_id, status) VALUES (?, 'finished')`).run(pid);
+                visitId = Number((db.prepare('SELECT last_insert_rowid() as id').get() as any)?.id);
+            });
+
+            it('creates invoices with derived totals and auto consultation fee', () => {
+                db.prepare(`INSERT INTO settings (consultation_fee) VALUES (200)`).run();
+                const invoice: any = service.createInvoice({
+                    visitId, items: [{ description: 'X-ray', quantity: 1, rate: 350 }]
+                }, 99);
+                expect(invoice.number).toMatch(/^INV-\d{6,}$/);
+                expect(invoice.status).toBe('unpaid');
+                expect(invoice.items.map((i: any) => i.description)).toEqual(['Consultation fee', 'X-ray']);
+                expect(invoice.subtotal).toBe(550);
+                expect(invoice.total).toBe(550);
+                expect(invoice.balance).toMatchObject({ total: 550, paid: 0, due: 550 });
+                expect(() => service.createInvoice({ visitId, items: [] }, 99)).not.toThrow();
+            });
+
+            it('walks partial payments to paid and refuses overpayment', () => {
+                const invoice: any = service.createInvoice({
+                    visitId, items: [{ description: 'Dressing', quantity: 1, rate: 500 }]
+                }, 99);
+                const first: any = service.recordPayment({
+                    invoiceId: invoice.id, amount: 200, method: 'cash', clientKey: 'pay-1'
+                }, 99);
+                expect(first.receipt_no).toMatch(/^RCP-\d{6,}$/);
+                expect(service.getInvoice(invoice.id).status).toBe('partial');
+                // Duplicate submit returns the same receipt, no double charge.
+                const retry: any = service.recordPayment({
+                    invoiceId: invoice.id, amount: 200, method: 'cash', clientKey: 'pay-1'
+                }, 99);
+                expect(retry.duplicate).toBe(true);
+                expect(retry.receipt_no).toBe(first.receipt_no);
+                expect(() => service.recordPayment({ invoiceId: invoice.id, amount: 400, method: 'upi' }, 99))
+                    .toThrow('exceeds the amount due');
+                service.recordPayment({ invoiceId: invoice.id, amount: 300, method: 'upi' }, 99);
+                expect(service.getInvoice(invoice.id).status).toBe('paid');
+                expect(() => service.recordPayment({ invoiceId: invoice.id, amount: 10, method: 'cash' }, 99))
+                    .toThrow('exceeds the amount due');
+            });
+
+            it('refunds via reversal rows and blocks over-refund', () => {
+                const invoice: any = service.createInvoice({
+                    visitId, items: [{ description: 'Lab', quantity: 1, rate: 1000 }]
+                }, 99);
+                const payment: any = service.recordPayment({ invoiceId: invoice.id, amount: 1000, method: 'card' }, 99);
+                expect(() => service.refundPayment({ paymentId: payment.id, amount: 100, reason: '' }, 99))
+                    .toThrow('reason is required');
+                const partial: any = service.refundPayment(
+                    { paymentId: payment.id, amount: 400, reason: 'Duplicate charge line' }, 99);
+                expect(partial.kind).toBe('reversal');
+                expect(service.getInvoice(invoice.id).status).toBe('partial');
+                expect(() => service.refundPayment(
+                    { paymentId: payment.id, amount: 700, reason: 'Too much' }, 99))
+                    .toThrow('exceeds the refundable');
+                service.refundPayment({ paymentId: payment.id, reason: 'Full return' }, 99);
+                const settled = service.getInvoice(invoice.id);
+                expect(settled.status).toBe('refunded');
+                // Original payment row untouched.
+                expect(settled.payments.find((p: any) => p.id === payment.id).amount).toBe(1000);
+            });
+
+            it('voids only with reason and only when unreversed money is gone', () => {
+                const invoice: any = service.createInvoice({
+                    visitId, items: [{ description: 'Review', quantity: 1, rate: 250 }]
+                }, 99);
+                expect(() => service.voidInvoice(invoice.id, '', 99)).toThrow('reason is required');
+                const payment: any = service.recordPayment({ invoiceId: invoice.id, amount: 250, method: 'cash' }, 99);
+                expect(() => service.voidInvoice(invoice.id, 'Mistake', 99))
+                    .toThrow('Reverse or refund');
+                service.refundPayment({ paymentId: payment.id, reason: 'Visit cancelled' }, 99);
+                const voided: any = service.voidInvoice(invoice.id, 'Visit cancelled', 99);
+                expect(voided.status).toBe('voided');
+                expect(voided.void_reason).toBe('Visit cancelled');
+                expect(() => service.voidInvoice(invoice.id, 'Again', 99)).toThrow('already voided');
+                expect(() => service.recordPayment({ invoiceId: invoice.id, amount: 10, method: 'cash' }, 99))
+                    .toThrow('Voided invoices');
+            });
+
+            it('lists visit invoices with balances', () => {
+                service.createInvoice({ visitId, items: [{ description: 'A', quantity: 1, rate: 100 }] }, 99);
+                service.createInvoice({ visitId, items: [{ description: 'B', quantity: 1, rate: 200 }] }, 99);
+                const list: any[] = service.getVisitInvoices(visitId);
+                expect(list).toHaveLength(2);
+                expect(list[0].balance.due).toBe(100);
+                expect(() => service.getInvoice(424242)).toThrow('not found');
+            });
+        });
+
         it('previews merge candidates with move counts and warnings', () => {
             db.prepare('DELETE FROM patients').run();
             const s: any = service.savePatient({ name: 'Survivor', mobile: '9111111111', age: 40, gender: 'Male' });

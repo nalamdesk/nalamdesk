@@ -135,4 +135,19 @@ describe('preload bridge surface', () => {
         expect(electron.invoke).toHaveBeenCalledWith('db:mergePatients', { survivorId: 1, duplicateId: 2, reason: 'Dup' });
         expect(electron.invoke).toHaveBeenCalledWith('db:unmergePatients', 2);
     });
+
+    it('exposes billing ledger IPC', async () => {
+        await api.db.getInvoice(7);
+        await api.db.getVisitInvoices(3);
+        await api.db.createInvoice({ visitId: 3, items: [] });
+        await api.db.recordPayment({ invoiceId: 9, amount: 200 });
+        await api.db.refundPayment({ paymentId: 4, reason: 'Dup' });
+        await api.db.voidInvoice({ invoiceId: 9, reason: 'Cancelled' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:getInvoice', 7);
+        expect(electron.invoke).toHaveBeenCalledWith('db:getVisitInvoices', 3);
+        expect(electron.invoke).toHaveBeenCalledWith('db:createInvoice', { visitId: 3, items: [] });
+        expect(electron.invoke).toHaveBeenCalledWith('db:recordPayment', { invoiceId: 9, amount: 200 });
+        expect(electron.invoke).toHaveBeenCalledWith('db:refundPayment', { paymentId: 4, reason: 'Dup' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:voidInvoice', { invoiceId: 9, reason: 'Cancelled' });
+    });
 });

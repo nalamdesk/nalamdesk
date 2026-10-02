@@ -710,6 +710,26 @@ handleGuardedDb('db:findDuplicateCandidates', (_, input) => {
     if (!user) throw new Error('Unauthorized');
     return databaseService.findDuplicateCandidates(input || {});
 });
+handleGuardedDb('db:previewPatientMerge', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const args = input || {};
+    return databaseService.previewPatientMerge(args);
+});
+handleGuardedDb('db:mergePatients', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return databaseService.mergePatients(input || {}, user.id);
+});
+handleGuardedDb('db:unmergePatients', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const args = typeof input === 'number' ? { duplicateId: input } : input || {};
+    return databaseService.unmergePatients(args.duplicateId, user.id);
+});
 handleGuardedDb('db:getPatientById', (_, id) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');

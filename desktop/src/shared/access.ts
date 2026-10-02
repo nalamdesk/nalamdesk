@@ -25,7 +25,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
         label: 'Patients & visits',
         methods: [
             'getPatients', 'getPatientById', 'savePatient', 'deletePatient',
-            'findDuplicateCandidates',
+            'findDuplicateCandidates', 'previewPatientMerge', 'mergePatients', 'unmergePatients',
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
             'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests'
@@ -108,6 +108,7 @@ export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
     'saveAllergy', 'deleteAllergy',
     'saveCondition', 'deleteCondition',
     'saveMedication', 'deleteMedication',
+    'previewPatientMerge', 'mergePatients', 'unmergePatients',
     'abdmAckInbox', 'abdmTransferBundle',
     'getUsers', 'saveUser', 'deleteUser', 'getAllRoles',
     'saveRole', 'deleteRole',

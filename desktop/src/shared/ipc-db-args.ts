@@ -92,6 +92,16 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
         case 'seedDemoData':
         case 'clearDemoData':
             return [actingUserId];
+        case 'previewPatientMerge': {
+            return [payloadObject(args[0])];
+        }
+        case 'mergePatients': {
+            return [payloadObject(args[0]), actingUserId];
+        }
+        case 'unmergePatients': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['duplicateId'] ?? args[0]), actingUserId];
+        }
         default:
             if (ENCOUNTER_METHODS.has(method)) {
                 return [...args, actingUserId];

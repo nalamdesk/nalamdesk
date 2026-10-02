@@ -45,7 +45,7 @@ export const ALLOWED_IPC_METHODS = [
     'validateUser', 'getPermissions',
     'getDashboardStats',
     'getPatients', 'getPatientById', 'savePatient', 'deletePatient',
-    'findDuplicateCandidates',
+    'findDuplicateCandidates', 'previewPatientMerge', 'mergePatients', 'unmergePatients',
     'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
     'beginConsultation', 'getActiveConsultation', 'saveConsultationProgress',
     'completeConsultation', 'postponeConsultation', 'resumeConsultation', 'beginNextConsultation',

@@ -117,6 +117,10 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['invoiceId'] ?? payload['id'] ?? args[0]), String(payload['reason'] ?? args[1] ?? ''), actingUserId];
         }
+        case 'getDailyClose': {
+            const payload = payloadObject(args[0]);
+            return [String(payload['date'] ?? args[0] ?? '')];
+        }
         default:
             if (ENCOUNTER_METHODS.has(method)) {
                 return [...args, actingUserId];

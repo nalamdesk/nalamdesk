@@ -772,6 +772,13 @@ handleGuardedDb('db:voidInvoice', (_, input) => {
     const args = input || {};
     return databaseService.voidInvoice(args.invoiceId ?? args.id, args.reason, user.id);
 });
+handleGuardedDb('db:getDailyClose', (_, date) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const day = typeof date === 'string' ? date : (date as any)?.date;
+    return databaseService.getDailyClose(day || new Date().toISOString().slice(0, 10));
+});
 handleGuardedDb('db:getPatientById', (_, id) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');

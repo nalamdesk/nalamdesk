@@ -226,4 +226,33 @@ describe('DashboardComponent', () => {
             expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Load failed' }));
         });
     });
+
+    describe('daily close', () => {
+        it('loads collection totals for billing roles and skips nurses', async () => {
+            const close = {
+                date: '2026-10-02', collected: 500,
+                byMethod: [{ method: 'cash', kind: 'payment', count: 1, total: 500 }],
+                invoices: [{ status: 'paid', count: 1, total: 500 }],
+                review: []
+            };
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getDashboardStats') return Promise.resolve({ totalPatients: 5, todayVisits: 2 });
+                if (method === 'getDemoSeedState') return Promise.resolve({ seeded: false });
+                if (method === 'getQueue') return Promise.resolve([]);
+                if (method === 'getDailyClose') return Promise.resolve(close);
+                return Promise.resolve(null);
+            });
+            component.currentUser = { id: 1, role: 'receptionist', name: 'Desk' };
+            (component as any).cloudService = { getAppointments: vi.fn(async () => []) };
+            await component.loadData();
+            expect(component.dailyClose.collected).toBe(500);
+            expect(component.canSeeBilling).toBe(true);
+
+            component.currentUser = { id: 2, role: 'nurse', name: 'Nancy' };
+            mockDataService.invoke.mockClear();
+            await component.loadData();
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('getDailyClose', expect.anything());
+            expect(component.canSeeBilling).toBe(false);
+        });
+    });
 });

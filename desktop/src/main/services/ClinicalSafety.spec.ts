@@ -1162,6 +1162,28 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 expect(list[0].balance.due).toBe(100);
                 expect(() => service.getInvoice(424242)).toThrow('not found');
             });
+
+            it('closes the day from the ledger with review flags', () => {
+                const today = new Date().toISOString().slice(0, 10);
+                const invoice: any = service.createInvoice({
+                    visitId, items: [{ description: 'Dressing', quantity: 1, rate: 500 }]
+                }, 99);
+                service.recordPayment({ invoiceId: invoice.id, amount: 200, method: 'cash' }, 99);
+                service.recordPayment({ invoiceId: invoice.id, amount: 300, method: 'upi' }, 99);
+                const other: any = service.createInvoice({
+                    visitId, items: [{ description: 'Review', quantity: 1, rate: 250 }]
+                }, 99);
+                service.voidInvoice(other.id, 'Duplicate entry', 99);
+                const close: any = service.getDailyClose(today);
+                expect(close.collected).toBe(500);
+                expect(close.nets).toMatchObject({ cash: 200, upi: 300 });
+                expect(close.invoices.find((r: any) => r.status === 'voided').count).toBe(1);
+                const flagged = close.review.map((r: any) => r.kind);
+                expect(flagged).not.toContain('reversal');
+                expect(close.review.find((r: any) => r.method === 'upi').reference).toBeNull();
+                expect(() => service.getDailyClose('not-a-date')).toThrow('YYYY-MM-DD');
+                expect(() => service.getDailyClose('')).toThrow('YYYY-MM-DD');
+            });
         });
 
         it('previews merge candidates with move counts and warnings', () => {

@@ -318,6 +318,116 @@ interface Visit {
                  
                  <!-- Spacer for footer -->
                  <div class="h-24"></div>
+
+                 <!-- SECTION 5: BILLING -->
+                 <div *ngIf="canBill && billingVisitId" class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200">
+                    <div class="flex items-center gap-3 mb-4 text-gray-800">
+                        <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm">₹</div>
+                        <h3 class="text-lg font-bold">Billing</h3>
+                    </div>
+
+                    <div *ngIf="billingLoading && invoices.length === 0" class="text-sm text-gray-500">Loading invoices…</div>
+
+                    <div *ngFor="let invoice of invoices" class="border border-gray-200 rounded-lg mb-3 overflow-hidden">
+                        <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-gray-50">
+                            <div class="flex items-center gap-2">
+                                <span class="font-mono font-bold text-sm text-gray-800">{{ invoice.number }}</span>
+                                <span class="px-2 py-0.5 rounded uppercase text-[10px] font-bold"
+                                      [ngClass]="invoice.status === 'paid' ? 'bg-green-100 text-green-700' : invoice.status === 'voided' ? 'bg-gray-200 text-gray-500' : invoice.status === 'refunded' ? 'bg-red-100 text-red-700' : invoice.status === 'partial' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'">{{ invoice.status }}</span>
+                            </div>
+                            <div class="text-sm text-gray-600">Total <span class="font-mono font-bold text-gray-800">₹{{ invoice.total }}</span>
+                                · Paid <span class="font-mono text-gray-800">₹{{ invoice.balance?.paid }}</span>
+                                · Due <span class="font-mono font-bold" [ngClass]="invoice.balance?.due > 0 ? 'text-red-600' : 'text-green-600'">₹{{ invoice.balance?.due }}</span></div>
+                        </div>
+                        <div class="px-4 py-2 text-xs text-gray-600">
+                            <div *ngFor="let item of invoice.items" class="flex justify-between py-0.5">
+                                <span>{{ item.description }} × {{ item.quantity }}</span>
+                                <span class="font-mono">₹{{ item.amount }}</span>
+                            </div>
+                            <div *ngIf="invoice.discount > 0" class="flex justify-between py-0.5"><span>Discount</span><span class="font-mono">−₹{{ invoice.discount }}</span></div>
+                            <div *ngIf="invoice.tax > 0" class="flex justify-between py-0.5"><span>Tax</span><span class="font-mono">+₹{{ invoice.tax }}</span></div>
+                        </div>
+                        <div class="px-4 py-2 border-t border-gray-100">
+                            <div *ngFor="let payment of invoice.payments" class="flex flex-wrap items-center justify-between gap-2 py-1.5 text-xs border-b border-dashed border-gray-100 last:border-0">
+                                <div>
+                                    <span class="font-mono font-bold text-gray-700">{{ payment.receipt_no }}</span>
+                                    <span class="ml-2 px-1.5 py-0.5 rounded uppercase text-[10px] font-bold"
+                                          [ngClass]="payment.kind === 'reversal' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'">{{ payment.kind }}</span>
+                                    <span class="ml-2 font-mono">₹{{ payment.amount }}</span>
+                                    <span class="ml-2 text-gray-500">{{ payment.method }}<span *ngIf="payment.reference"> · {{ payment.reference }}</span></span>
+                                    <span *ngIf="payment.reason" class="ml-2 text-gray-400 italic">{{ payment.reason }}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button *ngIf="payment.kind === 'payment'" (click)="openReceipt(invoice, payment, true)" class="text-blue-600 hover:underline">Receipt</button>
+                                    <button *ngIf="payment.kind === 'payment'" (click)="refundPayment(payment)" class="text-gray-500 hover:text-red-600 hover:underline">{{ refundForm.paymentId === payment.id ? 'Cancel' : 'Refund' }}</button>
+                                </div>
+                            </div>
+                            <div *ngIf="isRefunding(invoice)"
+                                 class="flex flex-wrap items-end gap-2 py-2 bg-red-50/50 rounded px-2 mt-1">
+                                <div>
+                                    <label class="block text-[11px] font-bold text-gray-500 uppercase">Refund amount</label>
+                                    <input type="number" [(ngModel)]="refundForm.amount" [ngModelOptions]="{standalone: true}" min="0" step="0.01" class="border p-1.5 rounded text-sm font-mono w-28" />
+                                </div>
+                                <div class="flex-1 min-w-[180px]">
+                                    <label class="block text-[11px] font-bold text-gray-500 uppercase">Reason (required)</label>
+                                    <input [(ngModel)]="refundForm.reason" [ngModelOptions]="{standalone: true}" placeholder="Why is this refunded?" class="w-full border p-1.5 rounded text-sm" />
+                                </div>
+                                <button (click)="refundPayment(refundingPayment(invoice))" class="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700">Confirm refund</button>
+                            </div>
+                            <div *ngIf="invoice.status !== 'paid' && invoice.status !== 'voided'" class="flex flex-wrap items-end gap-2 pt-2">
+                                <div>
+                                    <label class="block text-[11px] font-bold text-gray-500 uppercase">Amount</label>
+                                    <input type="number" [(ngModel)]="payFormFor(invoice.id).amount" [ngModelOptions]="{standalone: true}" min="0" step="0.01" placeholder="0.00" class="border p-1.5 rounded text-sm font-mono w-28" />
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-bold text-gray-500 uppercase">Method</label>
+                                    <select [(ngModel)]="payFormFor(invoice.id).method" [ngModelOptions]="{standalone: true}" class="border p-1.5 rounded text-sm bg-white">
+                                        <option value="cash">Cash</option>
+                                        <option value="upi">UPI</option>
+                                        <option value="card">Card</option>
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[140px]">
+                                    <label class="block text-[11px] font-bold text-gray-500 uppercase">Reference</label>
+                                    <input [(ngModel)]="payFormFor(invoice.id).reference" [ngModelOptions]="{standalone: true}" placeholder="Txn / bill no." class="w-full border p-1.5 rounded text-sm font-mono" />
+                                </div>
+                                <button (click)="recordPayment(invoice)" class="px-4 py-1.5 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700">Record payment</button>
+                            </div>
+                            <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
+                                <button (click)="openReceipt(invoice, invoice.payments?.[invoice.payments.length - 1] || null, true)" [disabled]="!invoice.payments?.length" class="text-xs text-blue-600 hover:underline disabled:opacity-40">Print last receipt</button>
+                                <div *ngIf="invoice.status !== 'voided'" class="flex items-center gap-2">
+                                    <input [(ngModel)]="voidReason[invoice.id]" [ngModelOptions]="{standalone: true}" placeholder="Void reason" class="border p-1.5 rounded text-xs w-40" />
+                                    <button (click)="voidInvoice(invoice)" [disabled]="!(voidReason[invoice.id] || '').trim()" class="text-xs text-red-600 border border-red-200 hover:bg-red-50 px-2.5 py-1 rounded disabled:opacity-40">Void</button>
+                                </div>
+                                <span *ngIf="invoice.status === 'voided'" class="text-xs text-gray-400 italic">Voided: {{ invoice.void_reason }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t pt-3 mt-1">
+                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">New invoice for this visit</div>
+                        <div *ngFor="let line of newChargeItems; let i = index" class="flex flex-wrap items-end gap-2 mb-2">
+                            <div class="flex-1 min-w-[180px]">
+                                <input [(ngModel)]="line.description" [ngModelOptions]="{standalone: true}" placeholder="Charge description" class="w-full border p-1.5 rounded text-sm" />
+                            </div>
+                            <div>
+                                <input type="number" [(ngModel)]="line.quantity" [ngModelOptions]="{standalone: true}" min="1" step="1" placeholder="Qty" class="border p-1.5 rounded text-sm font-mono w-20" />
+                            </div>
+                            <div>
+                                <input type="number" [(ngModel)]="line.rate" [ngModelOptions]="{standalone: true}" min="0" step="0.01" placeholder="Rate ₹" class="border p-1.5 rounded text-sm font-mono w-28" />
+                            </div>
+                            <button (click)="removeChargeLine(i)" class="text-gray-400 hover:text-red-600 text-sm px-2" aria-label="Remove line">✕</button>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button (click)="addChargeLine()" class="text-sm text-blue-600 border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded">+ Charge line</button>
+                            <button (click)="createInvoice()" [disabled]="billingLoading" class="px-4 py-1.5 text-sm bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:opacity-50">Create invoice</button>
+                            <span class="text-[11px] text-gray-400">Consultation fee auto-added per clinic settings.</span>
+                        </div>
+                    </div>
+                 </div>
+
+                 <!-- Spacer for footer -->
+                 <div class="h-24"></div>
               </form>
            </div>
         </div>
@@ -422,8 +532,55 @@ interface Visit {
         </div>
       </div>
     </div>
+
+    <!-- Receipt modal (print-scoped; maps to stored transactions) -->
+    <div *ngIf="showReceipt && receiptInvoice" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 print-scope-receipt">
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div class="p-8 relative">
+          <div *ngIf="receiptReprint" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span class="text-6xl font-black text-gray-200 rotate-[-20deg] tracking-widest">DUPLICATE</span>
+          </div>
+          <div class="text-center border-b pb-4 mb-4">
+            <h2 class="text-xl font-bold text-gray-900">{{ clinicName || 'Clinic' }}</h2>
+            <p class="text-xs text-gray-500">Payment receipt{{ receiptReprint ? ' (reprint)' : '' }}</p>
+          </div>
+          <div class="text-sm space-y-1 mb-4">
+            <div class="flex justify-between"><span class="text-gray-500">Invoice</span><span class="font-mono font-bold">{{ receiptInvoice.number }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Receipt</span><span class="font-mono font-bold">{{ receiptPayment?.receipt_no || '—' }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Patient</span><span class="font-medium">{{ patient?.name }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Date</span><span>{{ (receiptPayment?.created_at || receiptInvoice.created_at) | date:'medium' }}</span></div>
+          </div>
+          <table class="w-full text-sm mb-4">
+            <thead><tr class="text-left text-xs text-gray-500 border-b"><th class="py-1">Charge</th><th class="py-1 text-right">Qty</th><th class="py-1 text-right">Amount</th></tr></thead>
+            <tbody>
+              <tr *ngFor="let item of receiptInvoice.items" class="border-b border-gray-100">
+                <td class="py-1">{{ item.description }}</td><td class="py-1 text-right">{{ item.quantity }}</td><td class="py-1 text-right font-mono">₹{{ item.amount }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="text-sm space-y-1 mb-4">
+            <div class="flex justify-between"><span class="text-gray-500">Subtotal</span><span class="font-mono">₹{{ receiptInvoice.subtotal }}</span></div>
+            <div *ngIf="receiptInvoice.discount > 0" class="flex justify-between"><span class="text-gray-500">Discount</span><span class="font-mono">−₹{{ receiptInvoice.discount }}</span></div>
+            <div *ngIf="receiptInvoice.tax > 0" class="flex justify-between"><span class="text-gray-500">Tax</span><span class="font-mono">+₹{{ receiptInvoice.tax }}</span></div>
+            <div class="flex justify-between font-bold text-base border-t pt-1"><span>Total</span><span class="font-mono">₹{{ receiptInvoice.total }}</span></div>
+            <div *ngIf="receiptPayment" class="flex justify-between text-green-700 font-bold"><span>Paid ({{ receiptPayment.method }})</span><span class="font-mono">₹{{ receiptPayment.amount }}</span></div>
+            <div class="flex justify-between text-gray-600"><span>Balance due</span><span class="font-mono">₹{{ receiptInvoice.balance?.due }}</span></div>
+          </div>
+          <div class="flex justify-end gap-2">
+            <button (click)="showReceipt = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded border">Close</button>
+            <button (click)="printReceipt()" class="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">Print</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `,
-  styles: []
+  styles: [`
+    @media print {
+      body * { visibility: hidden; }
+      .print-scope-receipt, .print-scope-receipt * { visibility: visible; }
+      .print-scope-receipt { position: absolute !important; inset: 0 !important; background: white !important; }
+    }
+  `]
 })
 export class VisitComponent implements OnInit {
   patientId!: number;
@@ -441,6 +598,24 @@ export class VisitComponent implements OnInit {
   private startRequestId: string | null = null;
   private nextStartRequestId: string | null = null;
   currentUser: any;
+  get canBill(): boolean {
+    return ['admin', 'doctor', 'receptionist'].includes(this.currentUser?.role);
+  }
+
+  // Billing ledger (visit chart)
+  invoices: any[] = [];
+  billingLoading = false;
+  clinicName = '';
+  newChargeItems: { description: string; quantity: number | null; rate: number | null }[] = [];
+  newChargeDiscount: number | null = null;
+  newChargeTax: number | null = null;
+  payForm: { [invoiceId: number]: { amount: number | null; method: string; reference: string } } = {};
+  refundForm: { paymentId: number | null; amount: number | null; reason: string } = { paymentId: null, amount: null, reason: '' };
+  voidReason: { [invoiceId: number]: string } = {};
+  receiptPayment: any = null;
+  receiptInvoice: any = null;
+  receiptReprint = false;
+  showReceipt = false;
   patientVitals: any;
   showMobileHistory = false;
   showVitalsModal = false;
@@ -574,6 +749,7 @@ export class VisitComponent implements OnInit {
       diagnosis_type: visit.diagnosis_type,
       amount_paid: visit.amount_paid
     });
+    void this.loadInvoices();
 
     if (visit.prescription && visit.prescription.length > 0) {
       this.currentPrescription = visit.prescription;
@@ -595,6 +771,169 @@ export class VisitComponent implements OnInit {
     if (!this.isConsulting || this.activeEncounterReadOnly) {
       this.setChartWritable(false);
     }
+  }
+
+  // -- Billing ledger -------------------------------------------------
+  get billingVisitId(): number | null {
+    return this.editingVisitId ?? this.viewedVisit?.id ?? null;
+  }
+
+  async loadInvoices(): Promise<void> {
+    if (!this.billingVisitId || !this.canBill) {
+      this.invoices = [];
+      return;
+    }
+    this.billingLoading = true;
+    try {
+      const [rows, settings] = await Promise.all([
+        this.dataService.invoke<any[]>('getVisitInvoices', this.billingVisitId),
+        this.dataService.invoke<any>('getPublicSettings').catch(() => null)
+      ]);
+      this.ngZone.run(() => {
+        this.invoices = rows || [];
+        if (settings?.clinic_name) this.clinicName = settings.clinic_name;
+        this.billingLoading = false;
+      });
+    } catch (e) {
+      console.error(e);
+      this.ngZone.run(() => { this.billingLoading = false; });
+    }
+  }
+
+  addChargeLine(): void {
+    this.newChargeItems.push({ description: '', quantity: 1, rate: null });
+  }
+
+  removeChargeLine(index: number): void {
+    this.newChargeItems.splice(index, 1);
+  }
+
+  async createInvoice(): Promise<void> {
+    if (!this.billingVisitId || this.billingLoading) return;
+    const items = this.newChargeItems
+      .filter((l) => l.description.trim())
+      .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity) || 1, rate: Number(l.rate) || 0 }));
+    try {
+      await this.dataService.invoke('createInvoice', {
+        visitId: this.billingVisitId,
+        items,
+        discount: 0,
+        tax: 0
+      });
+      this.ngZone.run(() => {
+        this.newChargeItems = [];
+        this.newChargeDiscount = null;
+        this.newChargeTax = null;
+      });
+      this.toastService?.success('Invoice created.', 'Billing');
+      await this.loadInvoices();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Invoice failed',
+        message: e instanceof Error ? e.message : 'Could not create the invoice.',
+        type: 'error'
+      });
+    }
+  }
+
+  payFormFor(invoiceId: number): { amount: number | null; method: string; reference: string } {
+    return this.payForm[invoiceId] ?? (this.payForm[invoiceId] = { amount: null, method: 'cash', reference: '' });
+  }
+
+  async recordPayment(invoice: any): Promise<void> {
+    const form = this.payFormFor(invoice.id);
+    if (form.amount == null || Number(form.amount) <= 0 || this.billingLoading) return;
+    this.billingLoading = true;
+    try {
+      const payment: any = await this.dataService.invoke('recordPayment', {
+        invoiceId: invoice.id,
+        amount: Number(form.amount),
+        method: form.method,
+        reference: form.reference.trim(),
+        clientKey: crypto.randomUUID()
+      });
+      this.ngZone.run(() => { this.payForm[invoice.id] = { amount: null, method: 'cash', reference: '' }; });
+      this.toastService?.success(`Payment recorded (${payment.receipt_no}).`, 'Billing');
+      await this.loadInvoices();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Payment failed',
+        message: e instanceof Error ? e.message : 'Could not record the payment.',
+        type: 'error'
+      });
+    } finally {
+      this.ngZone.run(() => { this.billingLoading = false; });
+    }
+  }
+
+  async refundPayment(payment: any): Promise<void> {
+    if (this.refundForm.paymentId !== payment.id) {
+      this.refundForm = { paymentId: payment.id, amount: payment.amount, reason: '' };
+      return;
+    }
+    if (!this.refundForm.reason.trim()) return;
+    try {
+      await this.dataService.invoke('refundPayment', {
+        paymentId: payment.id,
+        amount: this.refundForm.amount ?? undefined,
+        reason: this.refundForm.reason.trim()
+      });
+      this.ngZone.run(() => {
+        this.refundForm = { paymentId: null, amount: null, reason: '' };
+      });
+      this.toastService?.success('Refund recorded.', 'Billing');
+      await this.loadInvoices();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Refund failed',
+        message: e instanceof Error ? e.message : 'Could not record the refund.',
+        type: 'error'
+      });
+    }
+  }
+
+  async voidInvoice(invoice: any): Promise<void> {
+    const reason = (this.voidReason[invoice.id] || '').trim();
+    if (!reason) return;
+    const confirmed = await this.dialogService?.open({
+      title: `Void invoice ${invoice.number}?`,
+      message: 'The invoice stays in history marked voided. Reverse or refund payments first.',
+      type: 'confirm',
+      confirmText: 'Void invoice',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
+    try {
+      await this.dataService.invoke('voidInvoice', { invoiceId: invoice.id, reason });
+      this.toastService?.success('Invoice voided.', 'Billing');
+      await this.loadInvoices();
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Void failed',
+        message: e instanceof Error ? e.message : 'Could not void the invoice.',
+        type: 'error'
+      });
+    }
+  }
+
+  openReceipt(invoice: any, payment: any, reprint: boolean): void {
+    this.receiptInvoice = invoice;
+    this.receiptPayment = payment;
+    this.receiptReprint = reprint;
+    this.showReceipt = true;
+  }
+
+  printReceipt(): void {
+    window.print();
+  }
+
+  isRefunding(invoice: any): boolean {
+    if (!this.refundForm.paymentId || !invoice?.payments) return false;
+    return invoice.payments.some((p: any) => p.id === this.refundForm.paymentId);
+  }
+
+  refundingPayment(invoice: any): any {
+    return invoice?.payments?.find((p: any) => p.id === this.refundForm.paymentId) ?? null;
   }
 
   async loadData() {
@@ -1143,6 +1482,7 @@ export class VisitComponent implements OnInit {
       }
       this.setChartWritable(false);
     });
+    void this.loadInvoices();
   }
 
   private async generateVisitPdf(visit: any) {

@@ -102,9 +102,11 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['duplicateId'] ?? args[0]), actingUserId];
         }
-        case 'getInvoice':
+        case 'getInvoice': {
+            return [Number(payloadObject(args[0])['invoiceId'] ?? args[0])];
+        }
         case 'getVisitInvoices': {
-            return [Number(payloadObject(args[0])['invoiceId'] ?? payloadObject(args[0])['visitId'] ?? args[0])];
+            return [Number(payloadObject(args[0])['visitId'] ?? args[0])];
         }
         case 'createInvoice':
         case 'recordPayment':

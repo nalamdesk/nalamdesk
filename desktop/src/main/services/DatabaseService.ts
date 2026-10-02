@@ -1614,7 +1614,7 @@ export class DatabaseService {
         const invoice = this.db.prepare('SELECT total FROM invoices WHERE id = ?').get(Number(invoiceId)) as any;
         if (!invoice) throw new Error(`Invoice #${invoiceId} not found.`);
         const paid = Number((this.db.prepare(`SELECT COALESCE(SUM(
-            CASE WHEN kind = 'reversal' THEN -amount ELSE amount END), 0) as paid
+            CASE WHEN kind = 'payment' THEN amount WHEN kind = 'reversal' THEN -amount ELSE 0 END), 0) as paid
             FROM payments WHERE invoice_id = ?`).get(Number(invoiceId)) as any)?.paid || 0);
         return {
             total: Number(invoice.total || 0),
@@ -1722,6 +1722,8 @@ export class DatabaseService {
         const clientKey = input?.clientKey != null ? String(input.clientKey).trim() : '';
         const record = this.db.transaction(() => {
             if (clientKey) {
+                // Idempotent retry: the UNIQUE index on client_key is the
+                // real guard under concurrency; the pre-check is a fast path.
                 const existing = this.db.prepare('SELECT id FROM payments WHERE client_key = ?')
                     .get(clientKey) as any;
                 if (existing) return { id: Number(existing.id), duplicate: true };
@@ -1760,22 +1762,28 @@ export class DatabaseService {
      */
     refundPayment(input: { paymentId: number; amount?: number; reason: string }, actingUserId?: number) {
         const paymentId = Number(input?.paymentId);
-        const original = this.db.prepare('SELECT * FROM payments WHERE id = ?').get(paymentId) as any;
-        if (!original) throw new Error(`Payment #${paymentId} not found.`);
-        if (original.kind !== 'payment') throw new Error('Only payments can be refunded, not reversals.');
         const reason = String(input?.reason || '').trim();
         if (!reason) throw new Error('A reason is required for refunds.');
-        const already = Number((this.db.prepare(`SELECT COALESCE(SUM(amount), 0) as refunded
-            FROM payments WHERE reversal_of = ?`).get(paymentId) as any)?.refunded || 0);
-        const maxRefundable = Math.round((Number(original.amount) - already) * 100) / 100;
-        const amount = input?.amount == null
-            ? maxRefundable
-            : Math.round(Number(input.amount) * 100) / 100;
-        if (!Number.isFinite(amount) || amount <= 0) throw new Error('Refund amount must be positive.');
-        if (amount > maxRefundable + 0.009) {
-            throw new Error(`Refund exceeds the refundable amount (${maxRefundable}).`);
-        }
+        // Read and write inside one transaction: the refundable check cannot
+        // go stale between concurrent refunds.
         const record = this.db.transaction(() => {
+            const original = this.db.prepare('SELECT * FROM payments WHERE id = ?').get(paymentId) as any;
+            if (!original) throw new Error(`Payment #${paymentId} not found.`);
+            if (original.kind !== 'payment') throw new Error('Only payments can be refunded, not reversals.');
+            const invoice = this.db.prepare('SELECT id, status FROM invoices WHERE id = ?')
+                .get(original.invoice_id) as any;
+            if (!invoice) throw new Error(`Invoice #${original.invoice_id} not found.`);
+            if (invoice.status === 'voided') throw new Error('Voided invoices cannot be refunded.');
+            const already = Number((this.db.prepare(`SELECT COALESCE(SUM(amount), 0) as refunded
+                FROM payments WHERE reversal_of = ?`).get(paymentId) as any)?.refunded || 0);
+            const maxRefundable = Math.round((Number(original.amount) - already) * 100) / 100;
+            const amount = input?.amount == null
+                ? maxRefundable
+                : Math.round(Number(input.amount) * 100) / 100;
+            if (!Number.isFinite(amount) || amount <= 0) throw new Error('Refund amount must be positive.');
+            if (amount > maxRefundable + 0.009) {
+                throw new Error(`Refund exceeds the refundable amount (${maxRefundable}).`);
+            }
             const row = this.db.prepare(`INSERT INTO payments
                 (invoice_id, kind, amount, method, reference, reason, reversal_of, received_by)
                 VALUES (?, 'reversal', ?, ?, ?, ?, ?, ?)`)
@@ -1785,16 +1793,16 @@ export class DatabaseService {
             this.db.prepare('UPDATE payments SET receipt_no = ? WHERE id = ?')
                 .run(this.receiptNumber(reversalId), reversalId);
             const next = this.invoiceBalance(original.invoice_id);
-            const invoice = this.db.prepare('SELECT status FROM invoices WHERE id = ?')
+            const prior = this.db.prepare('SELECT status FROM invoices WHERE id = ?')
                 .get(original.invoice_id) as any;
-            const status = next.paid <= 0 && invoice?.status !== 'voided' ? 'refunded' : this.invoiceStatusFor(next);
+            const status = next.paid <= 0 && prior?.status !== 'voided' ? 'refunded' : this.invoiceStatusFor(next);
             this.db.prepare('UPDATE invoices SET status = ? WHERE id = ?')
                 .run(status, original.invoice_id);
-            return reversalId;
+            return { reversalId, amount };
         });
-        const reversalId = record();
+        const { reversalId, amount: refunded } = record();
         this.logAudit('REFUND', 'payments', reversalId, actingUserId,
-            `Refunded ${amount} of payment #${paymentId}: ${reason}`);
+            `Refunded ${refunded} of payment #${paymentId}: ${reason}`);
         return this.db.prepare('SELECT * FROM payments WHERE id = ?').get(reversalId);
     }
 
@@ -1804,21 +1812,27 @@ export class DatabaseService {
      */
     voidInvoice(invoiceId: number, reason: string, actingUserId?: number) {
         const id = Number(invoiceId);
-        const invoice = this.db.prepare('SELECT id, status, number FROM invoices WHERE id = ?')
-            .get(id) as any;
-        if (!invoice) throw new Error(`Invoice #${id} not found.`);
-        if (invoice.status === 'voided') throw new Error('Invoice is already voided.');
-        const outstanding = Number((this.db.prepare(`SELECT COALESCE(SUM(
-            CASE WHEN kind = 'reversal' THEN -amount ELSE amount END), 0) as paid
-            FROM payments WHERE invoice_id = ?`).get(id) as any)?.paid || 0);
-        if (Math.abs(outstanding) > 0.009) {
-            throw new Error('Reverse or refund all payments before voiding.');
-        }
         const clean = String(reason || '').trim();
         if (!clean) throw new Error('A reason is required for voiding.');
-        this.db.prepare(`UPDATE invoices SET status = 'voided', void_reason = ? WHERE id = ?`)
-            .run(clean, id);
-        this.logAudit('VOID', 'invoices', id, actingUserId, `Voided ${invoice.number}: ${clean}`);
+        // Check and state change atomically: a payment racing the void is
+        // either inside (blocked) or outside (guarded by the ledger math).
+        const apply = this.db.transaction(() => {
+            const invoice = this.db.prepare('SELECT id, status, number FROM invoices WHERE id = ?')
+                .get(id) as any;
+            if (!invoice) throw new Error(`Invoice #${id} not found.`);
+            if (invoice.status === 'voided') throw new Error('Invoice is already voided.');
+            const outstanding = Number((this.db.prepare(`SELECT COALESCE(SUM(
+                CASE WHEN kind = 'payment' THEN amount WHEN kind = 'reversal' THEN -amount ELSE 0 END), 0) as paid
+                FROM payments WHERE invoice_id = ?`).get(id) as any)?.paid || 0);
+            if (Math.abs(outstanding) > 0.009) {
+                throw new Error('Reverse or refund all payments before voiding.');
+            }
+            this.db.prepare(`UPDATE invoices SET status = 'voided', void_reason = ? WHERE id = ?`)
+                .run(clean, id);
+            return invoice.number;
+        });
+        const number = apply();
+        this.logAudit('VOID', 'invoices', id, actingUserId, `Voided ${number}: ${clean}`);
         return this.getInvoice(id);
     }
 

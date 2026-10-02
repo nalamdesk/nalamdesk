@@ -735,13 +735,17 @@ handleGuardedDb('db:getInvoice', (_, id) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
-    return databaseService.getInvoice(Number(id));
+    const invoiceId = Number(id);
+    if (!Number.isInteger(invoiceId) || invoiceId <= 0) throw new Error('Valid invoice id is required.');
+    return databaseService.getInvoice(invoiceId);
 });
 handleGuardedDb('db:getVisitInvoices', (_, visitId) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
-    return databaseService.getVisitInvoices(Number(visitId));
+    const vid = Number(visitId);
+    if (!Number.isInteger(vid) || vid <= 0) throw new Error('Valid visit id is required.');
+    return databaseService.getVisitInvoices(vid);
 });
 handleGuardedDb('db:createInvoice', (_, input) => {
     const user = sessionService.getUser();

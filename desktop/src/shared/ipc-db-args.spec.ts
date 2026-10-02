@@ -70,4 +70,17 @@ describe('resolveDbMethodArgs addToQueue', () => {
         expect(resolveDbMethodArgs('unmergePatients', [{ duplicateId: 2 }], 99)).toEqual([2, 99]);
         expect(resolveDbMethodArgs('unmergePatients', [2], 99)).toEqual([2, 99]);
     });
+
+    it('unpacks billing ledger calls for both transports', () => {
+        expect(resolveDbMethodArgs('getInvoice', [7], 99)).toEqual([7]);
+        expect(resolveDbMethodArgs('getVisitInvoices', [3], 99)).toEqual([3]);
+        const create = { visitId: 3, items: [{ description: 'X-ray', rate: 350 }] };
+        expect(resolveDbMethodArgs('createInvoice', [create], 99)).toEqual([create, 99]);
+        const pay = { invoiceId: 9, amount: 200, method: 'upi' };
+        expect(resolveDbMethodArgs('recordPayment', [pay], 99)).toEqual([pay, 99]);
+        const refund = { paymentId: 4, reason: 'Dup' };
+        expect(resolveDbMethodArgs('refundPayment', [refund], 99)).toEqual([refund, 99]);
+        expect(resolveDbMethodArgs('voidInvoice', [{ invoiceId: 9, reason: 'Cancelled' }], 99))
+            .toEqual([9, 'Cancelled', 99]);
+    });
 });

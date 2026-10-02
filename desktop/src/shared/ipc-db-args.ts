@@ -102,6 +102,21 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['duplicateId'] ?? args[0]), actingUserId];
         }
+        case 'getInvoice': {
+            return [Number(payloadObject(args[0])['invoiceId'] ?? args[0])];
+        }
+        case 'getVisitInvoices': {
+            return [Number(payloadObject(args[0])['visitId'] ?? args[0])];
+        }
+        case 'createInvoice':
+        case 'recordPayment':
+        case 'refundPayment': {
+            return [payloadObject(args[0]), actingUserId];
+        }
+        case 'voidInvoice': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['invoiceId'] ?? payload['id'] ?? args[0]), String(payload['reason'] ?? args[1] ?? ''), actingUserId];
+        }
         default:
             if (ENCOUNTER_METHODS.has(method)) {
                 return [...args, actingUserId];

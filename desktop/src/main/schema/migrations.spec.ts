@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 36 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(36);
+        it('should have 37 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(37);
         });
     });
 
@@ -724,6 +724,39 @@ describe('Database Migrations', () => {
                 expect(JSON.parse(writes['doctor'])).toContain(method);
             }
             expect(writes['receptionist']).toBeUndefined();
+            expect(writes['nurse']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v37 (billing ledger)', () => {
+        it('creates immutable invoice, item, and payment tables', () => {
+            MIGRATIONS.find((m) => m.version === 37)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS invoices');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS invoice_items');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS payments');
+            expect(sql).toContain('idx_payments_receipt');
+            expect(sql).toContain('consultation_fee');
+        });
+
+        it('grants billing to desk and clinical roles, not nurses', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 37)!.up(mockDb);
+            for (const method of ['getInvoice', 'createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice']) {
+                expect(JSON.parse(writes['doctor'])).toContain(method);
+                expect(JSON.parse(writes['receptionist'])).toContain(method);
+            }
             expect(writes['nurse']).toBeUndefined();
         });
     });

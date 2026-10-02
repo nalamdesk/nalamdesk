@@ -645,3 +645,55 @@ describe('HTTP /api/ipc override admin over LAN', () => {
         expect(db.deleteUserOverride).toHaveBeenCalledWith(20, 'updateQueueStatus', 1);
     });
 });
+
+describe('HTTP /api/ipc billing ledger over LAN', () => {
+    let server: ApiServer;
+    let db: any;
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            getAllRoles: vi.fn().mockReturnValue([
+                { name: 'doctor', permissions: ['createInvoice', 'recordPayment'] },
+                { name: 'receptionist', permissions: ['createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice'] }
+            ]),
+            getAllOverrides: vi.fn().mockReturnValue([]),
+            getInvoice: vi.fn().mockReturnValue({ id: 1 }),
+            createInvoice: vi.fn().mockReturnValue({ id: 2 }),
+            recordPayment: vi.fn().mockReturnValue({ id: 3 }),
+            refundPayment: vi.fn().mockReturnValue({ id: 4 }),
+            voidInvoice: vi.fn().mockReturnValue({ id: 2 })
+        };
+        server = new ApiServer(db, os.tmpdir());
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    async function postIpc(method: string, args: unknown[], role = 'receptionist') {
+        return server.inject({
+            method: 'POST',
+            url: `/api/ipc/${method}`,
+            headers: {
+                authorization: authHeader({ id: 7, role }),
+                'content-type': 'application/json'
+            },
+            payload: args
+        });
+    }
+
+    it('unpacks billing calls through shared arg routes', async () => {
+        const created = await postIpc('createInvoice', [{ visitId: 9, items: [] }]);
+        expect(created.statusCode).toBe(200);
+        expect(db.createInvoice).toHaveBeenCalledWith({ visitId: 9, items: [] }, 7);
+
+        const paid = await postIpc('recordPayment', [{ invoiceId: 2, amount: 100, method: 'upi' }]);
+        expect(paid.statusCode).toBe(200);
+
+        const denied = await postIpc('refundPayment', [{ paymentId: 3, reason: 'x' }], 'doctor');
+        expect(denied.statusCode).toBe(403);
+        expect(db.refundPayment).not.toHaveBeenCalled();
+    });
+});

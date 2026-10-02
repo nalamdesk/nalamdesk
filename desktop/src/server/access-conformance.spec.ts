@@ -69,6 +69,17 @@ describe('LAN access conformance', () => {
         server = new ApiServer(db, os.tmpdir());
     });
 
+    it('grants desk billing to doctor and receptionist, never nurses', async () => {
+        for (const method of ['createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice']) {
+            for (const role of ['doctor', 'receptionist']) {
+                const response = await postIpc(method, role);
+                expect(response.statusCode, `${method}/${role}`).not.toBe(403);
+            }
+            const denied = await postIpc(method, 'nurse');
+            expect(denied.statusCode, `${method}/nurse`).toBe(403);
+        }
+    }, 120000);
+
     afterEach(async () => {
         await server.close();
     });

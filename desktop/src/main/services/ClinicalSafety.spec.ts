@@ -1078,6 +1078,10 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 .toThrow('must differ');
             expect(() => service.previewPatientMerge({ survivorId: sid, duplicateId: 424242 }))
                 .toThrow('not found');
+            db.prepare(`INSERT INTO visits (patient_id, status) VALUES (?, 'in-progress')`).run(did);
+            expect(service.previewPatientMerge({ survivorId: sid, duplicateId: did }).warnings.length)
+                .toBeGreaterThan(0);
+            db.prepare(`DELETE FROM visits WHERE patient_id = ?`).run(did);
         });
 
         it('merges charts, reassigns rows, and rolls back exactly', () => {

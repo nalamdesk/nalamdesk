@@ -1754,7 +1754,7 @@ export class PatientDetailsComponent implements OnInit {
     }
 
     goToPatient(id: number): void {
-        this.router.navigate(['/patients', id]);
+        void this.router.navigate(['/patients', id]);
     }
 
     openMergeModal(): void {
@@ -1862,7 +1862,7 @@ export class PatientDetailsComponent implements OnInit {
             });
             this.closeMergeModal();
             if (duplicateId === this.patient?.id) {
-                this.router.navigate(['/patients', this.mergeSurvivorId]);
+                void this.router.navigate(['/patients', this.mergeSurvivorId]);
             } else {
                 await this.loadData();
             }

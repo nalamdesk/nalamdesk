@@ -49,7 +49,8 @@ export class SettingsComponent implements OnInit {
     drive_client_secret: '',
     local_backup_path: '',
     backup_schedule: '13:00',
-    cloud_backup_schedule: '13:00'
+    cloud_backup_schedule: '13:00',
+    consultation_fee: 0
   };
   settingsSaved = false;
   isElectron = !!(window as any).electron;

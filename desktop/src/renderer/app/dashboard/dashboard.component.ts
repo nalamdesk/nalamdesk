@@ -226,6 +226,67 @@ export function greetingForLocalHour(hour: number): string {
                 </div>
             </div>
           </div>
+
+          <div *ngIf="canSeeBilling" class="card bg-base-100 shadow-sm border border-base-200 hover:border-primary/30 transition-colors cursor-pointer" (click)="showCloseModal = true">
+            <div class="card-body flex-row items-center gap-4">
+                <div class="p-3 bg-green-500/10 rounded-xl text-green-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2zM10 8.5h.01M15 12h.01" /></svg>
+                </div>
+                <div>
+                     <h2 class="card-title text-base font-bold">Daily Collection</h2>
+                     <p class="text-sm text-base-content/60" *ngIf="dailyClose">₹{{ dailyClose.collected }} today · {{ dailyClose.review?.length || 0 }} to review</p>
+                     <p class="text-sm text-base-content/60" *ngIf="!dailyClose">Today's receipts and reconciliation</p>
+                </div>
+                <div class="ml-auto" *ngIf="(dailyClose?.review?.length || 0) > 0">
+                    <span class="badge badge-warning gap-1 font-bold">{{ dailyClose.review.length }} review</span>
+                </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Daily close modal: ledger-derived reconciliation -->
+        <div *ngIf="showCloseModal && dailyClose" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
+              <div>
+                <h2 class="text-lg font-bold text-gray-800">Daily close — {{ dailyClose.date }}</h2>
+                <p class="text-xs text-gray-500">Derived from payment transactions, not stored totals.</p>
+              </div>
+              <button (click)="showCloseModal = false" class="text-gray-500 hover:text-gray-600" aria-label="Close">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6 space-y-4">
+              <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+                <span class="text-sm font-bold text-gray-700 uppercase tracking-wider">Collected</span>
+                <span class="text-2xl font-mono font-bold text-blue-700">₹{{ dailyClose.collected }}</span>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">By method</div>
+                <div *ngFor="let entry of dailyClose.byMethod" class="flex justify-between text-sm py-1 border-b border-dashed border-gray-100">
+                  <span class="text-gray-600">{{ entry.method }} <span class="text-gray-400">({{ entry.kind }} × {{ entry.count }})</span></span>
+                  <span class="font-mono">{{ entry.kind === 'reversal' ? '−' : '' }}₹{{ entry.total }}</span>
+                </div>
+                <div *ngIf="!dailyClose.byMethod?.length" class="text-sm text-gray-400">No payments recorded today.</div>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Invoices created</div>
+                <div *ngFor="let row of dailyClose.invoices" class="flex justify-between text-sm py-1 border-b border-dashed border-gray-100">
+                  <span class="text-gray-600">{{ row.status }} × {{ row.count }}</span>
+                  <span class="font-mono">₹{{ row.total }}</span>
+                </div>
+                <div *ngIf="!dailyClose.invoices?.length" class="text-sm text-gray-400">None today.</div>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Needs review ({{ dailyClose.review?.length || 0 }})</div>
+                <div *ngFor="let r of dailyClose.review" class="text-xs py-1.5 border-b border-dashed border-gray-100 flex justify-between gap-2">
+                  <span class="text-gray-700">{{ r.receipt_no || '#' + r.id }} · {{ r.kind }} ₹{{ r.amount }} ({{ r.method }}) → {{ r.invoice_number || '#' + r.invoice_id }}<span *ngIf="r.reason" class="text-gray-400"> — {{ r.reason }}</span></span>
+                  <span *ngIf="!r.reference && r.method !== 'cash'" class="text-amber-600 font-bold shrink-0">missing ref</span>
+                </div>
+                <div *ngIf="!dailyClose.review?.length" class="text-sm text-green-600">Clean — nothing to review.</div>
+              </div>
+            </div>
+          </div>
         </div>
     </div>
     </div>
@@ -249,6 +310,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   demoSeeded = false;
   demoSeedLoading = false;
   showWelcomeBanner = false;
+
+  // Daily close (billing roles)
+  dailyClose: any = null;
+  showCloseModal = false;
+
+  get canSeeBilling(): boolean {
+    return ['admin', 'doctor', 'receptionist'].includes(this.currentUser?.role);
+  }
 
   constructor(
     private router: Router,
@@ -322,6 +391,18 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       // Load Today's Appointments
       await this.loadAppointments();
+
+      // Daily close for billing roles (clinic-local day, matching the ledger)
+      if (this.canSeeBilling) {
+        try {
+          const now = new Date();
+          const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const close = await this.dataService.invoke<any>('getDailyClose', today);
+          this.ngZone.run(() => { this.dailyClose = close || null; });
+        } catch (e) {
+          console.error('[Dashboard] Daily close unavailable', e);
+        }
+      }
 
     } catch (e) {
       console.error('Failed to load dashboard data', e);

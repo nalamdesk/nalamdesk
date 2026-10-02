@@ -980,5 +980,87 @@ describe('VisitComponent', () => {
         component.updatePrescription([{ medicine: 'Azithromycin' }]);
         expect(component.visitForm.value.allergy_override_reason).toBe('');
     });
+
+    describe('billing ledger panel', () => {
+        beforeEach(() => {
+            component.currentUser = { id: 99, role: 'receptionist', name: 'Desk' };
+            component.editingVisitId = 7;
+        });
+
+        it('loads invoices and clinic name for billing roles', async () => {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getVisitInvoices') {
+                    return Promise.resolve([{ id: 1, number: 'INV-100001', status: 'unpaid', total: 500 }]);
+                }
+                if (method === 'getPublicSettings') return Promise.resolve({ clinic_name: 'Fee Clinic' });
+                return Promise.resolve(null);
+            });
+            await component.loadInvoices();
+            expect(component.invoices).toHaveLength(1);
+            expect(component.clinicName).toBe('Fee Clinic');
+        });
+
+        it('hides billing for nurses', async () => {
+            component.currentUser = { id: 20, role: 'nurse', name: 'Nancy' };
+            await component.loadInvoices();
+            expect(component.invoices).toEqual([]);
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('getVisitInvoices', expect.anything());
+        });
+
+        it('creates invoices from charge lines', async () => {
+            component.newChargeItems = [{ description: 'X-ray', quantity: 1, rate: 350 }];
+            await component.createInvoice();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('createInvoice', expect.objectContaining({
+                visitId: 7,
+                items: [{ description: 'X-ray', quantity: 1, rate: 350 }]
+            }));
+            expect(component.newChargeItems).toEqual([]);
+            component.addChargeLine();
+            expect(component.newChargeItems).toHaveLength(1);
+            component.removeChargeLine(0);
+            expect(component.newChargeItems).toHaveLength(0);
+        });
+
+        it('records payments with idempotency keys and opens receipts', async () => {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'recordPayment') {
+                    return Promise.resolve({ id: 9, receipt_no: 'RCP-100009', amount: 200 });
+                }
+                return Promise.resolve(null);
+            });
+            const invoice = { id: 3, number: 'INV-100003' };
+            component.payFormFor(3).amount = 200;
+            await component.recordPayment(invoice);
+            const payload = mockDataService.invoke.mock.calls
+                .find((call: any[]) => call[0] === 'recordPayment')[1];
+            expect(payload.amount).toBe(200);
+            expect(payload.clientKey).toMatch(/^[0-9a-f-]{36}$/);
+
+            component.openReceipt(invoice, { id: 9, receipt_no: 'RCP-100009' }, true);
+            expect(component.showReceipt).toBe(true);
+            expect(component.receiptReprint).toBe(true);
+            expect(component.isRefunding({ id: 1, payments: [{ id: 9 }] })).toBe(false);
+        });
+
+        it('drives refund and void flows with reasons', async () => {
+            (component as any).dialogService = { open: vi.fn(async () => true) };
+            const payment = { id: 9, amount: 200 };
+            await component.refundPayment(payment);
+            expect(component.refundForm.paymentId).toBe(9);
+            expect(component.refundingPayment({ payments: [{ id: 9 }] }).id).toBe(9);
+            expect(component.isRefunding({ payments: [{ id: 9 }] })).toBe(true);
+            component.refundForm.reason = 'Duplicate charge';
+            await component.refundPayment(payment);
+            expect(mockDataService.invoke).toHaveBeenCalledWith('refundPayment', expect.objectContaining({
+                paymentId: 9, reason: 'Duplicate charge'
+            }));
+
+            component.voidReason[3] = 'Entered by mistake';
+            await component.voidInvoice({ id: 3, number: 'INV-100003' });
+            expect(mockDataService.invoke).toHaveBeenCalledWith('voidInvoice', expect.objectContaining({
+                invoiceId: 3, reason: 'Entered by mistake'
+            }));
+        });
+    });
 });
 

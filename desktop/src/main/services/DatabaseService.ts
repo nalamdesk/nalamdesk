@@ -1649,6 +1649,44 @@ export class DatabaseService {
     }
 
     /**
+     * Daily close: money movement grouped by method/kind for one calendar
+     * day in the clinic's local timezone (SQLite stores UTC; the localtime
+     * shift keeps near-midnight payments on the right clinic day).
+     * Derived purely from the ledger, so totals always reconcile.
+     */
+    getDailyClose(date: string) {
+        const raw = String(date || '').slice(0, 10);
+        const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+        if (!parts) throw new Error('Date must be YYYY-MM-DD.');
+        const check = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])));
+        if (check.getUTCFullYear() !== Number(parts[1]) || check.getUTCMonth() !== Number(parts[2]) - 1
+            || check.getUTCDate() !== Number(parts[3])) {
+            throw new Error('Date must be a real calendar day.');
+        }
+        const day = raw;
+        const byMethod = this.db.prepare(`SELECT method, kind,
+                COUNT(*) as count, COALESCE(SUM(amount), 0) as total
+            FROM payments WHERE date(created_at, 'localtime') = ?
+            GROUP BY method, kind`).all(day) as any[];
+        const invoices = this.db.prepare(`SELECT status, COUNT(*) as count,
+                COALESCE(SUM(total), 0) as total
+            FROM invoices WHERE date(created_at, 'localtime') = ? GROUP BY status`).all(day) as any[];
+        const review = this.db.prepare(`SELECT p.id, p.receipt_no, p.kind, p.amount, p.method,
+                p.reference, p.reason, p.invoice_id, i.number as invoice_number
+            FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id
+            WHERE date(p.created_at, 'localtime') = ?
+              AND (p.kind = 'reversal' OR (p.method != 'cash' AND (p.reference IS NULL OR p.reference = '')))
+            ORDER BY p.id ASC`).all(day) as any[];
+        const nets: Record<string, number> = {};
+        for (const row of byMethod) {
+            const signed = Number(row.total || 0) * (row.kind === 'reversal' ? -1 : 1);
+            nets[row.method] = Math.round(((nets[row.method] || 0) + signed) * 100) / 100;
+        }
+        const collected = Math.round(Object.values(nets).reduce((s, n) => s + n, 0) * 100) / 100;
+        return { date: day, byMethod, nets, collected, invoices, review };
+    }
+
+    /**
      * Creates an invoice for a visit: auto consultation-fee line (configurable
      * settings.consultation_fee, may be zero) plus caller-supplied lines.
      * Totals derive from lines; they are never accepted from the caller.

@@ -146,9 +146,12 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(allergies[0].severity).toBe('life-threatening');
             expect(allergies[1].substance).toBe('Aspirin');
 
-            // Delete allergy
+            // Delete allergy -> entered-in-error: row stays, leaves active lists
             service.deleteAllergy(allergies[1].id, 10);
-            expect(service.getAllergies(1)).toHaveLength(1);
+            const remaining = service.getAllergies(1);
+            expect(remaining).toHaveLength(2);
+            expect(remaining.find((a: any) => a.substance === 'Aspirin')?.status).toBe('entered-in-error');
+            expect(service.getPatientSafetyContext(1).has_active_allergies).toBe(true);
         });
 
         it('detects prescription conflict with active allergy and blocks unless override reason provided', () => {
@@ -262,7 +265,9 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(updatedCondition.clinical_status).toBe('resolved');
 
             service.deleteCondition(condition.id, 10);
-            expect(service.getConditions(1)).toHaveLength(0);
+            const conditions = service.getConditions(1);
+            expect(conditions).toHaveLength(1);
+            expect(conditions[0].clinical_status).toBe('entered-in-error');
 
             // Medication update and delete
             const med = service.saveMedication({
@@ -284,7 +289,9 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(updatedMed.medicine_name).toBe('Metformin 1000mg');
 
             service.deleteMedication(med.id, 10);
-            expect(service.getMedications(1)).toHaveLength(0);
+            const meds = service.getMedications(1);
+            expect(meds).toHaveLength(1);
+            expect(meds[0].status).toBe('entered-in-error');
         });
 
         it('enforces input validation rules on allergy, condition, and medication mutations', () => {
@@ -1061,6 +1068,96 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(after.map((t: any) => t.patient.id)).not.toContain(id2);
             expect(after.map((t: any) => t.patient.id)).not.toContain(id1);
             expect(service.findDuplicateCandidates({})).toEqual([]);
+        });
+
+        describe('record lifecycle', () => {
+            it('archives and restores charts with reasons', () => {
+                db.prepare('DELETE FROM patients').run();
+                const p: any = service.savePatient({ name: 'Archie', mobile: '9000000041', age: 50, gender: 'Male' });
+                const id = Number(p.lastInsertRowid);
+                expect(() => service.archivePatient(id, '', 99)).toThrow('reason is required');
+                const archived: any = service.archivePatient(id, 'Duplicate test chart', 99);
+                expect(archived.active).toBe(0);
+                expect(service.getPatients('Archie')).toEqual([]);
+                expect(service.getPatients('Archie', true).map((r: any) => r.id)).toContain(id);
+                expect(service.getDashboardStats().totalPatients).toBe(0);
+                const archivedList: any[] = service.getArchivedPatients();
+                expect(archivedList.map((r: any) => r.id)).toContain(id);
+                const restored: any = service.unarchivePatient(id, 99);
+                expect(restored.active).toBe(1);
+                expect(service.getPatients('Archie')).toHaveLength(1);
+            });
+
+            it('refuses archiving with an active encounter', () => {
+                db.prepare('DELETE FROM patients').run();
+                const p: any = service.savePatient({ name: 'Busy', mobile: '9000000042', age: 40, gender: 'Female' });
+                const id = Number(p.lastInsertRowid);
+                db.prepare(`INSERT INTO visits (patient_id, status) VALUES (?, 'in-progress')`).run(id);
+                expect(() => service.archivePatient(id, 'Test', 99)).toThrow('active encounter');
+                expect(() => service.archivePatient(424242, 'Test', 99)).toThrow('not found');
+            });
+
+            it('marks visits entered-in-error instead of deleting', () => {
+                db.prepare('DELETE FROM patients').run();
+                const p: any = service.savePatient({ name: 'Visit Ed', mobile: '9000000043', age: 30, gender: 'Other' });
+                const pid = Number(p.lastInsertRowid);
+                db.prepare(`INSERT INTO visits (patient_id, status) VALUES (?, 'finished')`).run(pid);
+                const visit = db.prepare('SELECT id FROM visits WHERE patient_id = ?').get(pid) as any;
+                expect(() => service.markVisitEnteredInError(visit.id, '', 99)).toThrow('reason is required');
+                const marked: any = service.markVisitEnteredInError(visit.id, 'Wrong patient selected', 99);
+                expect(marked.status).toBe('entered-in-error');
+                expect(marked.correction_reason).toBe('Wrong patient selected');
+                const audits: any[] = service.getAuditLogs(5);
+                expect(audits.find((a: any) => a.action === 'ENTERED_IN_ERROR')?.record_id).toBe(visit.id);
+            });
+
+            it('removes queue entries as terminal rows preserving triage history', () => {
+                db.prepare('DELETE FROM patients').run();
+                const p: any = service.savePatient({ name: 'Queued', mobile: '9000000044', age: 33, gender: 'Male' });
+                const pid = Number(p.lastInsertRowid);
+                const queued: any = service.addToQueue(pid, 1, 99);
+                const qid = Number(queued.lastInsertRowid ?? queued.id);
+                service.reassessQueueTriage(qid, 'urgent', 'Demo', 99);
+                service.removeFromQueue(qid, 99, 'Patient left');
+                const row = db.prepare('SELECT status FROM patient_queue WHERE id = ?').get(qid) as any;
+                expect(row.status).toBe('removed');
+                expect(service.getQueue().map((q: any) => q.id)).not.toContain(qid);
+                expect(() => service.updateQueueStatus(qid, 'waiting', 99)).toThrow('removed');
+                const history = db.prepare('SELECT COUNT(*) as count FROM queue_triage_history WHERE queue_id = ?')
+                    .get(qid) as any;
+                expect(Number(history.count)).toBeGreaterThan(0);
+            });
+
+            it('deactivates staff and purges only dependency-free accounts', async () => {
+                await service.saveUser({ username: 'temproot', password: 'Password1!', role: 'receptionist', name: 'Temp' }, 99);
+                const temp = service.getUsers().find((u: any) => u.username === 'temproot');
+                await service.saveUser({ username: 'author', password: 'Password1!', role: 'doctor', name: 'Author',
+                    specialty: 'General', license_number: 'LIC-1' }, 99);
+                const author = service.getUsers().find((u: any) => u.username === 'author');
+                expect(() => service.deleteUser(author.id, author.id)).toThrow('own account');
+                expect(() => service.deleteUser(99, 99)).toThrow('admin user');
+                await service.deleteUser(temp.id, 99);
+                expect(service.getUsers().find((u: any) => u.username === 'temproot').active).toBe(0);
+                db.prepare(`INSERT INTO visits (patient_id, doctor_id, status) VALUES (1, ?, 'finished')`)
+                    .run(author.id);
+                expect(() => service.purgeUser(author.id, 99)).toThrow('Deactivate instead');
+                await service.purgeUser(temp.id, 99);
+                expect(service.getUsers().find((u: any) => u.username === 'temproot')).toBeUndefined();
+                expect(() => service.purgeUser(424242, 99)).toThrow('not found');
+            });
+
+            it('marks clinical records entered-in-error with audit reasons', () => {
+                db.prepare('DELETE FROM patients').run();
+                const p: any = service.savePatient({ name: 'Clinical', mobile: '9000000045', age: 44, gender: 'Female' });
+                const pid = Number(p.lastInsertRowid);
+                const allergy = db.prepare(`INSERT INTO patient_allergies (patient_id, substance, severity, status)
+                    VALUES (?, 'Penicillin', 'high', 'active')`).run(pid);
+                service.deleteAllergy(Number(allergy.lastInsertRowid), 99, 'Not an allergy — side effect');
+                const kept = db.prepare('SELECT status FROM patient_allergies WHERE id = ?')
+                    .get(Number(allergy.lastInsertRowid)) as any;
+                expect(kept.status).toBe('entered-in-error');
+                expect(service.getPatientSafetyContext(pid).has_active_allergies).toBe(false);
+            });
         });
 
         describe('billing ledger', () => {

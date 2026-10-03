@@ -28,6 +28,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
             'findDuplicateCandidates', 'previewPatientMerge', 'mergePatients', 'unmergePatients',
             'getInvoice', 'getVisitInvoices', 'createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice',
     'getDailyClose',
+    'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
             'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests'
@@ -113,6 +114,7 @@ export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
     'previewPatientMerge', 'mergePatients', 'unmergePatients',
     'getInvoice', 'getVisitInvoices', 'createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice',
     'getDailyClose',
+    'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
     'abdmAckInbox', 'abdmTransferBundle',
     'getUsers', 'saveUser', 'deleteUser', 'getAllRoles',
     'saveRole', 'deleteRole',

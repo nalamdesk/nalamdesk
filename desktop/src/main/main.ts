@@ -896,6 +896,40 @@ handleGuardedDb('db:deleteVisit', (_, id) => {
     if (user.role !== 'admin') throw new Error('Forbidden');
     return databaseService.deleteVisit(id);
 });
+// Record lifecycle (issue #14): archive instead of erase, entered-in-error
+// instead of clinical deletes, purge only with dependency checks.
+handleGuardedDb('db:archivePatient', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const args = input || {};
+    return databaseService.archivePatient(args.id ?? input, args.reason, user.id);
+});
+handleGuardedDb('db:unarchivePatient', (_, id) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return databaseService.unarchivePatient(Number(id), user.id);
+});
+handleGuardedDb('db:getArchivedPatients', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return databaseService.getArchivedPatients();
+});
+handleGuardedDb('db:markVisitEnteredInError', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const args = input || {};
+    return databaseService.markVisitEnteredInError(args.id ?? args.visitId ?? input, args.reason, user.id);
+});
+handleGuardedDb('db:purgeUser', (_, id) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return databaseService.purgeUser(Number(id), user.id);
+});
 handleGuardedDb('db:getVitals', (_, patientId) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
@@ -929,11 +963,12 @@ handleGuardedDb('db:saveAllergy', (_, allergy) => {
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
     return databaseService.saveAllergy(allergy, user.id);
 });
-handleGuardedDb('db:deleteAllergy', (_, id) => {
+handleGuardedDb('db:deleteAllergy', (_, input) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
-    return databaseService.deleteAllergy(id, user.id);
+    const args = (input != null && typeof input === 'object') ? input : { id: input };
+    return databaseService.deleteAllergy(args.id, user.id, args.reason || '');
 });
 
 // Conditions
@@ -948,11 +983,12 @@ handleGuardedDb('db:saveCondition', (_, condition) => {
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
     return databaseService.saveCondition(condition, user.id);
 });
-handleGuardedDb('db:deleteCondition', (_, id) => {
+handleGuardedDb('db:deleteCondition', (_, input) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
-    return databaseService.deleteCondition(id, user.id);
+    const args = (input != null && typeof input === 'object') ? input : { id: input };
+    return databaseService.deleteCondition(args.id, user.id, args.reason || '');
 });
 
 // Medications
@@ -967,11 +1003,12 @@ handleGuardedDb('db:saveMedication', (_, medication) => {
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
     return databaseService.saveMedication(medication, user.id);
 });
-handleGuardedDb('db:deleteMedication', (_, id) => {
+handleGuardedDb('db:deleteMedication', (_, input) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
-    return databaseService.deleteMedication(id, user.id);
+    const args = (input != null && typeof input === 'object') ? input : { id: input };
+    return databaseService.deleteMedication(args.id, user.id, args.reason || '');
 });
 
 // Safety Context
@@ -998,7 +1035,7 @@ handleGuardedDb('db:deleteUser', (_, id) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (user.role !== 'admin') throw new Error('Forbidden');
-    return databaseService.deleteUser(id);
+    return databaseService.deleteUser(id, user.id);
 });
 handleGuardedDb('db:saveRole', (_, input) => {
     const user = sessionService.getUser();

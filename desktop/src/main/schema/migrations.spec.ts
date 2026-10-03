@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 37 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(37);
+        it('should have 38 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(38);
         });
     });
 
@@ -757,6 +757,41 @@ describe('Database Migrations', () => {
                 expect(JSON.parse(writes['doctor'])).toContain(method);
                 expect(JSON.parse(writes['receptionist'])).toContain(method);
             }
+            expect(writes['nurse']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v38 (record lifecycle)', () => {
+        it('adds archive and correction columns and admits entered-in-error', () => {
+            MIGRATIONS.find((m) => m.version === 38)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('ADD COLUMN active');
+            expect(sql).toContain('ADD COLUMN archive_reason');
+            expect(sql).toContain('ADD COLUMN correction_reason');
+            expect(sql).toContain('entered-in-error');
+        });
+
+        it('grants lifecycle by role: desk archive, clinical correction, admin purge', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 38)!.up(mockDb);
+            for (const method of ['archivePatient', 'unarchivePatient', 'getArchivedPatients']) {
+                expect(JSON.parse(writes['doctor'])).toContain(method);
+                expect(JSON.parse(writes['receptionist'])).toContain(method);
+            }
+            expect(JSON.parse(writes['doctor'])).toContain('markVisitEnteredInError');
+            expect(JSON.parse(writes['receptionist'] || '[]')).not.toContain('markVisitEnteredInError');
+            expect(JSON.parse(writes['receptionist'] || '[]')).not.toContain('purgeUser');
             expect(writes['nurse']).toBeUndefined();
         });
     });

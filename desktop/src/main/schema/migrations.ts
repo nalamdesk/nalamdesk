@@ -1346,8 +1346,7 @@ export const MIGRATIONS = [
     },
     {
         version: 37,
-        up: (db: any) => {
-            console.log('Running Migration v37 (billing ledger)...');
+        up: (db: any) => {            console.log('Running Migration v37 (billing ledger)...');
             // Immutable money trail: invoices with charge lines, payments as
             // append-only rows (refunds/reversals are rows, never edits),
             // receipt identity per payment. Corrections never overwrite.
@@ -1402,6 +1401,41 @@ export const MIGRATIONS = [
                 doctor: billing,
                 receptionist: billing,
                 admin: billing
+            });
+        }
+    },
+    {
+        version: 38,
+        up: (db: any) => {
+            console.log('Running Migration v38 (record lifecycle: archive, correction)...');
+            // Soft lifecycle instead of hard deletes: charts deactivate with
+            // reason, visits mark entered-in-error with reason. Rows stay
+            // for history, audit, and merges; purge is a separate op.
+            try { db.exec('ALTER TABLE patients ADD COLUMN active INTEGER NOT NULL DEFAULT 1'); } catch (e) { }
+            try { db.exec('ALTER TABLE patients ADD COLUMN archive_reason TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE visits ADD COLUMN correction_reason TEXT'); } catch (e) { }
+            // Encounter-integrity triggers whitelist statuses: admit the
+            // entered-in-error lifecycle state alongside in-progress/finished.
+            db.exec('DROP TRIGGER IF EXISTS trg_visits_status_insert');
+            db.exec('DROP TRIGGER IF EXISTS trg_visits_status_update');
+            db.exec(`
+                CREATE TRIGGER trg_visits_status_insert
+                BEFORE INSERT ON visits
+                WHEN NEW.status IS NULL OR NEW.status NOT IN ('in-progress', 'finished', 'entered-in-error')
+                BEGIN SELECT RAISE(ABORT, 'Invalid encounter status'); END;
+            `);
+            db.exec(`
+                CREATE TRIGGER trg_visits_status_update
+                BEFORE UPDATE OF status ON visits
+                WHEN NEW.status IS NULL OR NEW.status NOT IN ('in-progress', 'finished', 'entered-in-error')
+                BEGIN SELECT RAISE(ABORT, 'Invalid encounter status'); END;
+            `);
+            const deskLifecycle = ['archivePatient', 'unarchivePatient', 'getArchivedPatients'];
+            const clinicalCorrection = ['markVisitEnteredInError'];
+            grantRoleMethods(db, {
+                doctor: [...deskLifecycle, ...clinicalCorrection],
+                receptionist: [...deskLifecycle],
+                admin: [...deskLifecycle, ...clinicalCorrection, 'purgeUser']
             });
         }
     }

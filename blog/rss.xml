@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?><?xml-stylesheet type="text/xsl" href="rss.xsl"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+    <channel>
+        <title>NalamDesk Docs Blog</title>
+        <link>https://sankara-sabapathy.github.io/nalamdesk/blog</link>
+        <description>NalamDesk Docs Blog</description>
+        <lastBuildDate>Tue, 28 May 2019 00:00:00 GMT</lastBuildDate>
+        <docs>https://validator.w3.org/feed/docs/rss2.html</docs>
+        <generator>https://github.com/jpmonette/feed</generator>
+        <language>en</language>
+        <item>
+            <title><![CDATA[Welcome to NalamDesk Docs]]></title>
+            <link>https://sankara-sabapathy.github.io/nalamdesk/blog/welcome</link>
+            <guid>https://sankara-sabapathy.github.io/nalamdesk/blog/welcome</guid>
+            <pubDate>Tue, 28 May 2019 00:00:00 GMT</pubDate>
+            <description><![CDATA[NalamDesk is a secure, offline-first clinic management system. Your patient]]></description>
+            <content:encoded><![CDATA[<p>NalamDesk is a secure, offline-first clinic management system. Your patient
+data lives on your own computer, encrypted, and the clinic runs its full
+day with no internet.</p>
+<p>Start with the <a class="" href="https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/intro">User Guide</a>:</p>
+<ul>
+<li class=""><strong><a class="" href="https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/initial-setup">Initial Setup</a></strong>: create the
+encrypted vault and the administrator account.</li>
+<li class=""><strong><a class="" href="https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/admin-management">Admin Management</a></strong>: clinic
+details, staff accounts, backups.</li>
+<li class=""><strong><a class="" href="https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/clinic-operations">Clinic Operations</a></strong>:
+registration, queue and triage, consultations, prescriptions.</li>
+<li class=""><strong><a class="" href="https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/daily-collection">Daily Collection</a></strong>: receipts
+and the ledger-derived day close.</li>
+<li class=""><strong><a class="" href="https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/patient-merge">Merging Duplicate Charts</a></strong>:
+preview-first merge with rollback.</li>
+</ul>
+<p>NalamDesk is free software under AGPL-3.0. The code lives on
+<a href="https://github.com/sankara-sabapathy/nalamdesk" target="_blank" rel="noopener noreferrer" class="">GitHub</a> and installers
+ship from <a href="https://github.com/sankara-sabapathy/nalamdesk/releases" target="_blank" rel="noopener noreferrer" class="">GitHub Releases</a>.</p>]]></content:encoded>
+        </item>
+    </channel>
+</rss>

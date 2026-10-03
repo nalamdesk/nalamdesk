@@ -309,24 +309,66 @@ export class DatabaseService {
     }
 
     deleteUser(id: number, actingUserId?: number) {
-        // Prevent deleting the admin user
+        // Deactivation, not erasure: staff rows anchor authorship across
+        // visits, payments, merges, and audit history. Hard purge is a
+        // separate, dependency-checked retention operation (purgeUser).
         const user = this.db.prepare('SELECT username FROM users WHERE id = ?').get(id);
         if (user?.username === 'admin') {
-            throw new Error('Cannot delete the admin user.');
+            throw new Error('Cannot deactivate the admin user.');
         }
-
-        // Soft delete preferred? For now we hard delete as per interface, 
-        // but normally we should set active=0. 
-        // However, 'active' flag usage in getDoctors/validateUser suggests soft delete support.
-        // Let's switch to proper soft delete or keep hard delete but audit it.
-        // User request implied "Deactivating".
-        // Let's do Soft Delete if possible or stick to hard delete for now but log it.
-        // Actually, let's allow 'deactivation' via saveUser (active=0).
-        // This deleteUser method is likely the "Permanent Delete" button.
-        const result = this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+        if (actingUserId != null && Number(actingUserId) === Number(id)) {
+            throw new Error('You cannot deactivate your own account.');
+        }
+        const result = this.db.prepare('UPDATE users SET active = 0 WHERE id = ?').run(id);
         if (actingUserId) {
-            this.logAudit('USER_DELETE', 'users', id, actingUserId, `Deleted user ${id}`);
+            this.logAudit('USER_DEACTIVATE', 'users', id, actingUserId, `Deactivated user ${id}`);
         }
+        return result;
+    }
+
+    /**
+     * Hard purge for retention: allowed only when nothing attributes to
+     * the user across visits, billing, triage, overrides, and merges.
+     * Audit rows are never a blocker and never deleted — history outlives
+     * accounts by design (and FKs are not enforced at runtime, so this
+     * sweep is the orphan guard, not the schema).
+     */
+    purgeUser(id: number, actingUserId?: number) {
+        const user = this.db.prepare('SELECT username FROM users WHERE id = ?').get(id) as any;
+        if (!user) throw new Error('User not found.');
+        if (user.username === 'admin') throw new Error('Cannot purge the admin user.');
+        const dependencies: string[] = [];
+        const attributions: [string, string, string][] = [
+            ['visits', 'doctor_id', 'visit(s)'],
+            ['visits', 'author_id', 'authored visit(s)'],
+            ['invoices', 'created_by', 'invoice(s)'],
+            ['payments', 'received_by', 'payment(s)'],
+            ['patient_merges', 'merged_by', 'merge(s)'],
+            ['vitals', 'performer_id', 'vital(s)'],
+            ['patient_allergies', 'recorder_id', 'allergie(s)'],
+            ['patient_conditions', 'recorder_id', 'condition(s)'],
+            ['patient_medications', 'recorder_id', 'medication(s)'],
+            ['patient_queue', 'triage_assessor_id', 'triage assessment(s)'],
+            ['queue_triage_history', 'changed_by', 'triage change(s)'],
+            ['encounter_requests', 'actor_id', 'encounter request(s)'],
+            ['user_permission_overrides', 'granted_by', 'granted override(s)']
+        ];
+        for (const [table, column, label] of attributions) {
+            let count = 0;
+            try {
+                count = Number((this.db.prepare(
+                    `SELECT COUNT(*) as count FROM ${table} WHERE ${column} = ?`).get(id) as any)?.count || 0);
+            } catch { continue; }
+            if (count > 0) dependencies.push(`${count} ${label}`);
+        }
+        const owned = this.db.prepare(`SELECT COUNT(*) as count FROM user_permission_overrides
+            WHERE user_id = ?`).get(id) as any;
+        if (Number(owned?.count) > 0) dependencies.push(`${owned.count} personal override(s)`);
+        if (dependencies.length > 0) {
+            throw new Error(`Cannot purge: still attributed to ${dependencies.join(', ')}. Deactivate instead.`);
+        }
+        const result = this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+        this.logAudit('USER_PURGE', 'users', id, actingUserId, `Purged user ${id} after dependency check`);
         return result;
     }
 
@@ -752,7 +794,7 @@ export class DatabaseService {
         return (save as any).immediate ? (save as any).immediate() : (save as any)();
     }
 
-    getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL').get().count;
+    getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL AND active != 0').get().count;
         // Today's visits: date >= start of day
         const today = new Date().toISOString().split('T')[0];
         const todayVisits = this.db.prepare("SELECT count(*) as count FROM visits WHERE date(date) = ? AND status = 'finished'").get(today).count;
@@ -765,14 +807,14 @@ export class DatabaseService {
     }
 
     // Patients
-    getPatients(query: string = '') {
+    getPatients(query: string = '', includeArchived = false) {
         if (!query) {
-            return this.db.prepare('SELECT * FROM patients WHERE merged_into IS NULL ORDER BY created_at DESC LIMIT 50').all();
+            return this.db.prepare(`SELECT * FROM patients WHERE merged_into IS NULL ${includeArchived ? '' : 'AND active != 0'} ORDER BY created_at DESC LIMIT 50`).all();
         }
         const search = `%${query.trim()}%`;
         return this.db.prepare(`
         SELECT * FROM patients
-      WHERE (name LIKE ? OR mobile LIKE ? OR mrn LIKE ?) AND merged_into IS NULL
+      WHERE (name LIKE ? OR mobile LIKE ? OR mrn LIKE ?) AND merged_into IS NULL ${includeArchived ? '' : 'AND active != 0'}
             ORDER BY created_at DESC
                 `).all(search, search, search);
     }
@@ -1458,7 +1500,7 @@ export class DatabaseService {
                 return { outcome: 'incomplete', patientId: patient.id, tokenId: token.id };
             }
             const alreadyQueued = this.db.prepare(
-                `SELECT id FROM patient_queue WHERE patient_id = ? AND status != 'completed'`
+                `SELECT id FROM patient_queue WHERE patient_id = ? AND status NOT IN ('completed', 'removed')`
             ).get(patient.id) as any;
             if (!alreadyQueued) {
                 this.addToQueue(patient.id, 1, actingUserId);
@@ -1467,7 +1509,7 @@ export class DatabaseService {
             this.logAudit('UPDATE', 'abdm_share_tokens', token.id, actingUserId,
                 `Accepted Scan & Share token #${token.token_no} for ${token.patient_name}`);
             const entry = this.db.prepare(
-                `SELECT id FROM patient_queue WHERE patient_id = ? AND status != 'completed' ORDER BY id DESC LIMIT 1`
+                `SELECT id FROM patient_queue WHERE patient_id = ? AND status NOT IN ('completed', 'removed') ORDER BY id DESC LIMIT 1`
             ).get(patient.id) as any;
             return { outcome: 'checked-in', patientId: patient.id, queueEntryId: entry?.id ?? null, tokenId: token.id };
         });
@@ -1972,6 +2014,53 @@ export class DatabaseService {
         const existing = this.db.prepare('SELECT status FROM visits WHERE id = ?').get(id);
         if (existing?.status === 'in-progress') throw new Error('Active encounters cannot be deleted');
         return this.db.prepare('DELETE FROM visits WHERE id = ?').run(id);
+    }
+
+    // ------------------------------------------------------------------
+    // Record lifecycle: archive, entered-in-error, purge (issue #14).
+    // Rows stay for history, audit, and merges; only purgeUser removes.
+    // ------------------------------------------------------------------
+    archivePatient(id: number, reason: string, actingUserId?: number) {
+        const clean = String(reason || '').trim();
+        if (!clean) throw new Error('A reason is required for archiving.');
+        const patient = this.db.prepare('SELECT id, name FROM patients WHERE id = ?').get(Number(id)) as any;
+        if (!patient) throw new Error('Patient not found.');
+        const active = this.db.prepare("SELECT id FROM visits WHERE patient_id = ? AND status = 'in-progress' LIMIT 1")
+            .get(patient.id) as any;
+        if (active) throw new Error('Resolve the active encounter before archiving.');
+        this.db.prepare('UPDATE patients SET active = 0, archive_reason = ? WHERE id = ?')
+            .run(clean, patient.id);
+        this.logAudit('ARCHIVE', 'patients', patient.id, actingUserId, `Archived chart: ${clean}`);
+        return this.db.prepare('SELECT * FROM patients WHERE id = ?').get(patient.id);
+    }
+
+    unarchivePatient(id: number, actingUserId?: number) {
+        const patient = this.db.prepare('SELECT id FROM patients WHERE id = ?').get(Number(id)) as any;
+        if (!patient) throw new Error('Patient not found.');
+        this.db.prepare('UPDATE patients SET active = 1, archive_reason = NULL WHERE id = ?').run(patient.id);
+        this.logAudit('UNARCHIVE', 'patients', patient.id, actingUserId, 'Restored archived chart');
+        return this.db.prepare('SELECT * FROM patients WHERE id = ?').get(patient.id);
+    }
+
+    getArchivedPatients() {
+        return this.db.prepare(`SELECT * FROM patients
+            WHERE (active = 0 OR merged_into IS NOT NULL) ORDER BY created_at DESC LIMIT 100`).all();
+    }
+
+    /**
+     * Marks a visit entered-in-error with reason instead of deleting it.
+     * The row stays (numbering, audit, merges); history views filter it.
+     */
+    markVisitEnteredInError(visitId: number, reason: string, actingUserId?: number) {
+        const clean = String(reason || '').trim();
+        if (!clean) throw new Error('A reason is required for entered-in-error.');
+        const visit = this.db.prepare('SELECT id, status FROM visits WHERE id = ?').get(Number(visitId)) as any;
+        if (!visit) throw new Error('Visit not found.');
+        if (visit.status === 'in-progress') throw new Error('Active encounters cannot be marked entered-in-error.');
+        this.db.prepare(`UPDATE visits SET status = 'entered-in-error', correction_reason = ? WHERE id = ?`)
+            .run(clean, visit.id);
+        this.logAudit('ENTERED_IN_ERROR', 'visits', visit.id, actingUserId, `Visit marked entered-in-error: ${clean}`);
+        return this.db.prepare('SELECT * FROM visits WHERE id = ?').get(visit.id);
     }
 
     saveVisit(visit: any) {
@@ -2678,7 +2767,7 @@ export class DatabaseService {
             JOIN patients p ON q.patient_id = p.id
             LEFT JOIN users u ON q.triage_assessor_id = u.id
             LEFT JOIN visits active ON active.queue_entry_id = q.id AND active.status = 'in-progress'
-            WHERE q.status != 'completed'
+            WHERE q.status NOT IN ('completed', 'removed')
             ORDER BY q.priority DESC, q.check_in_time ASC, q.id ASC
         `).all() as any[];
 
@@ -2891,9 +2980,15 @@ export class DatabaseService {
         }
     }
 
-    deleteAllergy(allergyId: number, actingUserId?: number) {
-        const result = this.db.prepare('DELETE FROM patient_allergies WHERE id = ?').run(Number(allergyId));
-        this.logAudit('DELETE', 'patient_allergies', allergyId, actingUserId, 'Deleted allergy record');
+    deleteAllergy(allergyId: number, actingUserId?: number, reason = '') {
+        const clean = String(reason || '').trim();
+        const existing = this.db.prepare('SELECT id, status FROM patient_allergies WHERE id = ?')
+            .get(Number(allergyId)) as any;
+        if (!existing) throw new Error('Allergy record not found.');
+        const result = this.db.prepare(`UPDATE patient_allergies
+            SET status = 'entered-in-error' WHERE id = ?`).run(Number(allergyId));
+        this.logAudit('ENTERED_IN_ERROR', 'patient_allergies', allergyId, actingUserId,
+            clean ? `Allergy marked entered-in-error: ${clean}` : 'Allergy marked entered-in-error');
         return result;
     }
 
@@ -2941,9 +3036,15 @@ export class DatabaseService {
         }
     }
 
-    deleteCondition(conditionId: number, actingUserId?: number) {
-        const result = this.db.prepare('DELETE FROM patient_conditions WHERE id = ?').run(Number(conditionId));
-        this.logAudit('DELETE', 'patient_conditions', conditionId, actingUserId, 'Deleted condition record');
+    deleteCondition(conditionId: number, actingUserId?: number, reason = '') {
+        const clean = String(reason || '').trim();
+        const existing = this.db.prepare('SELECT id, clinical_status FROM patient_conditions WHERE id = ?')
+            .get(Number(conditionId)) as any;
+        if (!existing) throw new Error('Condition record not found.');
+        const result = this.db.prepare(`UPDATE patient_conditions
+            SET clinical_status = 'entered-in-error' WHERE id = ?`).run(Number(conditionId));
+        this.logAudit('ENTERED_IN_ERROR', 'patient_conditions', conditionId, actingUserId,
+            clean ? `Condition marked entered-in-error: ${clean}` : 'Condition marked entered-in-error');
         return result;
     }
 
@@ -2992,9 +3093,15 @@ export class DatabaseService {
         }
     }
 
-    deleteMedication(medicationId: number, actingUserId?: number) {
-        const result = this.db.prepare('DELETE FROM patient_medications WHERE id = ?').run(Number(medicationId));
-        this.logAudit('DELETE', 'patient_medications', medicationId, actingUserId, 'Deleted medication record');
+    deleteMedication(medicationId: number, actingUserId?: number, reason = '') {
+        const clean = String(reason || '').trim();
+        const existing = this.db.prepare('SELECT id, status FROM patient_medications WHERE id = ?')
+            .get(Number(medicationId)) as any;
+        if (!existing) throw new Error('Medication record not found.');
+        const result = this.db.prepare(`UPDATE patient_medications
+            SET status = 'entered-in-error' WHERE id = ?`).run(Number(medicationId));
+        this.logAudit('ENTERED_IN_ERROR', 'patient_medications', medicationId, actingUserId,
+            clean ? `Medication marked entered-in-error: ${clean}` : 'Medication marked entered-in-error');
         return result;
     }
 
@@ -3067,6 +3174,13 @@ export class DatabaseService {
         if (status === 'in-consult' || status === 'completed') {
             throw new Error('Consultation queue transitions require an encounter command');
         }
+        const current = this.db.prepare('SELECT status FROM patient_queue WHERE id = ?').get(id) as any;
+        if (!current) throw new Error('Queue entry not found.');
+        // Removed and completed rows are terminal: only the encounter
+        // commands move completed rows, and nothing revives removed ones.
+        if (current.status === 'removed' || current.status === 'completed') {
+            throw new Error(`Queue entry is ${current.status} and cannot change status.`);
+        }
         const result = this.db.prepare('UPDATE patient_queue SET status = ? WHERE id = ?').run(status, id);
         this.logAudit('UPDATE', 'patient_queue', id, actingUserId, `Updated status to ${status} `);
         return result;
@@ -3078,7 +3192,7 @@ export class DatabaseService {
         }
         // Update the most recent non-completed queue entry for this patient
         // Fetch ID first for audit
-        const existing = this.db.prepare(`SELECT id FROM patient_queue WHERE patient_id = ? AND status != 'completed' ORDER BY check_in_time DESC LIMIT 1`).get(patientId);
+        const existing = this.db.prepare(`SELECT id FROM patient_queue WHERE patient_id = ? AND status NOT IN ('completed', 'removed') ORDER BY check_in_time DESC LIMIT 1`).get(patientId);
 
         if (!existing) return { changes: 0 };
 
@@ -3094,11 +3208,15 @@ export class DatabaseService {
         return result;
     }
 
-    removeFromQueue(id: number, actingUserId: number) {
+    removeFromQueue(id: number, actingUserId: number, reason = '') {
         const active = this.db.prepare("SELECT id FROM visits WHERE queue_entry_id = ? AND status = 'in-progress'").get(id);
         if (active) throw new Error('Cannot remove a queue entry with an active encounter');
-        const result = this.db.prepare('DELETE FROM patient_queue WHERE id = ?').run(id);
-        this.logAudit('DELETE', 'patient_queue', id, actingUserId, 'Removed from queue');
+        // Removal preserves the row (and its triage history): terminal
+        // 'removed' status instead of DELETE (KB-2).
+        const clean = String(reason || '').trim();
+        const result = this.db.prepare("UPDATE patient_queue SET status = 'removed' WHERE id = ?").run(id);
+        this.logAudit('REMOVE', 'patient_queue', id, actingUserId,
+            clean ? `Removed from queue: ${clean}` : 'Removed from queue');
         return result;
     }
 

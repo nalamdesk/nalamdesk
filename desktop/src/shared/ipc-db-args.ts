@@ -42,10 +42,17 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
         case 'saveAllergy':
         case 'saveCondition':
         case 'saveMedication':
+            return [args[0], actingUserId];
         case 'deleteAllergy':
         case 'deleteCondition':
-        case 'deleteMedication':
-            return [args[0], actingUserId];
+        case 'deleteMedication': {
+            // Scalar id (legacy callers) or { id, reason } (reason dialogs).
+            const payload = payloadObject(args[0]);
+            const hasShape = payload['id'] != null || payload['reason'] != null;
+            return hasShape
+                ? [payload['id'] ?? args[0], actingUserId, String(payload['reason'] || '')]
+                : [args[0], actingUserId, ''];
+        }
         case 'updateQueueStatus': {
             const payload = payloadObject(args[0]);
             return [payload['id'], payload['status'], actingUserId];
@@ -54,8 +61,13 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [payload['patientId'], payload['status'], actingUserId];
         }
-        case 'removeFromQueue':
-            return [args[0], actingUserId];
+        case 'removeFromQueue': {
+            const payload = payloadObject(args[0]);
+            const hasShape = payload['id'] != null || payload['reason'] != null;
+            return hasShape
+                ? [payload['id'] ?? args[0], actingUserId, String(payload['reason'] || '')]
+                : [args[0], actingUserId, ''];
+        }
         case 'abdmAcceptShareToken': {
             const payload = payloadObject(args[0]);
             return [payload, actingUserId];
@@ -120,6 +132,18 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
         case 'getDailyClose': {
             const payload = payloadObject(args[0]);
             return [String(payload['date'] ?? args[0] ?? '')];
+        }
+        case 'archivePatient': {
+            const payload = payloadObject(args[0]);
+            return [payload['id'] ?? args[0], String(payload['reason'] || ''), actingUserId];
+        }
+        case 'unarchivePatient':
+        case 'purgeUser': {
+            return [Number(payloadObject(args[0])['id'] ?? args[0]), actingUserId];
+        }
+        case 'markVisitEnteredInError': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['id'] ?? payload['visitId'] ?? args[0]), String(payload['reason'] || ''), actingUserId];
         }
         default:
             if (ENCOUNTER_METHODS.has(method)) {

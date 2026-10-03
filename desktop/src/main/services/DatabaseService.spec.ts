@@ -193,6 +193,7 @@ describe('DatabaseService', () => {
         });
 
         it('should log audit when updating queue status', () => {
+            mockStatement.get.mockReturnValue({ status: 'waiting' });
             service.updateQueueStatus(1, 'waiting', 999);
             // Check for Audit Log Insert
             expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO audit_logs'));

@@ -86,7 +86,7 @@ describe('HTTP /api/ipc queue wrapper', () => {
         const response = await postIpc('removeFromQueue', [9]);
 
         expect(response.statusCode).toBe(200);
-        expect(db.removeFromQueue).toHaveBeenCalledWith(9, 7);
+        expect(db.removeFromQueue).toHaveBeenCalledWith(9, 7, '');
     });
 
     it('accepts the same renderer payload on Electron IPC and HTTP for a doctor', async () => {

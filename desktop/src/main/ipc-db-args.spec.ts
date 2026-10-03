@@ -31,7 +31,12 @@ describe('IPC DatabaseService argument unpacking', () => {
 
     it('appends the authenticated user id to removeFromQueue', () => {
         expect(resolveDbMethodArgs('removeFromQueue', rendererQueuePayloads.removeFromQueue, 7))
-            .toEqual([9, 7]);
+            .toEqual([9, 7, '']);
+    });
+
+    it('forwards removeFromQueue reasons when supplied', () => {
+        expect(resolveDbMethodArgs('removeFromQueue', [{ id: 9, reason: 'No-show' }], 7))
+            .toEqual([9, 7, 'No-show']);
     });
 
     it('does not bind the renderer object as patient_id / actingUserId', () => {
@@ -82,6 +87,6 @@ describe('IPC DatabaseService argument unpacking', () => {
         expect(db.addToQueue).toHaveBeenCalledWith(42, 2, 7);
         expect(db.updateQueueStatus).toHaveBeenCalledWith(9, 'waiting', 7);
         expect(db.updateQueueStatusByPatientId).toHaveBeenCalledWith(42, 'waiting', 7);
-        expect(db.removeFromQueue).toHaveBeenCalledWith(9, 7);
+        expect(db.removeFromQueue).toHaveBeenCalledWith(9, 7, '');
     });
 });

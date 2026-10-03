@@ -68,11 +68,9 @@ skills-lock.json
 .github/agents/
 .github/hooks/
 
-<<<<<<< HEAD
 # Astro
 .astro/
-=======
+
 # answer-me-with-html rendered pages (local explainers, never committed)
 skill-output/
 */skill-output/
->>>>>>> origin/master

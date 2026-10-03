@@ -98,6 +98,11 @@ const config: Config = {
           label: 'GitHub',
           position: 'right',
         },
+        {
+          href: 'https://nalamdesk.com',
+          label: 'Website',
+          position: 'right',
+        },
       ],
     },
     footer: {
@@ -107,34 +112,21 @@ const config: Config = {
           title: 'Docs',
           items: [
             {
-              label: 'Tutorial',
+              label: 'User Guide',
               to: '/docs/user-guide/intro',
             },
-          ],
-        },
-        {
-          title: 'Community',
-          items: [
             {
-              label: 'Stack Overflow',
-              href: 'https://stackoverflow.com/questions/tagged/docusaurus',
-            },
-            {
-              label: 'Discord',
-              href: 'https://discordapp.com/invite/docusaurus',
-            },
-            {
-              label: 'X',
-              href: 'https://x.com/docusaurus',
+              label: 'Data & Backups',
+              to: '/docs/backups',
             },
           ],
         },
         {
-          title: 'More',
+          title: 'Project',
           items: [
             {
-              label: 'Blog',
-              to: '/blog',
+              label: 'Website',
+              href: 'https://nalamdesk.com',
             },
             {
               label: 'GitHub',

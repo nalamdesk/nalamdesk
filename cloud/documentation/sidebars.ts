@@ -22,8 +22,22 @@ const sidebars: SidebarsConfig = {
       label: 'User Guide',
       items: [
         'user-guide/intro',
+        'user-guide/initial-setup',
         'user-guide/admin-management',
         'user-guide/clinic-operations',
+        'user-guide/daily-collection',
+        'user-guide/patient-merge',
+      ],
+      collapsible: false,
+    },
+    {
+      type: 'category',
+      label: 'Data & Backups',
+      items: [
+        'backups',
+        'google-drive-setup',
+        'why-bring-your-own-key',
+        'enterprise-backup-options',
       ],
       collapsible: false,
     },

@@ -10,7 +10,12 @@ This guide covers the daily workflows for Receptionists and Doctors.
 1. Navigate to **Patients**.
 2. Click **+ New Patient**.
 3. Enter details: **Name**, **Age/Gender**, **Mobile Number**.
-4. Click **Save**.
+4. The form warns about possible existing records (matched by name, mobile,
+   or MRN) without blocking you. Open the candidate chart first if unsure.
+5. Click **Save**.
+
+If a duplicate slips through, merge the charts later instead of deleting
+one. See [Merging Duplicate Charts](./patient-merge.md).
 
 ## Managing the Queue
 The **Queue** is the heart of the clinic's flow, supporting actionable urgency triage and abnormal vitals indicators.
@@ -72,4 +77,5 @@ From **Patients -> Patient Details**, clinicians can manage the patient's comple
 7. **Complete Consultation**:
    - Signing the encounter stamps the responsible doctor's license snapshot and marks the visit completed.
    - Prescriptions automatically update the patient's active medication list.
+   - Only a finished encounter can be billed. See [Daily Collection](./daily-collection.md).
 

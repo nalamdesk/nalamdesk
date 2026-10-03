@@ -461,7 +461,7 @@ export class QueueComponent implements OnInit, OnDestroy {
     if (!item) return;
     if (action === 'triage') this.openTriageModal(item);
     else if (action === 'vitals') this.openVitals(item);
-    else if (action === 'remove') void this.remove(item.id);
+    else if (action === 'remove') this.remove(item.id);
   }
 
   getItemUrgency(item: any): string {

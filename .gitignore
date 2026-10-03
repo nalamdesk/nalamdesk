@@ -64,3 +64,6 @@ desktop/html/
 .github/skills/
 .github/agents/
 .github/hooks/
+
+# Astro
+.astro/

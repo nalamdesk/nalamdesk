@@ -392,6 +392,25 @@ describe('PatientDetailsComponent', () => {
         }));
     });
 
+    it('restores an archived chart and surfaces failures', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'unarchivePatient') return Promise.resolve({ changes: 1 });
+            return Promise.resolve(null);
+        });
+        await component.unarchivePatient();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('unarchivePatient', 123);
+
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'unarchivePatient') return Promise.reject(new Error('db down'));
+            return Promise.resolve(null);
+        });
+        await component.unarchivePatient();
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Restore failed'
+        }));
+    });
+
     it('handles delete visit cancellation and failure', async () => {
         component.patientId = 123;
 

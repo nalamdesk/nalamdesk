@@ -1720,7 +1720,7 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteVisit(visitId: number) {
+    deleteVisit(visitId: number) {
         this.pendingReasonAction = { kind: 'visit', id: visitId };
         this.reasonTitle = 'Mark visit entered-in-error';
         this.reasonMessage = 'The visit stays in history with this reason. Active encounters cannot be marked.';
@@ -1782,7 +1782,7 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deletePatient() {
+    deletePatient() {
         this.askArchivePatient();
     }
 
@@ -2022,7 +2022,7 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteAllergy(id: number) {
+    deleteAllergy(id: number) {
         this.pendingReasonAction = { kind: 'allergy', id };
         this.reasonTitle = 'Mark allergy entered-in-error';
         this.reasonMessage = 'The row stays in history with this reason for audit.';
@@ -2066,7 +2066,7 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteCondition(id: number) {
+    deleteCondition(id: number) {
         this.pendingReasonAction = { kind: 'condition', id };
         this.reasonTitle = 'Mark condition entered-in-error';
         this.reasonMessage = 'The row stays in history with this reason for audit.';
@@ -2111,7 +2111,7 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteMedication(id: number) {
+    deleteMedication(id: number) {
         this.pendingReasonAction = { kind: 'medication', id };
         this.reasonTitle = 'Mark medication entered-in-error';
         this.reasonMessage = 'The row stays in history with this reason for audit.';

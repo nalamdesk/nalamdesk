@@ -527,6 +527,26 @@ describe('SettingsComponent Validation', () => {
         }));
     });
 
+    it('skips purge when the confirm is dismissed', async () => {
+        const dialogSpy = vi.fn(() => Promise.resolve(false));
+        (component as any).dialogService = { open: dialogSpy };
+        mockData.invoke.mockClear();
+        await component.purgeUser(9);
+        expect(mockData.invoke).not.toHaveBeenCalledWith('purgeUser', expect.anything());
+    });
+
+    it('drives purge through the grid params with deactivate copy', () => {
+        const actionsCol = (component as any).userColumnDefs.find((c: any) => c.headerName === 'Actions');
+        const params = actionsCol.cellRendererParams;
+        expect(params.deleteTitle).toBe('Deactivate');
+        const purgeSpy = vi.spyOn(component, 'purgeUser').mockImplementation(() => Promise.resolve());
+        params.onPurge({ id: 11 });
+        expect(purgeSpy).toHaveBeenCalledWith(11);
+        expect(params.canPurge({ username: 'admin' })).toBe(false);
+        expect(params.canPurge({ username: 'nurse-1' })).toBe(true);
+        purgeSpy.mockRestore();
+    });
+
     it('opens the Permissions surface from grid params', async () => {
         mockData.invoke.mockImplementation((method: string) => {
             if (method === 'getUserOverrides') return Promise.resolve([]);

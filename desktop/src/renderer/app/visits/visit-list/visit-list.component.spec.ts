@@ -120,4 +120,16 @@ describe('VisitListComponent layout', () => {
         expect(invoke).toHaveBeenCalledWith('markVisitEnteredInError', { id: 2, reason: 'duplicate entry' });
         expect(component.selectedVisits).toEqual([]);
     });
+
+    it('keeps visits untouched when the reason dialog is cancelled', async () => {
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        const invoke = vi.fn(() => Promise.resolve(null));
+        (component as any).dataService = { invoke };
+        component.selectedVisits = [{ id: 1 }] as any;
+
+        await component.deleteSelectedVisits();
+        await component.onVisitsErrorDecided(null);
+        expect(invoke).not.toHaveBeenCalled();
+        expect(component.selectedVisits).toHaveLength(1);
+    });
 });

@@ -207,7 +207,7 @@ export class VisitListComponent implements OnInit {
     }
   }
 
-  async deleteSelectedVisits() {
+  deleteSelectedVisits() {
     if (this.selectedVisits.length === 0) return;
     this.showVisitsErrorDialog = true;
   }

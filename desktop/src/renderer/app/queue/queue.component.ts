@@ -547,7 +547,7 @@ export class QueueComponent implements OnInit, OnDestroy {
     }
   }
 
-  async remove(id: number) {
+  remove(id: number) {
     // Reason is optional: triage history is preserved regardless, and the
     // audit trail records the reason when one is given.
     this.pendingRemoveId = id;

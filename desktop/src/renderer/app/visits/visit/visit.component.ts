@@ -1253,7 +1253,7 @@ export class VisitComponent implements OnInit {
     }
   }
 
-  async deleteVisit() {
+  deleteVisit() {
     if (!this.editingVisitId) return;
     this.showVisitErrorDialog = true;
   }

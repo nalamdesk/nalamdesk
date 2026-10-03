@@ -798,7 +798,7 @@ export class SettingsComponent implements OnInit {
     if (!confirmed) return;
     try {
       await this.dataService.invoke('deleteUser', id);
-      this.ngZone.run(() => this.loadUsers());
+      this.ngZone.run(() => void this.loadUsers());
     } catch (e) { console.error(e); }
   }
 
@@ -813,7 +813,7 @@ export class SettingsComponent implements OnInit {
     if (!confirmed) return;
     try {
       await this.dataService.invoke('purgeUser', id);
-      this.ngZone.run(() => this.loadUsers());
+      this.ngZone.run(() => void this.loadUsers());
     } catch (e) {
       await this.dialogService?.open({
         title: 'Cannot purge',

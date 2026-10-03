@@ -11,10 +11,18 @@ on:
   workflow_dispatch:
     inputs:
       spec:
-        description: 'Spec file to run (empty = full suite)'
+        description: 'Spec suite to run (full suite by default)'
         required: false
-        default: 'e2e/regression'
-        type: string
+        default: 'full suite'
+        type: choice
+        options:
+          - 'full suite'
+          - '01 auth + RBAC'
+          - '02 navigation'
+          - '03 patients'
+          - '04 queue + visit'
+          - '05 settings + admin'
+          - '06 online booking'
 
 jobs:
   regression-e2e:
@@ -47,7 +55,19 @@ jobs:
         # Headed Electron under a virtual display; the renderer is served
         # locally by the Playwright webServer entry (ng serve) and each
         # spec launches the real app against an isolated nalamdesk-test.db.
-        run: xvfb-run -a node_modules/.bin/playwright test ${{ inputs.spec }} --reporter=line
+        # The spec argument comes from a fixed choice list (never free text),
+        # mapped here so workflow input never reaches a shell command line.
+        run: |
+          case "${{ inputs.spec }}" in
+            '01 auth + RBAC') TARGET='e2e/regression/01-auth-rbac.spec.ts' ;;
+            '02 navigation') TARGET='e2e/regression/02-navigation.spec.ts' ;;
+            '03 patients') TARGET='e2e/regression/03-patients.spec.ts' ;;
+            '04 queue + visit') TARGET='e2e/regression/04-queue-visit.spec.ts' ;;
+            '05 settings + admin') TARGET='e2e/regression/05-settings-admin.spec.ts' ;;
+            '06 online booking') TARGET='e2e/regression/06-online-booking.spec.ts' ;;
+            *) TARGET='e2e/regression' ;;
+          esac
+          xvfb-run -a node_modules/.bin/playwright test "$TARGET" --reporter=line
 
       - name: Upload regression report
         if: failure()

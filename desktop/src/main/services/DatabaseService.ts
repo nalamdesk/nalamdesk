@@ -3103,12 +3103,12 @@ export class DatabaseService {
     }
 
     // Audit Logging
-    logAudit(action: string, tableName: string, recordId: number | bigint, userId: number | null | undefined, details: string) {
+    logAudit(action: string, tableName: string, recordId: number | bigint | null, userId: number | null | undefined, details: string) {
         try {
             this.db.prepare(`
                 INSERT INTO audit_logs(action, table_name, record_id, user_id, details)
         VALUES(@action, @tableName, @recordId, @userId, @details)
-            `).run({ action, tableName, recordId: Number(recordId), userId: userId ?? null, details });
+            `).run({ action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details });
         } catch (e) {
             console.error('Failed to log audit:', e);
         }
@@ -3121,6 +3121,32 @@ export class DatabaseService {
             LEFT JOIN users u ON al.user_id = u.id 
             ORDER BY al.timestamp DESC LIMIT ?
         `).all(limit);
+    }
+
+    /**
+     * Authentication-lifecycle audit writers (issue #13). Usernames only —
+     * passwords, hashes, tokens, and request payloads never enter the trail.
+     * Timestamps come from the DB default; rows are append-only (no UPDATE
+     * or DELETE path targets audit_logs anywhere in main sources).
+     */
+    auditLoginAttempt(input: { username: string; ok: boolean; user?: any }) {
+        const name = String(input?.username || '').slice(0, 128);
+        const user = input?.user;
+        this.logAudit(input?.ok ? 'AUTH_LOGIN' : 'AUTH_LOGIN_FAIL', 'users',
+            user?.id ?? null, user?.id ?? null,
+            `${input?.ok ? 'Login' : 'Failed login'} for '${name}'${user?.role ? ` (${user.role})` : ''}`);
+    }
+
+    auditLogout(input: { user?: any }) {
+        const user = input?.user;
+        if (!user) return;
+        this.logAudit('AUTH_LOGOUT', 'users', user.id, user.id, `Logout for '${user.username}'`);
+    }
+
+    auditDenial(input: { user?: any; method: string; channel: 'ipc' | 'lan' }) {
+        const user = input?.user;
+        this.logAudit('AUTH_DENIED', 'rbac', 0, user?.id ?? null,
+            `${user?.role ?? 'anonymous'}#${user?.id ?? '?'} denied ${input?.method} over ${input?.channel}`);
     }
 
     // Appointment Requests

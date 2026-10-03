@@ -3103,12 +3103,12 @@ export class DatabaseService {
     }
 
     // Audit Logging
-    logAudit(action: string, tableName: string, recordId: number | bigint, userId: number | null | undefined, details: string) {
+    logAudit(action: string, tableName: string, recordId: number | bigint | null, userId: number | null | undefined, details: string) {
         try {
             this.db.prepare(`
                 INSERT INTO audit_logs(action, table_name, record_id, user_id, details)
         VALUES(@action, @tableName, @recordId, @userId, @details)
-            `).run({ action, tableName, recordId: Number(recordId), userId: userId ?? null, details });
+            `).run({ action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details });
         } catch (e) {
             console.error('Failed to log audit:', e);
         }
@@ -3133,7 +3133,7 @@ export class DatabaseService {
         const name = String(input?.username || '').slice(0, 128);
         const user = input?.user;
         this.logAudit(input?.ok ? 'AUTH_LOGIN' : 'AUTH_LOGIN_FAIL', 'users',
-            user?.id ?? 0, user?.id ?? null,
+            user?.id ?? null, user?.id ?? null,
             `${input?.ok ? 'Login' : 'Failed login'} for '${name}'${user?.role ? ` (${user.role})` : ''}`);
     }
 

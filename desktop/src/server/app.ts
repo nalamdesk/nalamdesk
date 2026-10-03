@@ -751,7 +751,7 @@ export class ApiServer {
             // 2. RBAC Enforcement (single Cedar engine, shared with Electron IPC)
             if (!this.checkPermission(user.role, method, user.id)) {
                 try {
-                    (this.dbService as any).auditDenial?.({ user, method, channel: 'lan' });
+                    (this.dbService as any).auditDenial({ user, method, channel: 'lan' });
                 } catch { /* audit must not mask the denial */ }
                 return reply.code(403).send({ error: 'Forbidden' });
             }

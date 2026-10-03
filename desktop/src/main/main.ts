@@ -634,12 +634,14 @@ function requirePermission(user: any, method: string, context?: Record<string, u
 
 function handleGuardedDb(channel: string, handler: (...args: any[]) => any) {
     const method = channel.startsWith('db:') ? channel.slice(3) : channel;
-    ipcMain.handle(channel, async (...args) => databaseService.runWork(() => {
+    ipcMain.handle(channel, async (...args) => databaseService.runWork(async () => {
         try {
             if (!DB_PUBLIC_METHODS.has(method) && !DB_SPLIT_METHODS.has(method)) {
                 requirePermission(sessionService.getUser(), method);
             }
-            return handler(...args);
+            // Awaited: async handlers reject inside this try, so their
+            // Forbidden/Unauthorized denials are audited, not just sync ones.
+            return await handler(...args);
         } catch (e: any) {
             // Authorization denials are security events: actor, role, method.
             // Never the payload (it may carry PII or secrets).

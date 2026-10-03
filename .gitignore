@@ -61,6 +61,13 @@ desktop/html/
 
 # Local AI-harness skill installs (tooling, not project source)
 .agent/skills/
+.agents/
+skills-lock.json
+.answer-me-with-html/
 .github/skills/
 .github/agents/
 .github/hooks/
+
+# answer-me-with-html rendered pages (local explainers, never committed)
+skill-output/
+*/skill-output/

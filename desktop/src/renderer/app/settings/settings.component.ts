@@ -321,6 +321,10 @@ export class SettingsComponent implements OnInit {
         onEdit: (data: any) => this.editUser(data),
         onDelete: (data: any) => this.deleteUser(data.id),
         canDelete: (data: any) => data.username !== 'admin',
+        deleteTitle: 'Deactivate',
+        deleteDisabledTitle: 'Cannot deactivate this user',
+        onPurge: (data: any) => this.purgeUser(data.id),
+        canPurge: (data: any) => data.username !== 'admin',
         onPermissions: (data: any) => this.openPermissions(data)
       }
     }
@@ -785,17 +789,38 @@ export class SettingsComponent implements OnInit {
 
   async deleteUser(id: number) {
     const confirmed = await this.dialogService?.open({
-      title: 'Remove user access?',
-      message: 'This will remove access for this user.',
+      title: 'Deactivate user?',
+      message: 'This disables login for this user but keeps their history. Purge permanently only when nothing attributes to them.',
       type: 'confirm',
-      confirmText: 'Remove',
+      confirmText: 'Deactivate',
       cancelText: 'Keep'
     });
     if (!confirmed) return;
     try {
       await this.dataService.invoke('deleteUser', id);
-      this.ngZone.run(() => this.loadUsers());
+      this.ngZone.run(() => void this.loadUsers());
     } catch (e) { console.error(e); }
+  }
+
+  async purgeUser(id: number) {
+    const confirmed = await this.dialogService?.open({
+      title: 'Purge user permanently?',
+      message: 'This erases the staff row forever. It is blocked when visits, billing, triage, or overrides still attribute to them.',
+      type: 'confirm',
+      confirmText: 'Purge forever',
+      cancelText: 'Keep'
+    });
+    if (!confirmed) return;
+    try {
+      await this.dataService.invoke('purgeUser', id);
+      this.ngZone.run(() => void this.loadUsers());
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Cannot purge',
+        message: e instanceof Error ? e.message : 'This user cannot be purged.',
+        type: 'error'
+      });
+    }
   }
 
   // Batch Selection
@@ -1022,10 +1047,10 @@ export class SettingsComponent implements OnInit {
   async deleteSelectedUsers() {
     if (this.selectedUsers.length === 0) return;
     const confirmed = await this.dialogService?.open({
-      title: `Delete ${this.selectedUsers.length} users?`,
-      message: 'Their access will be removed. This cannot be undone.',
+      title: `Deactivate ${this.selectedUsers.length} users?`,
+      message: 'Their login is disabled but history is kept. This can be reversed by reactivating.',
       type: 'confirm',
-      confirmText: 'Delete',
+      confirmText: 'Deactivate',
       cancelText: 'Keep'
     });
     if (!confirmed) return;
@@ -1041,13 +1066,13 @@ export class SettingsComponent implements OnInit {
       this.ngZone.run(() => {
         this.selectedUsers = [];
         this.loadUsers();
-        this.toastService?.success(`${count} user${count === 1 ? '' : 's'} removed.`, 'Users deleted');
+        this.toastService?.success(`${count} user${count === 1 ? '' : 's'} deactivated.`, 'Users deactivated');
       });
     } catch (e) {
       console.error(e);
       await this.dialogService?.open({
-        title: 'Delete failed',
-        message: 'Users could not be deleted.',
+        title: 'Deactivate failed',
+        message: 'Users could not be deactivated.',
         type: 'error'
       });
     }

@@ -20,6 +20,12 @@ import { CommonModule } from '@angular/common';
       <button (click)="onEdit($event)" class="btn btn-xs btn-ghost text-indigo-600 hover:bg-indigo-50">
         Edit
       </button>
+      <button *ngIf="params.data?.active !== 0" (click)="onArchive($event)" class="btn btn-xs btn-ghost text-amber-600 hover:bg-amber-50">
+        Archive
+      </button>
+      <button *ngIf="params.data?.active === 0" (click)="onUnarchive($event)" class="btn btn-xs btn-ghost text-emerald-600 hover:bg-emerald-50">
+        Restore
+      </button>
     </div>
   `,
     styles: [`:host { display: block; height: 100%; }`]
@@ -47,6 +53,20 @@ export class PatientActionsRenderer implements ICellRendererAngularComp {
         event.stopPropagation();
         if (this.params.onEdit) {
             this.params.onEdit(this.params.data);
+        }
+    }
+
+    onArchive(event: MouseEvent) {
+        event.stopPropagation();
+        if (this.params.onArchive) {
+            this.params.onArchive(this.params.data);
+        }
+    }
+
+    onUnarchive(event: MouseEvent) {
+        event.stopPropagation();
+        if (this.params.onUnarchive) {
+            this.params.onUnarchive(this.params.data);
         }
     }
 }

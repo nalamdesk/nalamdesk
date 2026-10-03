@@ -55,4 +55,45 @@ describe('ActionRendererComponent', () => {
         component.onPermissions();
         expect(calls).toEqual([1]);
     });
+
+    it('exposes deactivate copy and purge affordance for lifecycle rows', () => {
+        const component = new ActionRendererComponent();
+        const purged: number[] = [];
+        component.agInit(makeParams({
+            onPurge: (row: any) => purged.push(row.id),
+            canPurge: (row: any) => row.username !== 'admin',
+            deleteTitle: 'Deactivate',
+            deleteDisabledTitle: 'Cannot deactivate this user'
+        }));
+        expect(component.deleteTitle).toBe('Deactivate');
+        expect(component.deleteDisabledTitle).toBe('Cannot deactivate this user');
+        expect(component.canPurge).toBe(true);
+        component.onPurge();
+        expect(purged).toEqual([5]);
+    });
+
+    it('falls back to delete copy and hides purge without a handler', () => {
+        const component = new ActionRendererComponent();
+        component.agInit(makeParams({}));
+        expect(component.deleteTitle).toBe('Delete');
+        expect(component.deleteDisabledTitle).toBe('Cannot delete this user');
+        expect(component.canPurge).toBe(false);
+        expect(() => component.onPurge()).not.toThrow();
+    });
+
+    it('gates purge per row when a predicate is given', () => {
+        const component = new ActionRendererComponent();
+        component.agInit(makeParams({
+            data: { id: 1, username: 'admin' },
+            onPurge: () => undefined,
+            canPurge: (row: any) => row.username !== 'admin'
+        }));
+        expect(component.canPurge).toBe(false);
+    });
+
+    it('allows purge by default when no predicate is given', () => {
+        const component = new ActionRendererComponent();
+        component.agInit(makeParams({ onPurge: () => undefined }));
+        expect(component.canPurge).toBe(true);
+    });
 });

@@ -13,11 +13,12 @@ import { buildOpConsultRecord } from '../../../../shared/fhir/serializer';
 import { deriveAge } from '../../../../shared/patient-age';
 import { ColDef } from 'ag-grid-community';
 import { newRequestId } from '../../services/request-id';
+import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 
 @Component({
     selector: 'app-patient-details',
     standalone: true,
-    imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, AbhaModalComponent],
+    imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, AbhaModalComponent, ReasonDialogComponent],
     styles: [`
         @media print {
             /* Hide everything by default */
@@ -68,7 +69,8 @@ import { newRequestId } from '../../services/request-id';
           <span class="font-medium text-gray-800">{{ patient?.name || 'Loading...' }}</span>
         </div>
         <div class="flex gap-3">
-             <button *ngIf="currentUser?.role === 'admin'" (click)="deletePatient()" class="text-red-500 hover:bg-red-50 px-3 py-1 rounded text-sm font-medium transition border border-transparent hover:border-red-100">Delete Patient</button>
+             <button *ngIf="patient?.active === 0" (click)="unarchivePatient()" class="text-emerald-600 hover:bg-emerald-50 px-3 py-1 rounded text-sm font-medium transition border border-emerald-200">Restore chart</button>
+             <button *ngIf="patient?.active !== 0 && (currentUser?.role === 'admin' || currentUser?.role === 'doctor' || currentUser?.role === 'receptionist')" (click)="askArchivePatient()" class="text-amber-600 hover:bg-amber-50 px-3 py-1 rounded text-sm font-medium transition border border-transparent hover:border-amber-100">Archive chart</button>
              <button *ngIf="currentUser?.role === 'admin' || currentUser?.role === 'doctor'" (click)="openMergeModal()" class="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded text-sm font-medium transition border border-blue-200">Merge</button>
              <button *ngIf="currentUser?.role === 'admin' || currentUser?.role === 'doctor'" (click)="startConsult()" [disabled]="startingConsult" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-bold shadow-sm flex items-center gap-2 transition disabled:opacity-50">
                 Start Consultation
@@ -100,6 +102,11 @@ import { newRequestId } from '../../services/request-id';
                         <button (click)="goToPatient(patient.merged_into)" class="text-xs text-blue-600 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded">Open surviving chart</button>
                         <button *ngIf="currentUser?.role === 'admin' || currentUser?.role === 'doctor'" (click)="unmergeChart()" class="text-xs text-gray-600 border border-gray-300 hover:bg-gray-100 px-2.5 py-1 rounded">Unmerge</button>
                     </div>
+                </div>
+                <div *ngIf="patient?.active === 0" class="mb-4 rounded-lg border border-gray-300 bg-gray-100 p-3 text-sm">
+                    <div class="font-bold text-gray-700 text-xs uppercase tracking-wider mb-1">Archived chart</div>
+                    <p class="text-gray-600 text-xs mb-1">Hidden from lists and counts. Direct link still opens.</p>
+                    <p *ngIf="patient?.archive_reason" class="text-gray-600 text-xs">Reason: {{ patient.archive_reason }}</p>
                 </div>
                 
                 <div class="space-y-3 pt-4 border-t border-gray-100">
@@ -898,6 +905,15 @@ import { newRequestId } from '../../services/request-id';
           (close)="showAbhaModal = false"
           (linked)="onAbhaLinked($event)">
       </app-abha-modal>
+
+      <app-reason-dialog
+        [open]="showReasonDialog"
+        [title]="reasonTitle"
+        [message]="reasonMessage"
+        [placeholder]="reasonPlaceholder"
+        [confirmText]="reasonConfirmText"
+        (decided)="onReasonDecided($event)">
+      </app-reason-dialog>
     </div>
   `
 })
@@ -1093,6 +1109,14 @@ export class PatientDetailsComponent implements OnInit {
     showVisitModal = false;
     selectedVisit: any = null;
     showAbhaModal = false;
+
+    // Audited reason dialog: archive + entered-in-error share one prompt.
+    showReasonDialog = false;
+    reasonTitle = '';
+    reasonMessage = '';
+    reasonPlaceholder = 'Why is this happening?';
+    reasonConfirmText = 'Confirm';
+    private pendingReasonAction: { kind: 'archive-patient' | 'visit' | 'allergy' | 'condition' | 'medication'; id: number } | null = null;
 
     onAbhaLinked(link: { abhaAddress: string; abhaName: string }): void {
         if (this.patient) {
@@ -1696,52 +1720,70 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteVisit(visitId: number) {
-        const confirmed = await this.dialogService.open({
-            title: 'Delete Visit?',
-            message: 'Permanently delete this visit record? This processing cannot be undone.',
-            type: 'confirm',
-            confirmText: 'Delete Forever',
-            cancelText: 'Cancel'
-        });
+    deleteVisit(visitId: number) {
+        this.pendingReasonAction = { kind: 'visit', id: visitId };
+        this.reasonTitle = 'Mark visit entered-in-error';
+        this.reasonMessage = 'The visit stays in history with this reason. Active encounters cannot be marked.';
+        this.reasonPlaceholder = 'Why was this visit entered in error?';
+        this.reasonConfirmText = 'Mark entered-in-error';
+        this.showReasonDialog = true;
+    }
 
-        if (confirmed) {
-            try {
-                await this.dataService.invoke('deleteVisit', visitId);
-                await this.loadData();
-            } catch (e) {
-                console.error(e);
-                this.dialogService.open({
-                    title: 'Error',
-                    message: 'Failed to delete visit.',
-                    type: 'error'
-                });
-            }
+    askArchivePatient(): void {
+        this.pendingReasonAction = { kind: 'archive-patient', id: this.patientId };
+        this.reasonTitle = 'Archive chart';
+        this.reasonMessage = 'Archiving hides this chart from lists and counts. The record stays openable directly. This is audited.';
+        this.reasonPlaceholder = 'Why is this chart being archived?';
+        this.reasonConfirmText = 'Archive';
+        this.showReasonDialog = true;
+    }
+
+    async unarchivePatient(): Promise<void> {
+        try {
+            await this.dataService.invoke('unarchivePatient', this.patientId);
+            await this.loadData();
+        } catch (e) {
+            await this.dialogService.open({
+                title: 'Restore failed',
+                message: e instanceof Error ? e.message : 'Could not restore the chart.',
+                type: 'error'
+            });
         }
     }
 
-    async deletePatient() {
-        const confirmed = await this.dialogService.open({
-            title: 'Delete Patient?',
-            message: 'Are you sure you want to delete this patient? All their visits, vitals, and history will be permanently deleted.',
-            type: 'confirm',
-            confirmText: 'Delete Patient',
-            cancelText: 'Cancel'
-        });
-
-        if (confirmed) {
-            try {
-                await this.dataService.invoke('deletePatient', this.patientId);
-                this.router.navigate(['/patients']);
-            } catch (e) {
-                console.error(e);
-                this.dialogService.open({
-                    title: 'Error',
-                    message: 'Failed to delete patient.',
-                    type: 'error'
-                });
+    async onReasonDecided(reason: string | null): Promise<void> {
+        this.showReasonDialog = false;
+        const action = this.pendingReasonAction;
+        this.pendingReasonAction = null;
+        if (!reason || !action) return;
+        try {
+            if (action.kind === 'archive-patient') {
+                await this.dataService.invoke('archivePatient', { id: action.id, reason });
+                await this.loadData();
+            } else if (action.kind === 'visit') {
+                await this.dataService.invoke('markVisitEnteredInError', { id: action.id, reason });
+                await this.loadData();
+            } else if (action.kind === 'allergy') {
+                await this.dataService.invoke('deleteAllergy', { id: action.id, reason });
+                await this.loadData();
+            } else if (action.kind === 'condition') {
+                await this.dataService.invoke('deleteCondition', { id: action.id, reason });
+                await this.loadData();
+            } else if (action.kind === 'medication') {
+                await this.dataService.invoke('deleteMedication', { id: action.id, reason });
+                await this.loadData();
             }
+        } catch (e) {
+            await this.dialogService.open({
+                title: 'Error',
+                message: e instanceof Error ? e.message : 'Could not complete the action.',
+                type: 'error'
+            });
         }
+    }
+
+    deletePatient() {
+        this.askArchivePatient();
     }
 
     goBack() {
@@ -1980,22 +2022,13 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteAllergy(id: number) {
-        const confirmed = await this.dialogService.open({
-            title: 'Delete Allergy?',
-            message: 'Are you sure you want to remove this allergy record?',
-            type: 'confirm',
-            confirmText: 'Delete',
-            cancelText: 'Cancel'
-        });
-        if (confirmed) {
-            try {
-                await this.dataService.invoke('deleteAllergy', id);
-                await this.loadData();
-            } catch (e) {
-                console.error('Failed to delete allergy', e);
-            }
-        }
+    deleteAllergy(id: number) {
+        this.pendingReasonAction = { kind: 'allergy', id };
+        this.reasonTitle = 'Mark allergy entered-in-error';
+        this.reasonMessage = 'The row stays in history with this reason for audit.';
+        this.reasonPlaceholder = 'Why was this allergy entered in error?';
+        this.reasonConfirmText = 'Mark entered-in-error';
+        this.showReasonDialog = true;
     }
 
     openAddConditionModal() {
@@ -2033,22 +2066,13 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteCondition(id: number) {
-        const confirmed = await this.dialogService.open({
-            title: 'Delete Condition?',
-            message: 'Are you sure you want to remove this problem from the active list?',
-            type: 'confirm',
-            confirmText: 'Delete',
-            cancelText: 'Cancel'
-        });
-        if (confirmed) {
-            try {
-                await this.dataService.invoke('deleteCondition', id);
-                await this.loadData();
-            } catch (e) {
-                console.error('Failed to delete condition', e);
-            }
-        }
+    deleteCondition(id: number) {
+        this.pendingReasonAction = { kind: 'condition', id };
+        this.reasonTitle = 'Mark condition entered-in-error';
+        this.reasonMessage = 'The row stays in history with this reason for audit.';
+        this.reasonPlaceholder = 'Why was this condition entered in error?';
+        this.reasonConfirmText = 'Mark entered-in-error';
+        this.showReasonDialog = true;
     }
 
     openAddMedicationModal() {
@@ -2087,21 +2111,12 @@ export class PatientDetailsComponent implements OnInit {
         }
     }
 
-    async deleteMedication(id: number) {
-        const confirmed = await this.dialogService.open({
-            title: 'Delete Medication?',
-            message: 'Are you sure you want to remove this medication from the active list?',
-            type: 'confirm',
-            confirmText: 'Delete',
-            cancelText: 'Cancel'
-        });
-        if (confirmed) {
-            try {
-                await this.dataService.invoke('deleteMedication', id);
-                await this.loadData();
-            } catch (e) {
-                console.error('Failed to delete medication', e);
-            }
-        }
+    deleteMedication(id: number) {
+        this.pendingReasonAction = { kind: 'medication', id };
+        this.reasonTitle = 'Mark medication entered-in-error';
+        this.reasonMessage = 'The row stays in history with this reason for audit.';
+        this.reasonPlaceholder = 'Why was this medication entered in error?';
+        this.reasonConfirmText = 'Mark entered-in-error';
+        this.showReasonDialog = true;
     }
 }

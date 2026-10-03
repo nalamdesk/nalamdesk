@@ -498,6 +498,55 @@ describe('SettingsComponent Validation', () => {
         deleteSpy.mockRestore();
     });
 
+    it('deactivates instead of deleting, with Deactivate copy', async () => {
+        const dialogSpy = vi.fn(() => Promise.resolve(true));
+        (component as any).dialogService = { open: dialogSpy };
+        mockData.invoke.mockResolvedValue({ changes: 1 });
+
+        await component.deleteUser(9);
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Deactivate user?' }));
+        expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 9);
+    });
+
+    it('purges clean users and surfaces the dependency readout when blocked', async () => {
+        const dialogSpy = vi.fn(() => Promise.resolve(true));
+        (component as any).dialogService = { open: dialogSpy };
+        mockData.invoke.mockImplementation((method: string) => {
+            if (method === 'purgeUser') return Promise.resolve({ changes: 1 });
+            return Promise.resolve([]);
+        });
+
+        await component.purgeUser(9);
+        expect(mockData.invoke).toHaveBeenCalledWith('purgeUser', 9);
+
+        mockData.invoke.mockRejectedValue(new Error('Cannot purge: still attributed to 3 visit(s). Deactivate instead.'));
+        await component.purgeUser(10);
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Cannot purge',
+            message: expect.stringContaining('3 visit(s)')
+        }));
+    });
+
+    it('skips purge when the confirm is dismissed', async () => {
+        const dialogSpy = vi.fn(() => Promise.resolve(false));
+        (component as any).dialogService = { open: dialogSpy };
+        mockData.invoke.mockClear();
+        await component.purgeUser(9);
+        expect(mockData.invoke).not.toHaveBeenCalledWith('purgeUser', expect.anything());
+    });
+
+    it('drives purge through the grid params with deactivate copy', () => {
+        const actionsCol = (component as any).userColumnDefs.find((c: any) => c.headerName === 'Actions');
+        const params = actionsCol.cellRendererParams;
+        expect(params.deleteTitle).toBe('Deactivate');
+        const purgeSpy = vi.spyOn(component, 'purgeUser').mockImplementation(() => Promise.resolve());
+        params.onPurge({ id: 11 });
+        expect(purgeSpy).toHaveBeenCalledWith(11);
+        expect(params.canPurge({ username: 'admin' })).toBe(false);
+        expect(params.canPurge({ username: 'nurse-1' })).toBe(true);
+        purgeSpy.mockRestore();
+    });
+
     it('opens the Permissions surface from grid params', async () => {
         mockData.invoke.mockImplementation((method: string) => {
             if (method === 'getUserOverrides') return Promise.resolve([]);

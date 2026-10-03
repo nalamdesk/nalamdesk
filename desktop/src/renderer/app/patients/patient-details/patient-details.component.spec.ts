@@ -155,8 +155,9 @@ describe('PatientDetailsComponent', () => {
         component.patientId = 123;
         await component.deleteVisit(1);
 
-        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteVisit', 1);
-        expect(mockDataService.invoke).toHaveBeenCalledWith('getVisits', 123);
+        expect(component.showReasonDialog).toBe(true);
+        await component.onReasonDecided('entered wrong patient');
+        expect(mockDataService.invoke).toHaveBeenCalledWith('markVisitEnteredInError', { id: 1, reason: 'entered wrong patient' });
     });
     it('should NOT show start consult for receptionist', async () => {
         mockAuthService.getUser.mockReturnValue({ role: 'receptionist' });
@@ -236,7 +237,9 @@ describe('PatientDetailsComponent', () => {
         expect(component.showAllergyModal).toBe(false);
 
         await component.deleteAllergy(10);
-        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteAllergy', 10);
+        expect(component.showReasonDialog).toBe(true);
+        await component.onReasonDecided('charting error');
+        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteAllergy', { id: 10, reason: 'charting error' });
     });
 
     it('manages conditions lifecycle (add and delete)', async () => {
@@ -258,7 +261,9 @@ describe('PatientDetailsComponent', () => {
         expect(component.showConditionModal).toBe(false);
 
         await component.deleteCondition(20);
-        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteCondition', 20);
+        expect(component.showReasonDialog).toBe(true);
+        await component.onReasonDecided('charting error');
+        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteCondition', { id: 20, reason: 'charting error' });
     });
 
     it('manages medications lifecycle (add and delete)', async () => {
@@ -280,7 +285,9 @@ describe('PatientDetailsComponent', () => {
         expect(component.showMedicationModal).toBe(false);
 
         await component.deleteMedication(30);
-        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteMedication', 30);
+        expect(component.showReasonDialog).toBe(true);
+        await component.onReasonDecided('charting error');
+        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteMedication', { id: 30, reason: 'charting error' });
     });
 
     it('provides date helper getters and field validation helper', () => {
@@ -359,52 +366,69 @@ describe('PatientDetailsComponent', () => {
     it('handles delete patient flow', async () => {
         component.patientId = 123;
 
-        // Cancelled delete does not invoke
-        mockDialogService.open.mockResolvedValueOnce(false);
+        // Cancelled archive does not invoke (null reason)
         await component.deletePatient();
-        expect(mockDataService.invoke).not.toHaveBeenCalledWith('deletePatient', 123);
+        expect(component.showReasonDialog).toBe(true);
+        await component.onReasonDecided(null);
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('archivePatient', expect.anything());
 
-        // Confirmed delete calls deletePatient and navigates
-        mockDialogService.open.mockResolvedValueOnce(true);
+        // Confirmed archive calls archivePatient
         await component.deletePatient();
-        expect(mockDataService.invoke).toHaveBeenCalledWith('deletePatient', 123);
-        expect(mockRouter.navigate).toHaveBeenCalledWith(['/patients']);
+        await component.onReasonDecided('duplicate chart');
+        expect(mockDataService.invoke).toHaveBeenCalledWith('archivePatient', { id: 123, reason: 'duplicate chart' });
     });
 
     it('handles delete patient failure with error dialog', async () => {
         component.patientId = 123;
-        mockDialogService.open.mockResolvedValueOnce(true);
         mockDataService.invoke.mockImplementation((endpoint: string) => {
-            if (endpoint === 'deletePatient') return Promise.reject(new Error('Cannot delete'));
+            if (endpoint === 'archivePatient') return Promise.reject(new Error('Cannot archive'));
             return Promise.resolve(null);
         });
 
         await component.deletePatient();
+        await component.onReasonDecided('duplicate chart');
         expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'Error',
-            message: 'Failed to delete patient.'
+            title: 'Error'
+        }));
+    });
+
+    it('restores an archived chart and surfaces failures', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'unarchivePatient') return Promise.resolve({ changes: 1 });
+            return Promise.resolve(null);
+        });
+        await component.unarchivePatient();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('unarchivePatient', 123);
+
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'unarchivePatient') return Promise.reject(new Error('db down'));
+            return Promise.resolve(null);
+        });
+        await component.unarchivePatient();
+        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Restore failed'
         }));
     });
 
     it('handles delete visit cancellation and failure', async () => {
         component.patientId = 123;
 
-        // Cancelled does not delete
-        mockDialogService.open.mockResolvedValueOnce(false);
+        // Cancelled does not mark entered-in-error
         mockDataService.invoke.mockClear();
         await component.deleteVisit(1);
-        expect(mockDataService.invoke).not.toHaveBeenCalledWith('deleteVisit', 1);
+        await component.onReasonDecided(null);
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('markVisitEnteredInError', expect.anything());
 
-        // Error during delete visit
-        mockDialogService.open.mockResolvedValueOnce(true);
+        // Error during mark entered-in-error
         mockDataService.invoke.mockImplementation((endpoint: string) => {
-            if (endpoint === 'deleteVisit') return Promise.reject(new Error('DB locked'));
+            if (endpoint === 'markVisitEnteredInError') return Promise.reject(new Error('DB locked'));
             return Promise.resolve(null);
         });
         await component.deleteVisit(1);
+        await component.onReasonDecided('wrong entry');
         expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'Error',
-            message: 'Failed to delete visit.'
+            title: 'Error'
         }));
     });
 

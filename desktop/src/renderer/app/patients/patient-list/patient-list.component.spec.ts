@@ -67,13 +67,13 @@ describe('PatientListComponent', () => {
         await component.loadPatients();
 
         expect(component.patients).toEqual(patients);
-        expect(mockPatientService.getPatients).toHaveBeenCalledWith('');
+        expect(mockPatientService.getPatients).toHaveBeenCalledWith('', false);
     });
 
     it('should search patients', async () => {
         component.searchQuery = 'Doe';
         await component.onSearch();
-        expect(mockPatientService.getPatients).toHaveBeenCalledWith('Doe');
+        expect(mockPatientService.getPatients).toHaveBeenCalledWith('Doe', false);
     });
 
     it('should add patient to queue', async () => {
@@ -298,5 +298,69 @@ describe('PatientListComponent', () => {
         resolveSlow([{ patient: { id: 9 } }]);
         await pending;
         expect(component.duplicateCandidates).toEqual([]);
+    });
+
+    it('toggles the archived view and reloads with the flag', async () => {
+        mockPatientService.getPatients.mockClear();
+        component.toggleArchived();
+        expect(component.showArchived).toBe(true);
+        expect(mockPatientService.getPatients).toHaveBeenCalledWith('', true);
+    });
+
+    it('archives a chart with a reason through the dialog', async () => {
+        component.askArchive({ id: 3, name: 'Dot' });
+        expect(component.showArchiveDialog).toBe(true);
+        await component.onArchiveDecided('duplicate chart');
+        expect(mockDataService.invoke).toHaveBeenCalledWith('archivePatient', { id: 3, reason: 'duplicate chart' });
+        expect(component.showArchiveDialog).toBe(false);
+    });
+
+    it('surfaces archive failures in an error dialog', async () => {
+        mockDataService.invoke.mockRejectedValueOnce(new Error('active encounter'));
+        const dialogSpy = vi.fn().mockResolvedValue(true);
+        (component as any).dialogService = { open: dialogSpy };
+        component.askArchive({ id: 3, name: 'Dot' });
+        await component.onArchiveDecided('duplicate chart');
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Archive failed' }));
+    });
+
+    it('drops the archive when the dialog is cancelled', async () => {
+        component.askArchive({ id: 3, name: 'Dot' });
+        await component.onArchiveDecided(null);
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('archivePatient', expect.anything());
+        expect(component.archiveTarget).toBeNull();
+    });
+
+    it('restores an archived chart and surfaces failures', async () => {
+        mockDataService.invoke.mockResolvedValue(null);
+        await component.unarchivePatient({ id: 4 });
+        expect(mockDataService.invoke).toHaveBeenCalledWith('unarchivePatient', 4);
+
+        mockDataService.invoke.mockRejectedValueOnce(new Error('db down'));
+        const dialogSpy = vi.fn().mockResolvedValue(true);
+        (component as any).dialogService = { open: dialogSpy };
+        await component.unarchivePatient({ id: 4 });
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Restore failed' }));
+    });
+
+    it('wires archive and restore through the grid action params', () => {
+        const params = (component as any).colDefs
+            .find((c: any) => c.headerName === 'Actions').cellRendererParams;
+        const queueSpy = vi.spyOn(component, 'addToQueue').mockImplementation(() => Promise.resolve());
+        const editSpy = vi.spyOn(component, 'editPatient').mockImplementation(() => undefined);
+        const askSpy = vi.spyOn(component, 'askArchive').mockImplementation(() => undefined);
+        const restoreSpy = vi.spyOn(component, 'unarchivePatient').mockResolvedValue(undefined);
+        params.onQueue({ id: 4 });
+        params.onEdit({ id: 4 });
+        params.onArchive({ id: 5 });
+        params.onUnarchive({ id: 6 });
+        expect(queueSpy).toHaveBeenCalledWith({ id: 4 });
+        expect(editSpy).toHaveBeenCalledWith({ id: 4 });
+        expect(askSpy).toHaveBeenCalledWith({ id: 5 });
+        expect(restoreSpy).toHaveBeenCalledWith({ id: 6 });
+        queueSpy.mockRestore();
+        editSpy.mockRestore();
+        askSpy.mockRestore();
+        restoreSpy.mockRestore();
     });
 });

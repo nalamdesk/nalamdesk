@@ -1061,6 +1061,26 @@ describe('VisitComponent', () => {
                 invoiceId: 3, reason: 'Entered by mistake'
             }));
         });
+
+        it('marks a visit entered-in-error with a reason instead of deleting', async () => {
+            (component as any).editingVisitId = 42;
+            mockDataService.invoke.mockClear();
+            await component.deleteVisit();
+            expect(component.showVisitErrorDialog).toBe(true);
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('markVisitEnteredInError', expect.anything());
+
+            await component.onVisitErrorDecided('wrong patient');
+            expect(mockDataService.invoke).toHaveBeenCalledWith('markVisitEnteredInError', { id: 42, reason: 'wrong patient' });
+        });
+
+        it('keeps the visit untouched when the reason dialog is cancelled', async () => {
+            (component as any).editingVisitId = 42;
+            mockDataService.invoke.mockClear();
+            await component.deleteVisit();
+            expect(component.showVisitErrorDialog).toBe(true);
+            await component.onVisitErrorDecided(null);
+            expect(mockDataService.invoke).not.toHaveBeenCalled();
+        });
     });
 });
 

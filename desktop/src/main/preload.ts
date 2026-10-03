@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('electron', {
         getLocalBackupHealth: () => ipcRenderer.invoke('backup:getLocalBackupHealth'),
     },
     db: {
-        getPatients: (query: string) => ipcRenderer.invoke('db:getPatients', query),
+        getPatients: (query: string, includeArchived?: boolean) => ipcRenderer.invoke('db:getPatients', query, includeArchived ?? false),
         findDuplicateCandidates: (input: any) => ipcRenderer.invoke('db:findDuplicateCandidates', input),
         previewPatientMerge: (input: any) => ipcRenderer.invoke('db:previewPatientMerge', input),
         mergePatients: (input: any) => ipcRenderer.invoke('db:mergePatients', input),
@@ -71,7 +71,7 @@ contextBridge.exposeInMainWorld('electron', {
         getQueueTriageHistory: (queueId: number) => ipcRenderer.invoke('db:getQueueTriageHistory', queueId),
         updateQueueStatus: (data: { id: number, status: string }) => ipcRenderer.invoke('db:updateQueueStatus', data),
         updateQueueStatusByPatientId: (data: { patientId: number, status: string }) => ipcRenderer.invoke('db:updateQueueStatusByPatientId', data),
-        removeFromQueue: (id: number) => ipcRenderer.invoke('db:removeFromQueue', id),
+        removeFromQueue: (input: number | { id: number; reason?: string }) => ipcRenderer.invoke('db:removeFromQueue', input as any),
         // Clinical Safety & Longitudinal Records
         getAllergies: (patientId: number) => ipcRenderer.invoke('db:getAllergies', patientId),
         saveAllergy: (allergy: any) => ipcRenderer.invoke('db:saveAllergy', allergy),

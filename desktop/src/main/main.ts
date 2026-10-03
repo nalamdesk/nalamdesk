@@ -730,10 +730,10 @@ handleGuardedDb('db:getDashboardStats', () => {
 });
 
 // Patients
-handleGuardedDb('db:getPatients', (_, query) => {
+handleGuardedDb('db:getPatients', (_, query, includeArchived) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
-    return databaseService.getPatients(query);
+    return databaseService.getPatients(query, includeArchived === true);
 });
 handleGuardedDb('db:findDuplicateCandidates', (_, input) => {
     const user = sessionService.getUser();

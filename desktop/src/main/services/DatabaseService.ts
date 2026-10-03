@@ -328,26 +328,42 @@ export class DatabaseService {
 
     /**
      * Hard purge for retention: allowed only when nothing attributes to
-     * the user (visits, invoices, payments, merges). Audit rows are never
-     * a blocker and never deleted — history outlives accounts by design.
+     * the user across visits, billing, triage, overrides, and merges.
+     * Audit rows are never a blocker and never deleted — history outlives
+     * accounts by design (and FKs are not enforced at runtime, so this
+     * sweep is the orphan guard, not the schema).
      */
     purgeUser(id: number, actingUserId?: number) {
         const user = this.db.prepare('SELECT username FROM users WHERE id = ?').get(id) as any;
         if (!user) throw new Error('User not found.');
         if (user.username === 'admin') throw new Error('Cannot purge the admin user.');
         const dependencies: string[] = [];
-        const authored = this.db.prepare(`SELECT COUNT(*) as count FROM visits
-            WHERE doctor_id = ?`).get(id) as any;
-        if (Number(authored?.count) > 0) dependencies.push(`${authored.count} visit(s)`);
-        const billed = this.db.prepare(`SELECT COUNT(*) as count FROM invoices
-            WHERE created_by = ?`).get(id) as any;
-        if (Number(billed?.count) > 0) dependencies.push(`${billed.count} invoice(s)`);
-        const received = this.db.prepare(`SELECT COUNT(*) as count FROM payments
-            WHERE received_by = ?`).get(id) as any;
-        if (Number(received?.count) > 0) dependencies.push(`${received.count} payment(s)`);
-        const merged = this.db.prepare(`SELECT COUNT(*) as count FROM patient_merges
-            WHERE merged_by = ?`).get(id) as any;
-        if (Number(merged?.count) > 0) dependencies.push(`${merged.count} merge(s)`);
+        const attributions: [string, string, string][] = [
+            ['visits', 'doctor_id', 'visit(s)'],
+            ['visits', 'author_id', 'authored visit(s)'],
+            ['invoices', 'created_by', 'invoice(s)'],
+            ['payments', 'received_by', 'payment(s)'],
+            ['patient_merges', 'merged_by', 'merge(s)'],
+            ['vitals', 'performer_id', 'vital(s)'],
+            ['patient_allergies', 'recorder_id', 'allergie(s)'],
+            ['patient_conditions', 'recorder_id', 'condition(s)'],
+            ['patient_medications', 'recorder_id', 'medication(s)'],
+            ['patient_queue', 'triage_assessor_id', 'triage assessment(s)'],
+            ['queue_triage_history', 'changed_by', 'triage change(s)'],
+            ['encounter_requests', 'actor_id', 'encounter request(s)'],
+            ['user_permission_overrides', 'granted_by', 'granted override(s)']
+        ];
+        for (const [table, column, label] of attributions) {
+            let count = 0;
+            try {
+                count = Number((this.db.prepare(
+                    `SELECT COUNT(*) as count FROM ${table} WHERE ${column} = ?`).get(id) as any)?.count || 0);
+            } catch { continue; }
+            if (count > 0) dependencies.push(`${count} ${label}`);
+        }
+        const owned = this.db.prepare(`SELECT COUNT(*) as count FROM user_permission_overrides
+            WHERE user_id = ?`).get(id) as any;
+        if (Number(owned?.count) > 0) dependencies.push(`${owned.count} personal override(s)`);
         if (dependencies.length > 0) {
             throw new Error(`Cannot purge: still attributed to ${dependencies.join(', ')}. Deactivate instead.`);
         }
@@ -2966,6 +2982,9 @@ export class DatabaseService {
 
     deleteAllergy(allergyId: number, actingUserId?: number, reason = '') {
         const clean = String(reason || '').trim();
+        const existing = this.db.prepare('SELECT id, status FROM patient_allergies WHERE id = ?')
+            .get(Number(allergyId)) as any;
+        if (!existing) throw new Error('Allergy record not found.');
         const result = this.db.prepare(`UPDATE patient_allergies
             SET status = 'entered-in-error' WHERE id = ?`).run(Number(allergyId));
         this.logAudit('ENTERED_IN_ERROR', 'patient_allergies', allergyId, actingUserId,
@@ -3019,6 +3038,9 @@ export class DatabaseService {
 
     deleteCondition(conditionId: number, actingUserId?: number, reason = '') {
         const clean = String(reason || '').trim();
+        const existing = this.db.prepare('SELECT id, clinical_status FROM patient_conditions WHERE id = ?')
+            .get(Number(conditionId)) as any;
+        if (!existing) throw new Error('Condition record not found.');
         const result = this.db.prepare(`UPDATE patient_conditions
             SET clinical_status = 'entered-in-error' WHERE id = ?`).run(Number(conditionId));
         this.logAudit('ENTERED_IN_ERROR', 'patient_conditions', conditionId, actingUserId,
@@ -3073,6 +3095,9 @@ export class DatabaseService {
 
     deleteMedication(medicationId: number, actingUserId?: number, reason = '') {
         const clean = String(reason || '').trim();
+        const existing = this.db.prepare('SELECT id, status FROM patient_medications WHERE id = ?')
+            .get(Number(medicationId)) as any;
+        if (!existing) throw new Error('Medication record not found.');
         const result = this.db.prepare(`UPDATE patient_medications
             SET status = 'entered-in-error' WHERE id = ?`).run(Number(medicationId));
         this.logAudit('ENTERED_IN_ERROR', 'patient_medications', medicationId, actingUserId,

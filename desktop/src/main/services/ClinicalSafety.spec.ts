@@ -1128,8 +1128,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 expect(Number(history.count)).toBeGreaterThan(0);
             });
 
-            it('deactivates staff and purges only dependency-free accounts', async () => {
-                await service.saveUser({ username: 'temproot', password: 'Password1!', role: 'receptionist', name: 'Temp' }, 99);
+            it('deactivates staff and purges only dependency-free accounts', async () => {                await service.saveUser({ username: 'temproot', password: 'Password1!', role: 'receptionist', name: 'Temp' }, 99);
                 const temp = service.getUsers().find((u: any) => u.username === 'temproot');
                 await service.saveUser({ username: 'author', password: 'Password1!', role: 'doctor', name: 'Author',
                     specialty: 'General', license_number: 'LIC-1' }, 99);
@@ -1144,6 +1143,31 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 await service.purgeUser(temp.id, 99);
                 expect(service.getUsers().find((u: any) => u.username === 'temproot')).toBeUndefined();
                 expect(() => service.purgeUser(424242, 99)).toThrow('not found');
+            });
+
+            it('blocks purge on triage and override attributions', async () => {
+                await service.saveUser({ username: 'triageop', password: 'Password1!', role: 'nurse', name: 'Tri' }, 99);
+                const op = service.getUsers().find((u: any) => u.username === 'triageop');
+                db.prepare('DELETE FROM patients').run();
+                const p: any = service.savePatient({ name: 'Q Patient', mobile: '9000000051', age: 30, gender: 'Male' });
+                const pid = Number(p.lastInsertRowid);
+                const queued: any = service.addToQueue(pid, 1, op.id);
+                db.prepare('UPDATE patient_queue SET triage_assessor_id = ? WHERE id = ?')
+                    .run(op.id, Number(queued.lastInsertRowid ?? queued.id));
+                expect(() => service.purgeUser(op.id, 99)).toThrow('triage');
+                // Triage history is append-only (changed_by NOT NULL): only
+                // removing the episode itself clears the attribution.
+                const qid = Number(queued.lastInsertRowid ?? queued.id);
+                db.prepare('DELETE FROM queue_triage_history WHERE queue_id = ?').run(qid);
+                db.prepare('DELETE FROM patient_queue WHERE id = ?').run(qid);
+                await service.purgeUser(op.id, 99);
+                expect(service.getUsers().find((u: any) => u.username === 'triageop')).toBeUndefined();
+            });
+
+            it('rejects clinical entered-in-error for missing records', () => {
+                expect(() => service.deleteAllergy(424242, 99, 'oops')).toThrow('not found');
+                expect(() => service.deleteCondition(424242, 99, 'oops')).toThrow('not found');
+                expect(() => service.deleteMedication(424242, 99, 'oops')).toThrow('not found');
             });
 
             it('marks clinical records entered-in-error with audit reasons', () => {

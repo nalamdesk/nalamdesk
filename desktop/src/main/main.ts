@@ -903,7 +903,9 @@ handleGuardedDb('db:archivePatient', (_, input) => {
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
     const args = input || {};
-    return databaseService.archivePatient(args.id ?? input, args.reason, user.id);
+    // Accept both { id } and { patientId } shapes from current callers.
+    const id = args.id ?? args.patientId ?? input;
+    return databaseService.archivePatient(id, args.reason, user.id);
 });
 handleGuardedDb('db:unarchivePatient', (_, id) => {
     const user = sessionService.getUser();
@@ -922,7 +924,8 @@ handleGuardedDb('db:markVisitEnteredInError', (_, input) => {
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
     const args = input || {};
-    return databaseService.markVisitEnteredInError(args.id ?? args.visitId ?? input, args.reason, user.id);
+    const id = args.id ?? args.visitId ?? input;
+    return databaseService.markVisitEnteredInError(id, args.reason, user.id);
 });
 handleGuardedDb('db:purgeUser', (_, id) => {
     const user = sessionService.getUser();

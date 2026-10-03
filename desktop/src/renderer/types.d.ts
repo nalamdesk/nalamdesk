@@ -114,6 +114,9 @@ declare global {
                 getStatus: () => Promise<{ enabled: boolean; clinicId: string | null }>;
                 onboard: (data: { name: string; city: string }) => Promise<{ success: boolean; clinicId: string }>;
                 toggle: (enabled: boolean) => Promise<void>;
+                syncNow: () => Promise<any>;
+                publishSlots: (slots: any, dates: string[]) => Promise<any>;
+                getPublishedSlots: (date: string) => Promise<any[]>;
             };
             clipboard: {
                 writeText: (text: string) => Promise<boolean>;

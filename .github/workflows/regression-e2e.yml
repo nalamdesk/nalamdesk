@@ -1,0 +1,57 @@
+name: Regression E2E (manual only)
+
+# Full-feature regression: real Electron + locally served renderer + transient
+# test DB (desktop/e2e/regression/, `npm run e2e:regression` in desktop/).
+#
+# MANUAL TRIGGER ONLY. This workflow has no push/pull_request/schedule
+# triggers by design: it never runs on branches, PRs, or commits. Launch it
+# from Actions → "Regression E2E (manual only)" → Run workflow, optionally
+# limiting the run to a single spec file.
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: 'Spec file to run (empty = full suite)'
+        required: false
+        default: 'e2e/regression'
+        type: string
+
+jobs:
+  regression-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ./desktop
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Electron system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2 libnss3 libxss1 libxtst6 xauth
+
+      - name: Run regression suite
+        # Headed Electron under a virtual display; the renderer is served
+        # locally by the Playwright webServer entry (ng serve) and each
+        # spec launches the real app against an isolated nalamdesk-test.db.
+        run: xvfb-run -a node_modules/.bin/playwright test ${{ inputs.spec }} --reporter=line
+
+      - name: Upload regression report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: desktop/playwright-report

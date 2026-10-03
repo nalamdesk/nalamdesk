@@ -170,6 +170,7 @@ contextBridge.exposeInMainWorld('electron', {
         onboard: (data: { name: string, city: string }) => ipcRenderer.invoke('cloud:onboard', data),
         toggle: (enabled: boolean) => ipcRenderer.invoke('cloud:toggle', enabled),
         syncNow: () => ipcRenderer.invoke('cloud:syncNow'),
+        publishSlots: (slots: any, dates: string[]) => ipcRenderer.invoke('cloud:publishSlots', slots, dates),
         getPublishedSlots: (date: string) => ipcRenderer.invoke('cloud:getPublishedSlots', date)
     },
     clipboard: {

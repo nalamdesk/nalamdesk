@@ -1438,5 +1438,52 @@ export const MIGRATIONS = [
                 admin: [...deskLifecycle, ...clinicalCorrection, 'purgeUser']
             });
         }
+    },
+    {
+        version: 39,
+        up: (db: any) => {
+            console.log('Running Migration v39 (flexible patient identifiers)...');
+            // Multi-system identifiers (issue #55): one chart can carry a
+            // clinic MRN, an ABHA number / address, insurance and free-form
+            // ids at once. Single-column patients.mrn / abha_address stay
+            // as the fast path; this table is the extensible registry.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS patient_identifiers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    patient_id INTEGER NOT NULL REFERENCES patients(id),
+                    system TEXT NOT NULL,
+                    type_code TEXT,
+                    value TEXT NOT NULL,
+                    is_primary INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_patient_identifiers_system_value
+                ON patient_identifiers(system, value);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_patient_identifiers_patient
+                ON patient_identifiers(patient_id);`);
+            // Nationally-unique ABHA number column on the chart itself.
+            try { db.exec('ALTER TABLE patients ADD COLUMN abha_number TEXT'); } catch (e) { }
+            db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_abha_number
+                ON patients(abha_number) WHERE abha_number IS NOT NULL;`);
+            // Backfill the registry from the fast-path columns so search
+            // and duplicate detection see one source of truth.
+            db.exec(`
+                INSERT OR IGNORE INTO patient_identifiers (patient_id, system, value, is_primary)
+                SELECT id, 'mrn', mrn, 1 FROM patients
+                WHERE mrn IS NOT NULL AND mrn != '';
+            `);
+            db.exec(`
+                INSERT OR IGNORE INTO patient_identifiers (patient_id, system, value, is_primary)
+                SELECT id, 'abha-address', abha_address, 0 FROM patients
+                WHERE abha_address IS NOT NULL AND abha_address != '';
+            `);
+            const identifierMethods = ['getIdentifiers', 'saveIdentifier', 'deleteIdentifier'];
+            grantRoleMethods(db, {
+                doctor: identifierMethods,
+                receptionist: identifierMethods,
+                admin: identifierMethods
+            });
+        }
     }
 ];

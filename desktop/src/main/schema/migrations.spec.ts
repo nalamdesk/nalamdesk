@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 38 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(38);
+        it('should have 39 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(39);
         });
     });
 
@@ -792,6 +792,40 @@ describe('Database Migrations', () => {
             expect(JSON.parse(writes['doctor'])).toContain('markVisitEnteredInError');
             expect(JSON.parse(writes['receptionist'] || '[]')).not.toContain('markVisitEnteredInError');
             expect(JSON.parse(writes['receptionist'] || '[]')).not.toContain('purgeUser');
+            expect(writes['nurse']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v39 (flexible patient identifiers)', () => {
+        it('creates the identifiers registry, backfills, and adds abha_number', () => {
+            MIGRATIONS.find((m) => m.version === 39)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS patient_identifiers');
+            expect(sql).toContain('idx_patient_identifiers_system_value');
+            expect(sql).toContain('ADD COLUMN abha_number');
+            expect(sql).toContain('idx_patients_abha_number');
+            expect(sql).toContain("'mrn'");
+            expect(sql).toContain("'abha-address'");
+        });
+
+        it('grants identifier methods to desk roles, not nurses', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 39)!.up(mockDb);
+            for (const method of ['getIdentifiers', 'saveIdentifier', 'deleteIdentifier']) {
+                expect(JSON.parse(writes['doctor'])).toContain(method);
+                expect(JSON.parse(writes['receptionist'])).toContain(method);
+            }
             expect(writes['nurse']).toBeUndefined();
         });
     });

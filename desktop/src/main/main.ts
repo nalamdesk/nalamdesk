@@ -919,6 +919,26 @@ handleGuardedDb('db:getArchivedPatients', () => {
     if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
     return databaseService.getArchivedPatients();
 });
+// Flexible identifiers (issue #55): desk roles read and curate them at
+// intake; nurses hold no identifier grants, like queue removal.
+handleGuardedDb('db:getIdentifiers', (_, patientId) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'getIdentifiers', [patientId], user.id);
+});
+handleGuardedDb('db:saveIdentifier', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'saveIdentifier', [input], user.id);
+});
+handleGuardedDb('db:deleteIdentifier', (_, id) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'deleteIdentifier', [id], user.id);
+});
 handleGuardedDb('db:markVisitEnteredInError', (_, input) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');

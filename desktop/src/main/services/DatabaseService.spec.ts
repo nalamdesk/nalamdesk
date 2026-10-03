@@ -170,11 +170,108 @@ describe('DatabaseService', () => {
             }));
         });
 
-        it('should search patients', () => {
+        it('should search patients across names, MRN, and identifiers', () => {
             service.getPatients('John');
             expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('name LIKE ?'));
+            expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('patient_identifiers'));
             expect(mockStatement.all).toHaveBeenCalledWith(
-                expect.stringContaining('John'), expect.any(String), expect.any(String));
+                expect.stringContaining('John'), expect.any(String), expect.any(String),
+                expect.any(String), expect.any(String), expect.any(String));
+        });
+    });
+
+    describe('Patient Identifiers', () => {
+        function keyDb(rows: Record<string, any>) {
+            mockDb.prepare.mockImplementation((sql: string) => ({
+                get: (...args: any[]) => {
+                    for (const [key, value] of Object.entries(rows)) {
+                        if (sql.includes(key)) return typeof value === 'function' ? value(...args) : value;
+                    }
+                    return null;
+                },
+                all: (...args: any[]) => {
+                    for (const [key, value] of Object.entries(rows)) {
+                        if (sql.includes(key)) return typeof value === 'function' ? value(...args) : value;
+                    }
+                    return [];
+                },
+                run: vi.fn().mockReturnValue({ lastInsertRowid: 7, changes: 1 })
+            }));
+        }
+
+        it('lists identifiers for a chart', () => {
+            const rows = [{ id: 1, system: 'mrn', value: 'ND-100001' }];
+            keyDb({ 'FROM patient_identifiers WHERE patient_id': rows });
+            expect(service.getIdentifiers(3)).toEqual(rows);
+        });
+
+        it('saves a validated identifier and audits the add', () => {
+            keyDb({});
+            const result = service.saveIdentifier(3,
+                { system: 'abha-number', value: '79927398713891', isPrimary: true }, 9);
+            expect(result).toMatchObject({ id: 7, updated: false });
+            const inserts = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
+            expect(inserts).toContain('INSERT INTO patient_identifiers');
+            expect(inserts).toContain('UPDATE patient_identifiers SET is_primary = 0');
+            expect(inserts).toContain('INSERT INTO audit_logs');
+        });
+
+        it('rejects malformed identifiers before touching the database', () => {
+            keyDb({});
+            expect(() => service.saveIdentifier(3, { system: 'abha-number', value: '123' } as any))
+                .toThrow('14 digits');
+            expect(() => service.saveIdentifier(3, { system: 'aadhaar', value: '1234' } as any))
+                .toThrow('Unknown identifier system');
+            expect(() => service.saveIdentifier(0, { system: 'mrn', value: 'ND-100001' } as any))
+                .toThrow('chart is required');
+        });
+
+        it('rejects an identifier already held by another chart', () => {
+            keyDb({ 'WHERE system = ? AND value = ?': { patient_id: 8 } });
+            expect(() => service.saveIdentifier(3, { system: 'mrn', value: 'ND-100008' } as any))
+                .toThrow('another chart');
+        });
+
+        it('updates an existing row instead of duplicating it', () => {
+            keyDb({ 'WHERE patient_id = ? AND system = ? AND value = ?': { id: 5 } });
+            const result = service.saveIdentifier(3, { system: 'insurance', value: 'POL-1' } as any);
+            expect(result).toMatchObject({ id: 5, updated: true });
+        });
+
+        it('deletes identifiers with audit, but never the clinic MRN', () => {
+            keyDb({ 'WHERE id = ?': { patient_id: 3, system: 'insurance', value: 'POL-1' } });
+            expect(service.deleteIdentifier(11, 9)).toMatchObject({ deleted: true });
+            keyDb({ 'WHERE id = ?': { patient_id: 3, system: 'mrn', value: 'ND-100001' } });
+            expect(() => service.deleteIdentifier(12, 9)).toThrow('chart identity');
+            keyDb({ 'WHERE id = ?': null });
+            expect(() => service.deleteIdentifier(13, 9)).toThrow('not found');
+        });
+
+        it('validates ABHA numbers on registration and surfaces national collisions', () => {
+            global.crypto.randomUUID = vi.fn().mockReturnValue('mock-uuid');
+            keyDb({});
+            expect(() => service.savePatient({ name: 'A', mobile: '1', gender: 'Male', abha_number: '123' }))
+                .toThrow('14 digits');
+            const clash = new Error('UNIQUE constraint failed: patients.abha_number');
+            mockDb.prepare.mockImplementation((sql: string) => {
+                if (sql.includes('INSERT INTO patients')) {
+                    return { run: () => { throw clash; } };
+                }
+                return { get: () => null, all: () => [], run: vi.fn() };
+            });
+            expect(() => service.savePatient({ name: 'A', mobile: '1', gender: 'Male', abha_number: '79927398713891' }))
+                .toThrow('already registered');
+        });
+
+        it('flags ABHA-number and registry matches as duplicate candidates', () => {
+            keyDb({
+                'FROM patients WHERE': [{ id: 4, abha_number: '79-9273-9871-3891', name: 'Other', mobile: '999' }],
+                'FROM patient_identifiers': [{ patient_id: 4 }]
+            });
+            const found = service.findDuplicateCandidates({ abhaNumber: '79-9273-9871-3891', identifier: 'POL-1' });
+            expect(found[0].signals).toContain('abha-number');
+            expect(found[0].signals).toContain('identifier');
+            expect(found[0].score).toBe(100);
         });
     });
 

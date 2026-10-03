@@ -36,22 +36,33 @@ In the **Users** tab (Admin only):
 - **Edit**: Click to update details or reset passwords.
 - **Delete**: Remove a user from the system (Soft delete).
 
-## Cloud Backup & Restore
-NalamDesk supports secure backups to Google Drive.
+## Data & Backup
+Local backups, restore, and Google Drive live under **Settings > Data &
+Backup**. See [Data & Backups](../backups.md) for the full guide.
 
 ### Connecting Google Drive
-1. Go to **Settings > General > Cloud Connection**.
-2. Click **Connect Google Drive**.
-3. Follow the authentication prompt.
-4. Once connected, you will see a "Connected" status.
+1. Go to **Settings > Data & Backup > Google Drive Backup**.
+2. Paste your own **Client ID** and **Client Secret** (Bring Your Own Key:
+   NalamDesk never sees your Drive credentials). See
+   [Google Drive Setup](../google-drive-setup.md) for creating them.
+3. Click **Connect Drive** and approve the permissions in the browser window.
+4. Once connected, the daily encrypted backup uploads to a hidden
+   `appDataFolder` in your Drive. The upload schedule is configurable;
+   it runs while the app is open.
 
 ### Creating a Backup
-- Click **Backup Now** to immediately upload a snapshot of your encrypted database to the cloud.
+- Local backups run automatically every day at the configured time.
+- Click **Create Snapshot Now** (Google Drive section) to immediately
+  upload a snapshot of your encrypted database.
 
 ### Restoring from Backup
 > [!WARNING]
-> Restoring will overwrite all current local data. Proceed with caution.
+> Restoring replaces the current vault. Proceed with caution.
 
-1. Click **Refresh List** to see available backups.
-2. Click **Restore** next to the desired backup file.
-3. Confirm the action. The app will restart with the restored data.
+Local restore (Settings > Data & Backup > Restore from Backup File,
+or the same picker on the Welcome screen):
+1. Click **Choose Backup File…** and pick a `.ndbackup` file.
+2. Enter the **Recovery Code** and the current **administrator password**.
+3. Click **Restore Vault**. The app restarts with the restored data.
+
+Drive snapshots restore from the backup list in the Google Drive section.

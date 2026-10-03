@@ -21,6 +21,8 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'landing/**'
+      - 'cloud/documentation/**'
       - '.github/openreview.yml'
 
 # Stacked pushes cancel dead runs; master merges always run to completion.

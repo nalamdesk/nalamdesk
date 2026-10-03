@@ -1,0 +1,135 @@
+---
+import Base from '../layouts/Base.astro';
+
+const title = 'NalamDesk, the clinic desk that works without internet';
+const description =
+  'Practice desk for small clinics. Registration to printed prescription on one computer. Records stay encrypted on your disk.';
+const github = 'https://github.com/sankara-sabapathy/nalamdesk';
+const download = `${github}/releases`;
+const docs = 'https://sankara-sabapathy.github.io/nalamdesk/';
+---
+<Base title={title} description={description}>
+  
+
+  <header class="border-b border-line bg-white">
+    <div class="page flex min-h-[72px] flex-wrap items-center gap-x-6 gap-y-3 py-3">
+      <a href="/" class="flex items-center gap-2.5 text-lg font-bold text-ink">
+        <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="4" fill="#0f172a" /><rect x="6" y="7" width="14" height="8" rx="1.5" fill="#e8eef4" /><rect x="6" y="18" width="14" height="2" rx="1" fill="#1868db" /></svg>
+        NalamDesk
+      </a>
+      <nav class="hidden gap-[22px] lg:flex" aria-label="Primary">
+        <a class="text-sm font-medium text-slate2" href="#product">Product</a>
+        <a class="text-sm font-medium text-slate2" href="#platform">Platform</a>
+        <a class="text-sm font-medium text-slate2" href="#security">Security</a>
+        <a class="text-sm font-medium text-slate2" href={docs} target="_blank" rel="noopener">Docs</a>
+      </nav>
+      <div class="ml-auto flex items-center gap-3">
+        <a href={github} target="_blank" rel="noopener" aria-label="NalamDesk on GitHub" class="flex h-10 w-10 items-center justify-center rounded-md border border-line text-ink hover:bg-wash">
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" /></svg>
+        </a>
+        <a href={download} class="rounded-md bg-cobalt px-5 py-2.5 text-sm font-semibold text-white">Download</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="bg-wash" id="product">
+      <div class="page grid items-center gap-10 py-12 md:grid-cols-2 md:py-16">
+        <div class="min-w-0">
+          <h1 class="hero font-display font-bold">The clinic desk that works without internet.</h1>
+          <p class="mt-4 max-w-[34rem] text-[17px] leading-relaxed text-slate2">
+            Practice desk for small clinics. Registration to printed prescription on one computer. Records stay encrypted on your disk.
+          </p>
+          <div class="mt-6 flex flex-wrap gap-3">
+            <a href={download} class="rounded-md bg-cobalt px-5 py-2.5 text-sm font-semibold text-white">Download</a>
+            <a href="#platform" class="rounded-md border border-line bg-white px-5 py-2.5 text-sm font-semibold text-ink">Explore the platform</a>
+          </div>
+          <p class="mt-3 text-[13px] text-slate2">Free software, AGPL-3.0. Windows, macOS and Linux installers on GitHub.</p>
+        </div>
+        <div class="min-w-0">
+          <div class="lightbox">
+            <div class="film">
+              <div class="sprockets"></div>
+              <div class="frame">
+                <h2>Today queue</h2>
+                <div class="qrow"><span>Token 14, fever, reassessed Urgent</span><span class="pill wait">Waiting</span></div>
+                <div class="qrow"><span>Token 15, red allergy flag checked</span><span class="pill cons">In consult</span></div>
+                <div class="qrow"><span>Token 16, BP review, vitals flagged</span><span class="pill wait">Waiting</span></div>
+              </div>
+              <div class="sprockets bottom"></div>
+            </div>
+            <div class="film">
+              <div class="sprockets"></div>
+              <div class="frame">
+                <h2>Prescription</h2>
+                <p class="rx">Paracetamol 500mg, 1 tab twice daily after food, 3 days.<br>Amoxicillin 250mg, 1 cap every 8 hours, 5 days.<br>Review if fever crosses 101F.</p>
+              </div>
+              <div class="sprockets bottom"></div>
+            </div>
+          </div>
+          <p class="mt-2.5 text-[12.5px] text-slate2">Illustrative preview drawn from the real workflow: the live queue and a printed prescription.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="platform" class="bg-white">
+      <div class="page">
+        <div class="step-grid border-b border-line">
+          <p class="text-[15px] font-bold">Morning</p>
+          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Register once, queue by urgency</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Find patients by name or mobile, register walk ins in seconds. The queue orders itself by clinical urgency, not arrival time.</p></div>
+          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Triage stays honest</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Reassess urgency any time with a mandatory reason. Every change lands in an audit trail. Abnormal vitals flag right on the queue.</p></div>
+        </div>
+        <div class="step-grid border-b border-line">
+          <p class="text-[15px] font-bold">Clinic hours</p>
+          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Consult with guardrails</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Allergies, active problems and current medicines stay visible. Conflicts stop the prescription until a reason is recorded.</p></div>
+          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Only doctors finalize</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Encounters bind to a licensed practitioner whose credentials print on the prescription. Scribes and doctors are recorded separately.</p></div>
+        </div>
+        <div class="step-grid">
+          <p class="text-[15px] font-bold">Evening</p>
+          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Print, collect and close</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Prescriptions print with clinic details. Receipts record every payment. Day close reconciles the collection by method and flags what needs review.</p></div>
+          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Backup runs itself</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">A local backup every day, 30 days kept. Restore needs the recovery code plus the admin password. No reset path exists.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="safety" class="bg-wash">
+      <div class="page grid gap-8 py-12 md:grid-cols-2">
+        <div class="min-w-0">
+          <h2 class="font-display text-2xl font-bold">Safety you cannot bypass.</h2>
+          <p class="mt-2.5 text-[15px] leading-relaxed text-slate2">Provenance, allergy checks and triage history stay mandatory. Duplicate records merge through a permissioned preview with rollback, never silently.</p>
+        </div>
+        <div class="min-w-0">
+          <h2 class="font-display text-2xl font-bold">Roles keep the floor calm.</h2>
+          <p class="mt-2.5 text-[15px] leading-relaxed text-slate2">Doctors own the clinical work. Reception registers and manages the queue. Nurses record vitals. Admins own users, catalogs and backups.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="security" class="bg-film text-[#e8eef4]">
+      <div class="page grid gap-8 py-12 md:grid-cols-2">
+        <div class="min-w-0">
+          <h2 class="font-display text-[26px] font-bold leading-snug">The vault lives on your computer.</h2>
+          <p class="mt-2.5 text-[15px] leading-relaxed text-[#9fb2c8]">Full database encryption with the key in the system keyring. History, encounters and prescriptions never leave this device. There is no password reset, by design.</p>
+        </div>
+        <div class="min-w-0">
+          <h2 class="font-display text-[26px] font-bold leading-snug">Built for long shifts.</h2>
+          <p class="mt-2.5 text-[15px] leading-relaxed text-[#9fb2c8]">Light, dark and high contrast themes. Dual unit vitals. Automatic updates from an approved feed that never touch the vault on failure.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="get" class="bg-cobalt text-white">
+      <div class="page flex flex-col items-start justify-between gap-6 py-10 md:flex-row md:items-center">
+        <h2 class="font-display text-[26px] font-bold md:text-[28px]">Bring your clinic onto its own desk.</h2>
+        <a href={download} class="flex-none rounded-md bg-white px-6 py-3 text-[15px] font-bold text-cobalt">Download</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-line bg-white">
+    <div class="page flex flex-col gap-2 py-4 text-[13px] text-slate2 md:flex-row md:justify-between">
+      <span>© 2026 NalamDesk</span>
+      <span>AGPL-3.0, privacy first, offline first</span>
+    </div>
+  </footer>
+</Base>

@@ -1,0 +1,66 @@
+name: Pages CI
+
+# Validates the two Pages sites on PRs: the nalamdesk.com landing page
+# (Astro static build, deployed via Cloudflare Pages) and the docs site
+# (Docusaurus, deployed to GitHub Pages by deploy-docs.yml on master).
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'landing/**'
+      - 'cloud/documentation/**'
+      - '.github/workflows/pages-ci.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'landing/**'
+      - 'cloud/documentation/**'
+
+jobs:
+  landing:
+    name: Landing build (Astro)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./landing
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: landing/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+  docs:
+    name: Docs build (Docusaurus)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cloud/documentation
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: cloud/documentation/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

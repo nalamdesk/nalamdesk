@@ -1299,6 +1299,50 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect('abdm_callback_secret' in settings).toBe(false);
             expect('callback_secret' in settings).toBe(false);
         });
+
+        it('audits authentication lifecycle without secrets', () => {
+            service.auditLoginAttempt({ username: 'admin', ok: true, user: { id: 99, username: 'admin', role: 'admin' } });
+            service.auditLoginAttempt({ username: 'nurse_nancy', ok: false });
+            service.auditLogout({ user: { id: 20, username: 'nurse_nancy' } });
+            service.auditLogout({});
+            service.auditDenial({ user: { id: 20, role: 'nurse' }, method: 'deletePatient', channel: 'ipc' });
+            service.auditDenial({ user: null, method: 'saveSettings', channel: 'lan' });
+            const rows: any[] = service.getAuditLogs(10);
+            const actions = rows.map((r) => r.action);
+            for (const expected of ['AUTH_LOGIN', 'AUTH_LOGIN_FAIL', 'AUTH_LOGOUT', 'AUTH_DENIED']) {
+                expect(actions).toContain(expected);
+            }
+            const blob = JSON.stringify(rows);
+            expect(blob).not.toMatch(/Password1!|s3cret|argon2|\$2[aby]\$/);
+            const login = rows.find((r) => r.action === 'AUTH_LOGIN');
+            expect(login.user_id).toBe(99);
+            const denied = rows.filter((r) => r.action === 'AUTH_DENIED');
+            expect(denied).toHaveLength(2);
+            expect(denied[0].details).toContain('deletePatient');
+        });
+
+        it('keeps the audit trail append-only', () => {
+            // Static backstop (also asserted in code review): no statement
+            // outside specs mutates audit_logs after insert.
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const roots = ['src/main', 'src/server'];
+            const offenders: string[] = [];
+            const walk = (dir: string) => {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) { walk(full); continue; }
+                    if (!full.endsWith('.ts') || full.endsWith('.spec.ts')) continue;
+                    const text = fs.readFileSync(full, 'utf8');
+                    if (/UPDATE\s+audit_logs|DELETE\s+FROM\s+audit_logs/i.test(text)) {
+                        offenders.push(full);
+                    }
+                }
+            };
+            walk('src/main');
+            walk('src/server');
+            expect(offenders).toEqual([]);
+        });
         });
 
         it('keeps consent transitions monotonic', () => {

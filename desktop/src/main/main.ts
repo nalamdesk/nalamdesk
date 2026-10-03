@@ -635,14 +635,30 @@ function requirePermission(user: any, method: string, context?: Record<string, u
 function handleGuardedDb(channel: string, handler: (...args: any[]) => any) {
     const method = channel.startsWith('db:') ? channel.slice(3) : channel;
     ipcMain.handle(channel, async (...args) => databaseService.runWork(() => {
-        if (!DB_PUBLIC_METHODS.has(method) && !DB_SPLIT_METHODS.has(method)) {
-            requirePermission(sessionService.getUser(), method);
+        try {
+            if (!DB_PUBLIC_METHODS.has(method) && !DB_SPLIT_METHODS.has(method)) {
+                requirePermission(sessionService.getUser(), method);
+            }
+            return handler(...args);
+        } catch (e: any) {
+            // Authorization denials are security events: actor, role, method.
+            // Never the payload (it may carry PII or secrets).
+            if (e?.message === 'Forbidden' || e?.message === 'Unauthorized') {
+                const denied = sessionService.getUser();
+                try {
+                    databaseService.auditDenial({ user: denied, method, channel: 'ipc' });
+                } catch { /* audit must not mask the denial */ }
+            }
+            throw e;
         }
-        return handler(...args);
     }));
 }
 
 ipcMain.handle('auth:logout', () => {
+    try {
+        const user = sessionService.getUser();
+        if (user) databaseService.auditLogout({ user });
+    } catch { /* audit is best-effort on the logout path */ }
     sessionService.clearSession();
 });
 
@@ -664,10 +680,20 @@ handleDb('auth:login', async (event, credentials) => {
 
         databaseService.setDb(db);
 
+        // Authentication audit: who attempted, what role, what outcome.
+        // Usernames only — passwords and hashes never enter the audit trail.
+        const auditLogin = (ok: boolean, name: string, user: any) => {
+            try {
+                databaseService.auditLoginAttempt({ username: name, ok, user });
+            } catch { /* audit is best-effort on the login path */ }
+        };
+
         // 3. Admin fast path
         if (username === 'admin') {
             const adminResult = await handleAdminLogin(password);
             if (adminResult) {
+                const user = sessionService.getUser();
+                auditLogin(true, username, user);
                 return adminResult;
             }
             // Fallthrough to standard validation if admin user missing from DB
@@ -680,9 +706,11 @@ handleDb('auth:login', async (event, credentials) => {
         if (result.success && result.user) {
             sessionService.setUser(result.user);
             initializeServices(databaseService.getSettings());
+            auditLogin(true, username, result.user);
             return buildAuthenticatedLoginResult(sessionService.getUser()!, securityService);
         }
 
+        auditLogin(false, username, null);
         return { success: false, error: 'INVALID_CREDENTIALS' };
 
     } catch (error: any) {

@@ -109,6 +109,17 @@ describe('LAN access conformance', () => {
         }
     }, 120000);
 
+    it('audits LAN denials without payloads', async () => {
+        const denied = await postIpc('deletePatient', 'nurse');
+        expect(denied.statusCode).toBe(403);
+        const rows = (server as any).dbService.getAuditLogs(5) as any[];
+        const entry = rows.find((r) => r.action === 'AUTH_DENIED');
+        expect(entry).toBeDefined();
+        expect(entry.details).toContain('deletePatient');
+        expect(entry.details).toContain('lan');
+        expect(JSON.stringify(entry)).not.toContain('intruder-probe');
+    }, 120000);
+
     it('denies destructive and secret methods off-admin', async () => {
         for (const method of DESTRUCTIVE) {
             expect(ALLOWED_IPC_METHODS).toContain(method);

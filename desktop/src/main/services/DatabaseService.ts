@@ -3123,6 +3123,32 @@ export class DatabaseService {
         `).all(limit);
     }
 
+    /**
+     * Authentication-lifecycle audit writers (issue #13). Usernames only —
+     * passwords, hashes, tokens, and request payloads never enter the trail.
+     * Timestamps come from the DB default; rows are append-only (no UPDATE
+     * or DELETE path targets audit_logs anywhere in main sources).
+     */
+    auditLoginAttempt(input: { username: string; ok: boolean; user?: any }) {
+        const name = String(input?.username || '').slice(0, 128);
+        const user = input?.user;
+        this.logAudit(input?.ok ? 'AUTH_LOGIN' : 'AUTH_LOGIN_FAIL', 'users',
+            user?.id ?? 0, user?.id ?? null,
+            `${input?.ok ? 'Login' : 'Failed login'} for '${name}'${user?.role ? ` (${user.role})` : ''}`);
+    }
+
+    auditLogout(input: { user?: any }) {
+        const user = input?.user;
+        if (!user) return;
+        this.logAudit('AUTH_LOGOUT', 'users', user.id, user.id, `Logout for '${user.username}'`);
+    }
+
+    auditDenial(input: { user?: any; method: string; channel: 'ipc' | 'lan' }) {
+        const user = input?.user;
+        this.logAudit('AUTH_DENIED', 'rbac', 0, user?.id ?? null,
+            `${user?.role ?? 'anonymous'}#${user?.id ?? '?'} denied ${input?.method} over ${input?.channel}`);
+    }
+
     // Appointment Requests
     getAppointmentRequests() {
         const reqs = this.db.prepare("SELECT * FROM appointment_requests ORDER BY created_at DESC").all();

@@ -8,6 +8,7 @@ import { AuthService } from '../services/auth.service';
 import { VitalsFormComponent } from '../visits/vitals/vitals-form.component';
 import { newRequestId } from '../services/request-id';
 import { DialogService } from '../shared/services/dialog.service';
+import { ReasonDialogComponent } from '../shared/components/reason-dialog/reason-dialog.component';
 import { SharedTableComponent } from '../shared/components/table/table.component';
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../shared/components/view-toggle/view-toggle.component';
 import { QueueCountService } from '../shared/services/queue-count.service';
@@ -17,7 +18,7 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
 @Component({
   selector: 'app-queue',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, VitalsFormComponent, SharedTableComponent, ViewToggleComponent],
+  imports: [CommonModule, DatePipe, FormsModule, VitalsFormComponent, SharedTableComponent, ViewToggleComponent, ReasonDialogComponent],
   template: `
     <div class="h-full bg-gray-100 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
       <div class="w-full">
@@ -183,6 +184,16 @@ import { DoctorPickService } from '../shared/services/doctor-pick.service';
         [queueEntryId]="selectedQueueEntryIdForVitals"
         [visitId]="selectedVisitIdForVitals">
       </app-vitals-form>
+
+      <app-reason-dialog
+        [open]="showRemoveDialog"
+        [required]="false"
+        title="Remove from queue"
+        message="The patient leaves the live queue. Triage history is preserved in the audit trail."
+        placeholder="Reason for removal (optional)"
+        confirmText="Remove"
+        (decided)="onRemoveDecided($event)">
+      </app-reason-dialog>
     </div>
   `
 })
@@ -414,6 +425,10 @@ export class QueueComponent implements OnInit, OnDestroy {
   rowMenu: { item: any; x: number; y: number } | null = null;
   private static readonly ROW_MENU_WIDTH = 224;
 
+  // Queue removal asks for an optional audited reason.
+  pendingRemoveId: number | null = null;
+  showRemoveDialog = false;
+
   openRowMenu(item: any, event?: Event): void {
     const anchor = (event?.target as HTMLElement | undefined)?.closest?.('button');
     const rect = anchor?.getBoundingClientRect();
@@ -533,16 +548,19 @@ export class QueueComponent implements OnInit, OnDestroy {
   }
 
   async remove(id: number) {
-    const confirmed = await this.dialogService.open({
-      title: 'Remove from queue?',
-      message: 'The patient leaves the live queue. Triage history is preserved in the audit trail.',
-      type: 'confirm',
-      confirmText: 'Remove',
-      cancelText: 'Keep'
-    });
-    if (!confirmed) return;
+    // Reason is optional: triage history is preserved regardless, and the
+    // audit trail records the reason when one is given.
+    this.pendingRemoveId = id;
+    this.showRemoveDialog = true;
+  }
+
+  async onRemoveDecided(reason: string | null): Promise<void> {
+    this.showRemoveDialog = false;
+    const id = this.pendingRemoveId;
+    this.pendingRemoveId = null;
+    if (id == null || reason === null) return;
     try {
-      await this.dataService.invoke<any>('removeFromQueue', id);
+      await this.dataService.invoke<any>('removeFromQueue', { id, reason: reason.trim() });
       this.refreshQueue();
     } catch (e) {
       console.error('Remove failed', e);

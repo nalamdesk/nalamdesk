@@ -47,8 +47,8 @@ export class PatientService {
 
   constructor(private dataService: DataService) { }
 
-  async getPatients(query: string = ''): Promise<Patient[]> {
-    return await this.dataService.invoke<any>('getPatients', query);
+  async getPatients(query: string = '', includeArchived = false): Promise<Patient[]> {
+    return await this.dataService.invoke<any>('getPatients', query, includeArchived);
   }
 
   async savePatient(patient: Patient): Promise<any> {

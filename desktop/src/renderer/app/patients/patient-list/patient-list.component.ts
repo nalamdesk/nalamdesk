@@ -13,11 +13,12 @@ import { QueueCountService } from '../../shared/services/queue-count.service';
 import { PatientActionsRenderer } from './patient-actions.component';
 import { ColDef } from 'ag-grid-community';
 import { deriveAge } from '../../../../shared/patient-age';
+import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 
 @Component({
   selector: 'app-patient-list',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, ViewToggleComponent],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, ViewToggleComponent, ReasonDialogComponent],
   template: `
     <div class="h-full bg-gray-100 p-4 md:p-6 flex flex-col overflow-hidden">
       <div class="w-full">
@@ -25,6 +26,10 @@ import { deriveAge } from '../../../../shared/patient-age';
           <h1 class="text-2xl font-bold text-gray-800">Patients</h1>
           <div class="flex items-center gap-2">
             <app-view-toggle class="md:hidden" [value]="mobileView" (valueChange)="setMobileView($event)" label="Patients view"></app-view-toggle>
+            <label class="flex items-center gap-1.5 text-xs text-gray-600 border border-gray-200 bg-white rounded px-2.5 py-2 cursor-pointer hover:bg-gray-50">
+              <input type="checkbox" [checked]="showArchived" (change)="toggleArchived()" class="checkbox checkbox-xs" />
+              Show archived
+            </label>
             <button (click)="openAddModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition shadow-sm">
               + Add Patient
             </button>
@@ -99,7 +104,10 @@ import { deriveAge } from '../../../../shared/patient-age';
                 {{ p.inQueue ? 'In Queue' : 'Add to Queue' }}
               </button>
               <button (click)="$event.stopPropagation(); editPatient(p)" class="btn btn-sm btn-ghost border border-gray-200">Edit</button>
+              <button *ngIf="p?.active !== 0" (click)="$event.stopPropagation(); askArchive(p)" class="btn btn-sm btn-ghost border border-amber-200 text-amber-600">Archive</button>
+              <button *ngIf="p?.active === 0" (click)="$event.stopPropagation(); unarchivePatient(p)" class="btn btn-sm btn-ghost border border-emerald-200 text-emerald-600">Restore</button>
             </div>
+            <div *ngIf="p?.active === 0" class="mt-1.5 text-[11px] text-gray-500">Archived<span *ngIf="p?.archive_reason"> · {{ p.archive_reason }}</span></div>
           </div>
           <div *ngIf="cardSelectMode && selectedPatients.length > 0" class="sticky bottom-0 flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-2 shadow-lg">
             <button (click)="deleteSelectedPatients()" class="btn btn-sm btn-error flex-1 text-white">Delete ({{ selectedPatients.length }})</button>
@@ -316,6 +324,15 @@ import { deriveAge } from '../../../../shared/patient-age';
       </div>
 
 
+      <app-reason-dialog
+        [open]="showArchiveDialog"
+        title="Archive chart"
+        message="Archiving hides this chart from lists and counts. The record stays openable directly. This is audited."
+        placeholder="Why is this chart being archived?"
+        confirmText="Archive"
+        (decided)="onArchiveDecided($event)">
+      </app-reason-dialog>
+
     </div>
   `,
   styles: []
@@ -355,7 +372,9 @@ export class PatientListComponent implements OnInit {
       cellRenderer: PatientActionsRenderer,
       cellRendererParams: {
         onQueue: (data: any) => this.addToQueue(data),
-        onEdit: (data: any) => this.editPatient(data)
+        onEdit: (data: any) => this.editPatient(data),
+        onArchive: (data: any) => this.askArchive(data),
+        onUnarchive: (data: any) => this.unarchivePatient(data)
       },
       sortable: false,
       filter: false
@@ -549,7 +568,7 @@ export class PatientListComponent implements OnInit {
   async loadPatients() {
     this.loading = true;
     try {
-      const data = await this.patientService.getPatients(this.searchQuery);
+      const data = await this.patientService.getPatients(this.searchQuery, this.showArchived);
       this.ngZone.run(() => {
         this.patients = data;
         this.updateGridData();
@@ -558,6 +577,52 @@ export class PatientListComponent implements OnInit {
     } catch (e) {
       console.error('Failed to load patients', e);
       this.loading = false;
+    }
+  }
+
+  showArchived = false;
+  archiveTarget: any = null;
+  showArchiveDialog = false;
+
+  toggleArchived(): void {
+    this.showArchived = !this.showArchived;
+    void this.loadPatients();
+  }
+
+  askArchive(patient: any): void {
+    this.archiveTarget = patient;
+    this.showArchiveDialog = true;
+  }
+
+  async onArchiveDecided(reason: string | null): Promise<void> {
+    this.showArchiveDialog = false;
+    if (!reason || !this.archiveTarget) {
+      this.archiveTarget = null;
+      return;
+    }
+    try {
+      await this.dataService.invoke('archivePatient', { id: this.archiveTarget.id, reason });
+      this.archiveTarget = null;
+      await this.loadPatients();
+    } catch (e) {
+      await this.dialogService.open({
+        title: 'Archive failed',
+        message: e instanceof Error ? e.message : 'Could not archive the chart.',
+        type: 'error'
+      });
+    }
+  }
+
+  async unarchivePatient(patient: any): Promise<void> {
+    try {
+      await this.dataService.invoke('unarchivePatient', patient.id);
+      await this.loadPatients();
+    } catch (e) {
+      await this.dialogService.open({
+        title: 'Restore failed',
+        message: e instanceof Error ? e.message : 'Could not restore the chart.',
+        type: 'error'
+      });
     }
   }
 

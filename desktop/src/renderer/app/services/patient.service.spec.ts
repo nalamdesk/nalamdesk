@@ -25,14 +25,14 @@ describe('PatientService', () => {
             mockDataService.invoke.mockResolvedValue(mockPatients);
 
             const result = await service.getPatients('John');
-            expect(mockDataService.invoke).toHaveBeenCalledWith('getPatients', 'John');
+            expect(mockDataService.invoke).toHaveBeenCalledWith('getPatients', 'John', false);
             expect(result).toEqual(mockPatients);
         });
 
         it('should default query to empty string', async () => {
             mockDataService.invoke.mockResolvedValue([]);
             await service.getPatients();
-            expect(mockDataService.invoke).toHaveBeenCalledWith('getPatients', '');
+            expect(mockDataService.invoke).toHaveBeenCalledWith('getPatients', '', false);
         });
     });
 

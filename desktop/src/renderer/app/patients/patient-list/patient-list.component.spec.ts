@@ -67,13 +67,13 @@ describe('PatientListComponent', () => {
         await component.loadPatients();
 
         expect(component.patients).toEqual(patients);
-        expect(mockPatientService.getPatients).toHaveBeenCalledWith('');
+        expect(mockPatientService.getPatients).toHaveBeenCalledWith('', false);
     });
 
     it('should search patients', async () => {
         component.searchQuery = 'Doe';
         await component.onSearch();
-        expect(mockPatientService.getPatients).toHaveBeenCalledWith('Doe');
+        expect(mockPatientService.getPatients).toHaveBeenCalledWith('Doe', false);
     });
 
     it('should add patient to queue', async () => {

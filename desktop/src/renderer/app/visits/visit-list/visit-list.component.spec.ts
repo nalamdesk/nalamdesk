@@ -104,4 +104,20 @@ describe('VisitListComponent layout', () => {
         component.searchTerm = 'no-match-xyz';
         expect(component.visibleVisits()).toHaveLength(0);
     });
+
+    it('marks selected visits entered-in-error with one shared reason', async () => {
+        const component = new VisitListComponent({ run: (fn: () => void) => fn() } as any, { navigate: vi.fn() } as any);
+        const invoke = vi.fn(() => Promise.resolve(null));
+        (component as any).dataService = { invoke };
+        component.selectedVisits = [{ id: 1 }, { id: 2 }] as any;
+
+        await component.deleteSelectedVisits();
+        expect(component.showVisitsErrorDialog).toBe(true);
+        expect(invoke).not.toHaveBeenCalled();
+
+        await component.onVisitsErrorDecided('duplicate entry');
+        expect(invoke).toHaveBeenCalledWith('markVisitEnteredInError', { id: 1, reason: 'duplicate entry' });
+        expect(invoke).toHaveBeenCalledWith('markVisitEnteredInError', { id: 2, reason: 'duplicate entry' });
+        expect(component.selectedVisits).toEqual([]);
+    });
 });

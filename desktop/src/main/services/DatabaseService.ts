@@ -3466,9 +3466,8 @@ export class DatabaseService {
                 return this.checkInCore(Number(appt.id), actingUserId);
             }
             return this._transitionAppointment(Number(appt.id), target, {
-                reason: appt.status_reason, actorId: actingUserId ?? undefined,
-                date: appt.date, time: appt.time
-            });
+                reason: appt.status_reason, date: appt.date, time: appt.time
+            }, actingUserId ?? undefined);
         });
         return save();
     }
@@ -3594,12 +3593,12 @@ export class DatabaseService {
         'no-show': []
     };
 
-    transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }) {
+    transitionAppointment(id: number, to: string, input?: { reason?: string; date?: string; time?: string }, actorId?: number) {
         // Transactional core split: checkInAppointment and fulfillAppointment
         // call the core inside their own transactions (better-sqlite3
         // transactions do not nest), while direct callers get atomicity here.
         return this.db.transaction(() =>
-            this._transitionAppointment(Number(id), String(to || ''), input))();
+            this._transitionAppointment(Number(id), String(to || ''), input, actorId))();
     }
 
     /**
@@ -3612,7 +3611,7 @@ export class DatabaseService {
         confirmed: 'confirmed', cancelled: 'cancelled'
     };
 
-    private _transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }, opts?: { allowFulfill?: boolean; allowArrive?: boolean }) {
+    private _transitionAppointment(id: number, to: string, input?: { reason?: string; date?: string; time?: string }, actorId?: number, priv?: { allowFulfill?: boolean; allowArrive?: boolean }) {
         const rawTarget = String(to || '').toLowerCase();
         const target = DatabaseService.APPOINTMENT_STATUS_ALIASES[rawTarget] || rawTarget;
         if (!DatabaseService.APPOINTMENT_STATUSES.includes(target)) {
@@ -3623,8 +3622,8 @@ export class DatabaseService {
         const from = String(row.status || '').toLowerCase();
         const allowed = DatabaseService.APPOINTMENT_TRANSITIONS[from] || [];
         const privileged =
-            (target === 'fulfilled' && from === 'arrived' && opts?.allowFulfill) ||
-            (target === 'arrived' && from === 'confirmed' && opts?.allowArrive);
+            (target === 'fulfilled' && from === 'arrived' && priv?.allowFulfill) ||
+            (target === 'arrived' && from === 'confirmed' && priv?.allowArrive);
         if (!allowed.includes(target) && !privileged) {
             throw new Error(`Cannot move appointment from ${from || 'unknown'} to ${target}.`);
         }
@@ -3632,7 +3631,7 @@ export class DatabaseService {
         if ((target === 'cancelled' || target === 'no-show') && !reason) {
             throw new Error('A reason is required to cancel or mark no-show.');
         }
-        const actorId = input?.actorId != null ? Number(input.actorId) : null;
+        const actor = actorId != null ? Number(actorId) : null;
         const updates: string[] = ['status = ?'];
         const params: unknown[] = [target];
         // First reschedule stamps BOTH originals, even when only one side
@@ -3664,8 +3663,8 @@ export class DatabaseService {
         this.db.prepare(`INSERT INTO appointment_history
             (appointment_id, from_status, to_status, reason, actor_id)
             VALUES (?, ?, ?, ?, ?)`)
-            .run(Number(id), from, target, reason || null, actorId);
-        this.logAudit('APPOINTMENT_TRANSITION', 'appointments', Number(id), actorId,
+            .run(Number(id), from, target, reason || null, actor);
+        this.logAudit('APPOINTMENT_TRANSITION', 'appointments', Number(id), actor,
             `Appointment ${from} -> ${target}${reason ? `: ${reason}` : ''}`);
         return { id: Number(id), from, to: target };
     }
@@ -3732,14 +3731,21 @@ export class DatabaseService {
     private checkInCore(id: number, actingUserId?: number) {
         const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
         if (!row) throw new Error('Appointment not found.');
+        // Status first: terminals and non-queueable states never reach the
+        // reuse check, so a cancelled row with a stale live queue entry
+        // cannot check itself back in through the reuse shortcut.
+        const state = String(row.status || '').toLowerCase();
+        if (!['confirmed', 'arrived'].includes(state)) {
+            throw new Error(`Cannot check in an appointment with status ${state || 'unknown'}.`);
+        }
         if (row.queue_entry_id) {
             const live = this.db.prepare(
                 `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
                 .get(Number(row.queue_entry_id)) as any;
             if (live) return { appointmentId: Number(id), queueEntryId: Number(row.queue_entry_id), reused: true };
         }
-        if (String(row.status || '').toLowerCase() !== 'arrived') {
-            this._transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined }, { allowArrive: true });
+        if (state !== 'arrived') {
+            this._transitionAppointment(Number(id), 'arrived', undefined, actingUserId ?? undefined, { allowArrive: true });
         }
         const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
         const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
@@ -3761,7 +3767,7 @@ export class DatabaseService {
             if (Number(visit.patient_id) !== Number(row.patient_id)) {
                 throw new Error('Visit belongs to another patient.');
             }
-            const moved = this._transitionAppointment(Number(id), 'fulfilled', { actorId: actingUserId ?? undefined }, { allowFulfill: true });
+            const moved = this._transitionAppointment(Number(id), 'fulfilled', undefined, actingUserId ?? undefined, { allowFulfill: true });
             this.db.prepare('UPDATE appointments SET visit_id = ? WHERE id = ?').run(Number(visitId), Number(id));
             return { ...moved, visitId: Number(visitId) };
         });

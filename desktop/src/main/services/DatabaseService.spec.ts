@@ -296,7 +296,7 @@ describe('DatabaseService', () => {
 
         it('moves bookings through allowed transitions with history and audit', () => {
             keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', date: '2026-10-05', time: '10:00' } });
-            const moved = service.transitionAppointment(1, 'confirmed', { actorId: 9 });
+            const moved = service.transitionAppointment(1, 'confirmed', {}, 9);
             expect(moved).toMatchObject({ id: 1, from: 'booked', to: 'confirmed' });
             const sql = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
             expect(sql).toContain('INSERT INTO appointment_history');

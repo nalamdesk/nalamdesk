@@ -70,8 +70,10 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
         }
         case 'transitionAppointment': {
             const payload = payloadObject(args[0]);
+            // actorId travels positionally from the session, never from the
+            // payload: there is no input field to forge.
             return [Number(payload['id'] ?? args[0]), String(payload['to'] || ''),
-                { reason: payload['reason'], actorId: actingUserId, date: payload['date'], time: payload['time'] }];
+                { reason: payload['reason'], date: payload['date'], time: payload['time'] }, actingUserId];
         }
         case 'getAppointmentHistory':
         case 'checkInAppointment': {

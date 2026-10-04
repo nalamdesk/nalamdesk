@@ -84,3 +84,22 @@ export function loadAppVersionInfo(app: {
         identity
     });
 }
+
+const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * Reads a semver version from `<dir>/package.json`. Used to pin
+ * `app.setVersion()` for unpacked dev runs on platforms without bundled
+ * version metadata (Linux), where `app.getVersion()` would otherwise resolve
+ * to "0.0" and crash electron-updater at first access. Returns null unless a
+ * valid semver version is found, so callers never pin a bad value.
+ */
+export function readPackageVersion(packageDir: string, readFile = (p: string) => fs.readFileSync(p, 'utf8')): string | null {
+    try {
+        const parsed = JSON.parse(readFile(path.join(packageDir, 'package.json'))) as { version?: unknown };
+        const version = typeof parsed?.version === 'string' ? parsed.version.trim() : '';
+        return SEMVER_RE.test(version) ? version : null;
+    } catch {
+        return null;
+    }
+}

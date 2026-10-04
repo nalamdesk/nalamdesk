@@ -129,11 +129,12 @@ the responsible doctor. Only a `doctor` account finalizes encounters.
    view mode. **Copy to Current** pulls a previous visit's content
    forward for editing.
 9. **Prescription QR**: printed PDFs carry a scannable QR in the
-   footer encoding the medicines, doses, schedules, patient, doctor,
-   and date (compressed, versioned `ND1.` payload). Any scanner
-   reading the code recovers the structured prescription offline.
-   Oversized prescriptions print without a QR rather than an
-   unscannable one.
+   footer encoding the medicines, doses, routes, schedules, patient,
+   doctor, and date (compressed, versioned `ND1.` payload). Any
+   scanner reading the code recovers the structured prescription
+   offline. Oversized prescriptions print without a QR rather than an
+   unscannable one. The QR is a convenience copy: always cross-check
+   against the printed prescription and the doctor's signature.
 9. **Complete Consultation**: signing stamps the responsible doctor's
    name, license number, and specialty onto the visit, marks it
    finished, and syncs prescribed medicines into the active medication

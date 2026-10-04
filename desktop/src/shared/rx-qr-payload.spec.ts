@@ -8,8 +8,8 @@ const input = {
     date: '2026-01-15T10:00:00Z',
     diagnosis: 'Common Cold',
     lines: [
-        { medicine: 'Paracetamol (Crocin)', dosage: '500mg', frequency: '1-0-1', duration: '5 days', instruction: 'After food' },
-        { medicine: 'Cetirizine', dosage: '10mg', frequency: '0-0-1', duration: '3 days', instruction: 'Before sleep' }
+        { medicine: 'Paracetamol (Crocin)', dosage: '500mg', route: 'Oral', frequency: '1-0-1', duration: '5 days', instruction: 'After food' },
+        { medicine: 'Cetirizine', dosage: '10mg', route: 'Oral', frequency: '0-0-1', duration: '3 days', instruction: 'Before sleep' }
     ]
 };
 
@@ -24,6 +24,7 @@ describe('rx-qr-payload', () => {
         expect(decoded.p[0]).toBe('John Doe');
         expect(decoded.rx).toHaveLength(2);
         expect(decoded.rx[0][0]).toBe('Paracetamol (Crocin)');
+        expect(decoded.rx[0][2]).toBe('Oral');
     });
 
     it('renders through the real QR encoder within capacity', async () => {
@@ -50,5 +51,18 @@ describe('rx-qr-payload', () => {
             }))
         };
         expect(() => encodeRxQr(big)).toThrow('too large for QR');
+    });
+
+    it('refuses inflate bombs that expand past the accepted limit', () => {
+        // Crafted tiny payload expanding beyond 64KB: still decodes structurally,
+        // but the guard must fire before JSON.parse sees it.
+        const huge = 'a'.repeat(70000);
+        const { deflateSync, strToU8 } = require('fflate') as typeof import('fflate');
+        const bytes = deflateSync(strToU8(JSON.stringify({ app: 'ND-Rx', v: 1, p: [huge], rx: [] })));
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCodePoint(byte);
+        let out = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
+        while (out.endsWith('=')) out = out.slice(0, -1);
+        expect(() => decodeRxQr('ND1.' + out)).toThrow('beyond the accepted limit');
     });
 });

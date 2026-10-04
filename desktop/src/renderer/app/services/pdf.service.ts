@@ -70,6 +70,7 @@ export class PdfService {
                 lines: (visit.prescription || []).map((p: any) => ({
                     medicine: formatRxMedicineName(p),
                     dosage: p.dosage,
+                    route: p.route,
                     frequency: p.frequency,
                     duration: p.duration,
                     instruction: p.instruction

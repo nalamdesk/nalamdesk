@@ -2,6 +2,7 @@ import { MIGRATIONS } from '../schema/migrations';
 import * as catalog from '../catalog/catalogStore';
 import { createHash } from 'node:crypto';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
+import { validateAbhaNumber, validateIdentifier } from '../../shared/patient-identifiers';
 
 export class DatabaseService {
     private db: any;
@@ -812,11 +813,16 @@ export class DatabaseService {
             return this.db.prepare(`SELECT * FROM patients WHERE merged_into IS NULL ${includeArchived ? '' : 'AND active != 0'} ORDER BY created_at DESC LIMIT 50`).all();
         }
         const search = `%${query.trim()}%`;
+        // Identifier-aware search (#55): chart columns plus the
+        // extensible registry, so an ABHA number or insurance id finds
+        // the chart without knowing which system holds it.
         return this.db.prepare(`
         SELECT * FROM patients
-      WHERE (name LIKE ? OR mobile LIKE ? OR mrn LIKE ?) AND merged_into IS NULL ${includeArchived ? '' : 'AND active != 0'}
+      WHERE (name LIKE ? OR mobile LIKE ? OR mrn LIKE ? OR abha_number LIKE ? OR abha_address LIKE ?
+        OR EXISTS (SELECT 1 FROM patient_identifiers WHERE patient_id = patients.id AND value LIKE ?))
+        AND merged_into IS NULL ${includeArchived ? '' : 'AND active != 0'}
             ORDER BY created_at DESC
-                `).all(search, search, search);
+                `).all(search, search, search, search, search, search);
     }
 
     /**
@@ -832,13 +838,13 @@ export class DatabaseService {
             uuid, name, mobile, age, gender, address,
             dob, dob_estimated, blood_group, email, emergency_contact_name, emergency_contact_mobile,
             street, city, state, zip_code, insurance_provider, policy_number,
-            abha_address, abha_name, mrn
+            abha_address, abha_name, abha_number, mrn
         )
         VALUES(
             @uuid, @name, @mobile, @age, @gender, @address,
             @dob, @dob_estimated, @blood_group, @email, @emergency_contact_name, @emergency_contact_mobile,
             @street, @city, @state, @zip_code, @insurance_provider, @policy_number,
-            @abha_address, @abha_name, @mrn
+            @abha_address, @abha_name, @abha_number, @mrn
         )
             `).run({ ...patient, mrn: patient.mrn ?? null });
         } catch (e: any) {
@@ -846,6 +852,9 @@ export class DatabaseService {
             // future unique columns) must surface unmasked.
             if (/UNIQUE constraint failed: patients\.mrn/.test(String(e?.message || ''))) {
                 throw new Error('MRN is already registered.');
+            }
+            if (/UNIQUE constraint failed: patients\.abha_number/.test(String(e?.message || ''))) {
+                throw new Error('ABHA number is already registered.');
             }
             throw e;
         }
@@ -856,16 +865,21 @@ export class DatabaseService {
      * mobile, and name+DOB matches. Shared phone numbers score lower and
      * are labeled as possible (never identical) — twins and families share
      * numbers. Merged-away charts are excluded from results.
+     * Identifier matches (#55) score like MRN: a national id collision
+     * almost always means the same person, mistyped or re-registered.
      */
     findDuplicateCandidates(input: {
-        name?: string; dob?: string | null; mobile?: string; mrn?: string; excludeId?: number;
+        name?: string; dob?: string | null; mobile?: string; mrn?: string;
+        abhaNumber?: string; identifier?: string; excludeId?: number;
     }) {
         const name = String(input?.name || '').trim();
         const dob = input?.dob ? String(input.dob).slice(0, 10) : '';
         const mobile = String(input?.mobile || '').trim();
         const mrn = String(input?.mrn || '').trim();
+        const abhaNumber = String(input?.abhaNumber || '').trim();
+        const identifier = String(input?.identifier || '').trim();
         const excludeId = Number(input?.excludeId) || 0;
-        if (!name && !mobile && !mrn) return [];
+        if (!name && !mobile && !mrn && !abhaNumber && !identifier) return [];
         // SQL prefilter first: JS scoring runs over the matching subset,
         // never the whole chart table on every keystroke.
         const filters: string[] = [];
@@ -873,6 +887,10 @@ export class DatabaseService {
         if (mrn) {
             filters.push('LOWER(mrn) = LOWER(?)');
             params.push(mrn);
+        }
+        if (abhaNumber) {
+            filters.push('abha_number = ?');
+            params.push(abhaNumber);
         }
         if (mobile) {
             filters.push('mobile = ?');
@@ -882,8 +900,13 @@ export class DatabaseService {
             filters.push('LOWER(name) = LOWER(?)');
             params.push(name);
         }
+        if (identifier) {
+            filters.push(`EXISTS (SELECT 1 FROM patient_identifiers
+                WHERE patient_id = patients.id AND LOWER(value) = LOWER(?))`);
+            params.push(identifier);
+        }
         params.push(excludeId);
-        const rows = this.db.prepare(`SELECT id, uuid, mrn, name, mobile, age, gender, dob, dob_estimated
+        const rows = this.db.prepare(`SELECT id, uuid, mrn, name, mobile, age, gender, dob, dob_estimated, abha_number
             FROM patients WHERE (${filters.join(' OR ')}) AND (merged_into IS NULL) AND id != ?`)
             .all(...params) as any[];
         const scored: { patient: any; signals: string[]; score: number }[] = [];
@@ -892,6 +915,10 @@ export class DatabaseService {
             let score = 0;
             if (mrn && row.mrn && String(row.mrn).toLowerCase() === mrn.toLowerCase()) {
                 signals.push('mrn');
+                score = Math.max(score, 100);
+            }
+            if (abhaNumber && row.abha_number && String(row.abha_number) === abhaNumber) {
+                signals.push('abha-number');
                 score = Math.max(score, 100);
             }
             const rowDob = row.dob ? String(row.dob).slice(0, 10) : '';
@@ -910,7 +937,81 @@ export class DatabaseService {
             }
             if (signals.length > 0) scored.push({ patient: row, signals, score });
         }
+        // Registry hits join by id: they matched SQL but carry their own signal.
+        if (identifier) {
+            const hits = this.db.prepare(`SELECT patient_id FROM patient_identifiers
+                WHERE LOWER(value) = LOWER(?)`).all(identifier) as any[];
+            const hitIds = new Set(hits.map((h: any) => Number(h.patient_id)));
+            for (const entry of scored) {
+                if (hitIds.has(Number(entry.patient.id)) && !entry.signals.includes('identifier')) {
+                    entry.signals.push('identifier');
+                    entry.score = Math.max(entry.score, 100);
+                }
+            }
+        }
         return scored.sort((a, b) => b.score - a.score).slice(0, 10);
+    }
+
+    /**
+     * Flexible identifiers (issue #55): every chart can carry MRN,
+     * ABHA number/address, insurance, and free-form ids at once.
+     * Values are validated per system and unique per (system, value)
+     * across all charts — a national id must never point at two charts.
+     */
+    getIdentifiers(patientId: number) {
+        return this.db.prepare(`SELECT id, patient_id, system, type_code, value, is_primary, created_at
+            FROM patient_identifiers WHERE patient_id = ? ORDER BY is_primary DESC, system, value`)
+            .all(Number(patientId));
+    }
+
+    saveIdentifier(patientId: number, input: { system: string; typeCode?: string; value: string; isPrimary?: boolean }, actingUserId?: number) {
+        const pid = Number(patientId);
+        if (!pid) throw new Error('A chart is required for identifiers.');
+        const canonical = validateIdentifier(input?.system, input?.value);
+        const clash = this.db.prepare(
+            'SELECT patient_id FROM patient_identifiers WHERE system = ? AND value = ?')
+            .get(input.system, canonical) as any;
+        if (clash && Number(clash.patient_id) !== pid) {
+            throw new Error('This identifier is already registered on another chart.');
+        }
+        const existing = this.db.prepare(
+            'SELECT id FROM patient_identifiers WHERE patient_id = ? AND system = ? AND value = ?')
+            .get(pid, input.system, canonical) as any;
+        if (input?.isPrimary) {
+            this.db.prepare('UPDATE patient_identifiers SET is_primary = 0 WHERE patient_id = ?').run(pid);
+        }
+        if (existing) {
+            this.db.prepare(`UPDATE patient_identifiers
+                SET type_code = ?, is_primary = ? WHERE id = ?`)
+                .run(input?.typeCode ?? null, input?.isPrimary ? 1 : 0, existing.id);
+            return { id: existing.id, updated: true };
+        }
+        const result = this.db.prepare(`INSERT INTO patient_identifiers
+            (patient_id, system, type_code, value, is_primary)
+            VALUES (?, ?, ?, ?, ?)`)
+            .run(pid, input.system, input?.typeCode ?? null, canonical, input?.isPrimary ? 1 : 0);
+        if (actingUserId) {
+            this.logAudit('IDENTIFIER_ADD', 'patient_identifiers', result.lastInsertRowid as number,
+                actingUserId, `Added ${input.system} identifier to chart ${pid}`);
+        }
+        return { id: result.lastInsertRowid, updated: false };
+    }
+
+    deleteIdentifier(id: number, actingUserId?: number) {
+        const row = this.db.prepare(
+            'SELECT patient_id, system, value FROM patient_identifiers WHERE id = ?').get(Number(id)) as any;
+        if (!row) throw new Error('Identifier not found.');
+        // The clinic MRN lives on patients.mrn as the fast path: removing
+        // its registry row must not orphan the chart's primary pointer.
+        if (row.system === 'mrn') {
+            throw new Error('The clinic MRN cannot be removed; it is the chart identity.');
+        }
+        this.db.prepare('DELETE FROM patient_identifiers WHERE id = ?').run(Number(id));
+        if (actingUserId) {
+            this.logAudit('IDENTIFIER_REMOVE', 'patient_identifiers', Number(id),
+                actingUserId, `Removed ${row.system} identifier from chart ${row.patient_id}`);
+        }
+        return { deleted: true };
     }
 
     /** Tables whose patient_id rows move on merge (queue history follows queue rows). */
@@ -1525,12 +1626,20 @@ export class DatabaseService {
             emergency_contact_name: null, emergency_contact_mobile: null,
             street: null, city: null, state: null, zip_code: null,
             insurance_provider: null, policy_number: null,
-            abha_address: null, abha_name: null,
+            abha_address: null, abha_name: null, abha_number: null,
             address: '', age: 0, gender: '', mobile: '', name: ''
         };
 
         const patient = { ...defaults, ...patientData };
         patient.dob_estimated = patient.dob_estimated ? 1 : 0;
+
+        // ABHA numbers validate (shape + checksum) and stay unique
+        // nationally; blank means "none on file", never stored as ''.
+        if (patient.abha_number != null && String(patient.abha_number).trim() !== '') {
+            patient.abha_number = validateAbhaNumber(patient.abha_number);
+        } else {
+            patient.abha_number = null;
+        }
 
         if (patient.id) {
             // Health ID links live outside demographic edits: an edit form
@@ -1538,11 +1647,18 @@ export class DatabaseService {
             // goes only through linkAbhaAddress.
             if (patient.abha_address == null || patient.abha_address === '') {
                 const stored = this.db.prepare(
-                    'SELECT abha_address, abha_name FROM patients WHERE id = ?').get(patient.id) as any;
+                    'SELECT abha_address, abha_name, abha_number FROM patients WHERE id = ?').get(patient.id) as any;
                 patient.abha_address = stored?.abha_address ?? null;
                 if (patient.abha_name == null || patient.abha_name === '') {
                     patient.abha_name = stored?.abha_name ?? null;
                 }
+            }
+            // ABHA number follows the same rule: an edit form that omits
+            // it must not silently clear the nationally-unique number.
+            if (patientData?.abha_number == null || String(patientData.abha_number).trim() === '') {
+                const stored = this.db.prepare(
+                    'SELECT abha_number FROM patients WHERE id = ?').get(patient.id) as any;
+                patient.abha_number = stored?.abha_number ?? null;
             }
             // Gender is never blanked by an edit: omitted keeps the stored
             // value, an explicit blank is rejected like on registration.
@@ -1574,7 +1690,7 @@ export class DatabaseService {
             zip_code = @zip_code,
             insurance_provider = @insurance_provider,
             policy_number = @policy_number,
-            abha_address = @abha_address, abha_name = @abha_name
+            abha_address = @abha_address, abha_name = @abha_name, abha_number = @abha_number
         WHERE id = @id
             `).run(patient);
         } else {

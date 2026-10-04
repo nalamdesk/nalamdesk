@@ -145,6 +145,21 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['id'] ?? payload['visitId'] ?? args[0]), String(payload['reason'] || ''), actingUserId];
         }
+        case 'getIdentifiers': {
+            return [Number(payloadObject(args[0])['patientId'] ?? args[0])];
+        }
+        case 'saveIdentifier': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['patientId'] ?? args[0]), {
+                system: payload['system'],
+                typeCode: payload['typeCode'],
+                value: payload['value'],
+                isPrimary: payload['isPrimary']
+            }, actingUserId];
+        }
+        case 'deleteIdentifier': {
+            return [Number(payloadObject(args[0])['id'] ?? args[0]), actingUserId];
+        }
         default:
             if (ENCOUNTER_METHODS.has(method)) {
                 return [...args, actingUserId];

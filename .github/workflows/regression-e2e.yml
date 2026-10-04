@@ -82,7 +82,9 @@ jobs:
           ELECTRON_ENABLE_LOGGING: 1
         run: |
           npm run build:main
-          timeout 25 xvfb-run -a node_modules/.bin/electron --password-store=basic dist/main/main.js > /tmp/preflight.log 2>&1; code=$?
+          # NB: `|| code=$?` — without it, `set -e` kills the step on
+          # timeout's 124 before the diagnostics below can run.
+          timeout 25 xvfb-run -a node_modules/.bin/electron dist/main/main.js > /tmp/preflight.log 2>&1 || code=$?
           tail -30 /tmp/preflight.log
           if [ $code -ne 124 ]; then echo "app exited early (code=$code)"; exit 1; fi
           grep -q "BrowserWindow created" /tmp/preflight.log || { echo "no window created within 25s"; exit 1; }

@@ -380,6 +380,15 @@ describe('DatabaseService', () => {
                 .toThrow('live queue entry');
         });
 
+        it('blocks reassignment-plus-arrive in a single status payload', () => {
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'confirmed', patient_id: 3, queue_entry_id: 9 },
+                'FROM patient_queue WHERE id': { id: 9 }
+            });
+            expect(() => service.saveAppointment({ id: 1, patient_id: 7, status: 'CHECKED_IN' }, 9))
+                .toThrow('live queue entry');
+        });
+
         it('rejects malformed slot inputs without matching', () => {
             keyDb({ 'FROM appointments WHERE': [] });
             expect(service.detectConflicts({ date: '2026-10-05', time: '99:99' })).toEqual([]);

@@ -3451,6 +3451,12 @@ export class DatabaseService {
         const raw = String(appt.status || '').toLowerCase();
         const target = DatabaseService.APPOINTMENT_STATUS_ALIASES[raw] || raw;
         const save = this.db.transaction(() => {
+            // Guard before any write: a patient change under a live queue
+            // entry must fail here, not strand the queue row downstream.
+            const before = this.db.prepare('SELECT * FROM appointments WHERE id = ?')
+                .get(Number(appt.id)) as any;
+            if (!before) throw new Error('Appointment not found.');
+            this.assertReassignSafe(before, appt.patient_id);
             // Field edits land first in every branch, so check-in and the
             // transition core both observe the final row (patient, slot).
             this.applyAppointmentFields(appt, true);
@@ -3468,9 +3474,22 @@ export class DatabaseService {
     }
 
     /**
-     * Field-only edit (no status move): reschedules stamp originals and
-     * write history, so provenance survives without a state change.
+     * Reassignment guard shared by both write paths: changing the patient
+     * under a live queue entry would strand the queue row on the old
+     * patient (or hand back their live entry on reuse). Cancel and
+     * rebook instead.
      */
+    private assertReassignSafe(row: any, newPatientId: unknown) {
+        if (newPatientId === undefined) return;
+        if (Number(newPatientId) === Number(row?.patient_id)) return;
+        if (!row?.queue_entry_id) return;
+        const live = this.db.prepare(
+            `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
+            .get(Number(row.queue_entry_id)) as any;
+        if (live) {
+            throw new Error('Cannot reassign an appointment with a live queue entry. Cancel and rebook instead.');
+        }
+    }
     private saveAppointmentFields(appt: any, actingUserId?: number) {
         const save = this.db.transaction(() => {
             const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?')
@@ -3485,18 +3504,8 @@ export class DatabaseService {
             const timeMoved = appt.time !== undefined && String(appt.time) !== String(row.time);
             const patientMoved = appt.patient_id !== undefined && Number(appt.patient_id) !== Number(row.patient_id);
             const doctorMoved = appt.doctor_id !== undefined && Number(appt.doctor_id ?? null) !== Number(row.doctor_id ?? null);
-            // Reassigning under a live queue entry would strand the queue row
-            // on the old patient while the booking points at the new one:
-            // cancel and rebook instead. The reuse check in check-in can
-            // otherwise hand back another patient's live entry.
-            if (patientMoved && row.queue_entry_id) {
-                const live = this.db.prepare(
-                    `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
-                    .get(Number(row.queue_entry_id)) as any;
-                if (live) {
-                    throw new Error('Cannot reassign an appointment with a live queue entry. Cancel and rebook instead.');
-                }
-            }
+            // Shared guard: no reassignment under a live queue entry.
+            this.assertReassignSafe(row, appt.patient_id);
             this.applyAppointmentFields(appt, true);
             const notes: string[] = [];
             if (dateMoved || timeMoved) {

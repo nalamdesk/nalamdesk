@@ -850,5 +850,20 @@ describe('Database Migrations', () => {
             expect(seen.some((s) => s.includes('INSERT OR IGNORE INTO condition_catalog'))).toBe(true);
             expect(seen.some((s) => s.includes('INSERT OR IGNORE INTO medicine_catalog'))).toBe(true);
         });
+
+        it('stamps ICD-10, ICD-11 code plus URI, and NLEM generics', () => {
+            const runs: any[][] = [];
+            mockDb.prepare.mockImplementation(() => ({ run: (...args: any[]) => { runs.push(args); }, get: vi.fn() }));
+            MIGRATIONS.find((m) => m.version === 40)!.up(mockDb);
+            const condInserts = runs.filter((a) => typeof a[0] === 'string' && a[0] === 'Essential hypertension');
+            expect(condInserts.length).toBeGreaterThan(0);
+            // [name, icd10, icd11, uri]
+            expect(condInserts[0][1]).toBe('I10');
+            expect(condInserts[0][2]).toBe('BA00.Z');
+            expect(condInserts[0][3]).toContain('id.who.int/icd/release/11');
+            const nlemInserts = runs.filter((a) => typeof a[0] === 'string' && a[0] === 'Zolpidem');
+            expect(nlemInserts.length).toBeGreaterThan(0);
+            expect(nlemInserts[0][1]).toBe('Zolpidem');
+        });
     });
 });

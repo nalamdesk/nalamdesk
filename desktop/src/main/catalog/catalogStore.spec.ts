@@ -204,6 +204,13 @@ describe('condition and medicine catalogs', () => {
         expect(hyper.some((c: any) => c.icd10_code === 'I10')).toBe(true);
     });
 
+    it('ships ICD-11 codes with URIs from the WHO mapping', () => {
+        const hyper = service.searchConditions('hypertension');
+        const row = hyper.find((c: any) => c.name === 'Essential hypertension') as any;
+        expect(row.icd11_code).toBe('BA00.Z');
+        expect(row.icd11_uri).toContain('id.who.int/icd/release/11');
+    });
+
     it('updates generics and codes without losing Rx defaults', () => {
         const medicine = service.createMedicine({ name: 'GenUp', dosage: '500mg' });
         const updated = service.updateMedicine({ id: medicine.id, generic_name: 'Paracetamol', brand_name: 'GenBrand' });

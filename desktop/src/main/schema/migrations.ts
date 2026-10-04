@@ -1503,14 +1503,16 @@ export const MIGRATIONS = [
             try { db.exec('ALTER TABLE condition_catalog ADD COLUMN icd10_code TEXT'); } catch (e) { }
             try { db.exec('ALTER TABLE condition_catalog ADD COLUMN snomed_code TEXT'); } catch (e) { }
             try { db.exec('ALTER TABLE condition_catalog ADD COLUMN icd11_code TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE condition_catalog ADD COLUMN icd11_uri TEXT'); } catch (e) { }
             const insertCondition = db.prepare(`INSERT OR IGNORE INTO condition_catalog
-                (name, icd10_code, active, created_at, updated_at)
-                VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
+                (name, icd10_code, icd11_code, icd11_uri, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
             const stampCondition = db.prepare(`UPDATE condition_catalog
-                SET icd10_code = ? WHERE name = ? AND (icd10_code IS NULL OR icd10_code = '')`);
-            for (const [name, icd10] of SEED_CONDITIONS) {
-                insertCondition.run(name, icd10);
-                stampCondition.run(icd10, name);
+                SET icd10_code = ?, icd11_code = ?, icd11_uri = ?
+                WHERE name = ? AND (icd11_code IS NULL OR icd11_code = '')`);
+            for (const [name, icd10, icd11, uri] of SEED_CONDITIONS) {
+                insertCondition.run(name, icd10, icd11, uri);
+                stampCondition.run(icd10, icd11, uri, name);
             }
             const insertMedicine = db.prepare(`INSERT OR IGNORE INTO medicine_catalog
                 (name, generic_name, brand_name, form, dosage, route, frequency, duration, instruction,
@@ -1536,68 +1538,71 @@ export const MIGRATIONS = [
 ];
 
 /**
- * Essential outpatient conditions with ICD-10 (issue #56 seed core).
+ * Essential outpatient conditions (issue #56 seed core).
+ * ICD-10: handbook-mapped common codes. ICD-11 MMS: mapped 2026-10-04 via
+ * the WHO ICD-API (release 2025-01, MMS linearization) -- script at
+ * desktop/scripts/map_icd11.py. URIs ship with codes per CC BY-ND 3.0 IGO.
+ * (c) WHO -- see suggested citation in desktop/scripts/map_icd11.py.
  * Curated, extensible: append rows, never edit shipped ones.
  */
-const SEED_CONDITIONS: Array<[string, string]> = [
-    ['Essential hypertension', 'I10'],
-    ['Type 2 diabetes mellitus', 'E11.9'],
-    ['Type 1 diabetes mellitus', 'E10.9'],
-    ['Acute upper respiratory infection', 'J06.9'],
-    ['Acute pharyngitis', 'J02.9'],
-    ['Acute bronchitis', 'J20.9'],
-    ['Asthma', 'J45.909'],
-    ['COPD', 'J44.9'],
-    ['Pneumonia', 'J18.9'],
-    ['Chronic sinusitis', 'J32.9'],
-    ['Allergic rhinitis', 'J30.9'],
-    ['Chronic rhinitis', 'J31.0'],
-    ['Gastritis', 'K29.70'],
-    ['Gastro-oesophageal reflux disease', 'K21.9'],
-    ['Dyspepsia', 'K30'],
-    ['Irritable bowel syndrome', 'K58.9'],
-    ['Constipation', 'K59.00'],
-    ['Infectious diarrhoea', 'A09'],
-    ['Typhoid fever', 'A01.00'],
-    ['Malaria', 'B54'],
-    ['Dengue fever', 'A90'],
-    ['Chickenpox', 'B01.9'],
-    ['Measles', 'B05.9'],
-    ['Mumps', 'B26.9'],
-    ['Anaemia', 'D64.9'],
-    ['Iron deficiency anaemia', 'D50.9'],
-    ['Hypothyroidism', 'E03.9'],
-    ['Hyperthyroidism', 'E05.90'],
-    ['Obesity', 'E66.9'],
-    ['Hyperlipidaemia', 'E78.5'],
-    ['Polycystic ovarian syndrome', 'E28.2'],
-    ['Migraine', 'G43.909'],
-    ['Tension headache', 'G44.209'],
-    ['Headache', 'R51'],
-    ['Fever', 'R50.9'],
-    ['Cough', 'R05'],
-    ['Abdominal pain', 'R10.9'],
-    ['Dizziness', 'R42'],
-    ['Low back pain', 'M54.50'],
-    ['Osteoarthritis', 'M19.90'],
-    ['Rheumatoid arthritis', 'M05.9'],
-    ['Urinary tract infection', 'N39.0'],
-    ['Kidney stone', 'N20.0'],
-    ['Dysmenorrhoea', 'N94.6'],
-    ['Vaginitis', 'N76.0'],
-    ['Eczema', 'L30.9'],
-    ['Urticaria', 'L50.9'],
-    ['Itching of skin', 'L29.9'],
-    ['Scabies', 'B86'],
-    ['Conjunctivitis', 'H10.9'],
-    ['Otitis media', 'H66.90'],
-    ['Dental caries', 'K02.9'],
-    ['Anxiety', 'F41.9'],
-    ['Depression', 'F32.9'],
-    ['Insomnia', 'G47.00'],
-    ['Coronary artery disease', 'I25.10'],
-    ['Heart failure', 'I50.9'],
-    ['Stroke', 'I63.9']
+const SEED_CONDITIONS: Array<[string, string, string, string]> = [
+    ['Essential hypertension', 'I10', 'BA00.Z', 'https://id.who.int/icd/release/11/2025-01/mms/761947693/unspecified'],
+    ['Type 2 diabetes mellitus', 'E11.9', '5A11', 'https://id.who.int/icd/release/11/2025-01/mms/119724091'],
+    ['Type 1 diabetes mellitus', 'E10.9', '5A10', 'https://id.who.int/icd/release/11/2025-01/mms/1651053999'],
+    ['Acute upper respiratory infection', 'J06.9', 'CA07.0', 'https://id.who.int/icd/release/11/2025-01/mms/819139656'],
+    ['Acute pharyngitis', 'J02.9', 'CA02.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1791890273/unspecified'],
+    ['Acute bronchitis', 'J20.9', 'CA42.Z', 'https://id.who.int/icd/release/11/2025-01/mms/727572936/unspecified'],
+    ['Asthma', 'J45.909', 'CA23', 'https://id.who.int/icd/release/11/2025-01/mms/1656445230'],
+    ['COPD', 'J44.9', 'CA22.Z', 'https://id.who.int/icd/release/11/2025-01/mms/133207228/unspecified'],
+    ['Pneumonia', 'J18.9', 'CA40.Z', 'https://id.who.int/icd/release/11/2025-01/mms/142052508/unspecified'],
+    ['Chronic sinusitis', 'J32.9', 'CA0A.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1836987572/unspecified'],
+    ['Allergic rhinitis', 'J30.9', 'CA08.0Z', 'https://id.who.int/icd/release/11/2025-01/mms/1711769234/unspecified'],
+    ['Chronic rhinitis', 'J31.0', 'CA09.0', 'https://id.who.int/icd/release/11/2025-01/mms/1346915097'],
+    ['Gastritis', 'K29.70', 'DA42.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1871672644/unspecified'],
+    ['Gastro-oesophageal reflux disease', 'K21.9', 'DA22.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1391387859/unspecified'],
+    ['Dyspepsia', 'K30', 'MD92', 'https://id.who.int/icd/release/11/2025-01/mms/869622187'],
+    ['Irritable bowel syndrome', 'K58.9', 'DD91.0Z', 'https://id.who.int/icd/release/11/2025-01/mms/1158238623/unspecified'],
+    ['Constipation', 'K59.00', 'ME05.0', 'https://id.who.int/icd/release/11/2025-01/mms/502284069'],
+    ['Infectious diarrhoea', 'A09', '1A40.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1688127370/unspecified'],
+    ['Typhoid fever', 'A01.00', '1A07.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1528414070/unspecified'],
+    ['Malaria', 'B54', '1F4Z', 'https://id.who.int/icd/release/11/2025-01/mms/1439886552/unspecified'],
+    ['Dengue fever', 'A90', '1D2Z', 'https://id.who.int/icd/release/11/2025-01/mms/1959883044/unspecified'],
+    ['Chickenpox', 'B01.9', '1E90.0', 'https://id.who.int/icd/release/11/2025-01/mms/1667539108'],
+    ['Measles', 'B05.9', '1F03', 'https://id.who.int/icd/release/11/2025-01/mms/1826431497'],
+    ['Mumps', 'B26.9', '1D80', 'https://id.who.int/icd/release/11/2025-01/mms/1208294714'],
+    ['Anaemia', 'D64.9', '3A9Z', 'https://id.who.int/icd/release/11/2025-01/mms/224336967/unspecified'],
+    ['Iron deficiency anaemia', 'D50.9', '3A00.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1577750667/unspecified'],
+    ['Hypothyroidism', 'E03.9', '5A00.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1722092627/unspecified'],
+    ['Hyperthyroidism', 'E05.90', '5A02.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1470387017/unspecified'],
+    ['Obesity', 'E66.9', '5B81.Z', 'https://id.who.int/icd/release/11/2025-01/mms/149403041/unspecified'],
+    ['Hyperlipidaemia', 'E78.5', '5C80.Z', 'https://id.who.int/icd/release/11/2025-01/mms/2023062398/unspecified'],
+    ['Polycystic ovarian syndrome', 'E28.2', '5A80.1', 'https://id.who.int/icd/release/11/2025-01/mms/1213633323'],
+    ['Migraine', 'G43.909', '8A80.Z', 'https://id.who.int/icd/release/11/2025-01/mms/669367341/unspecified'],
+    ['Tension headache', 'G44.209', '8A81.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1410019257/unspecified'],
+    ['Headache', 'R51', 'MB4D', 'https://id.who.int/icd/release/11/2025-01/mms/1405405864'],
+    ['Fever', 'R50.9', 'MG26', 'https://id.who.int/icd/release/11/2025-01/mms/915343154'],
+    ['Cough', 'R05', 'MD12', 'https://id.who.int/icd/release/11/2025-01/mms/2027526159'],
+    ['Abdominal pain', 'R10.9', 'MD81.4', 'https://id.who.int/icd/release/11/2025-01/mms/166022696'],
+    ['Dizziness', 'R42', 'MB48.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1890374210/unspecified'],
+    ['Low back pain', 'M54.50', 'ME84.2Z', 'https://id.who.int/icd/release/11/2025-01/mms/1815305992/unspecified'],
+    ['Osteoarthritis', 'M19.90', 'FA0Z', 'https://id.who.int/icd/release/11/2025-01/mms/558562409/unspecified'],
+    ['Rheumatoid arthritis', 'M05.9', 'FA20.Z', 'https://id.who.int/icd/release/11/2025-01/mms/576319925/unspecified'],
+    ['Urinary tract infection', 'N39.0', 'GC08.Z', 'https://id.who.int/icd/release/11/2025-01/mms/1848472780/unspecified'],
+    ['Kidney stone', 'N20.0', 'GB70.0Z', 'https://id.who.int/icd/release/11/2025-01/mms/389168514/unspecified'],
+    ['Dysmenorrhoea', 'N94.6', 'GA34.3', 'https://id.who.int/icd/release/11/2025-01/mms/1703914672'],
+    ['Vaginitis', 'N76.0', 'GA02.Z', 'https://id.who.int/icd/release/11/2025-01/mms/290861382/unspecified'],
+    ['Eczema', 'L30.9', 'EA8Z', 'https://id.who.int/icd/release/11/2025-01/mms/1887882424/unspecified'],
+    ['Urticaria', 'L50.9', 'EB05', 'https://id.who.int/icd/release/11/2025-01/mms/993242399'],
+    ['Itching of skin', 'L29.9', 'ME65.1', 'https://id.who.int/icd/release/11/2025-01/mms/86210128'],
+    ['Scabies', 'B86', '1G04.Z', 'https://id.who.int/icd/release/11/2025-01/mms/876005123/unspecified'],
+    ['Conjunctivitis', 'H10.9', '9A60.Z', 'https://id.who.int/icd/release/11/2025-01/mms/831696556/unspecified'],
+    ['Otitis media', 'H66.90', 'AB0Z', 'https://id.who.int/icd/release/11/2025-01/mms/1079654421/unspecified'],
+    ['Dental caries', 'K02.9', 'DA08.0', 'https://id.who.int/icd/release/11/2025-01/mms/1983306720'],
+    ['Anxiety', 'F41.9', 'MB24.3', 'https://id.who.int/icd/release/11/2025-01/mms/2027043655'],
+    ['Depression', 'F32.9', '6A7Z', 'https://id.who.int/icd/release/11/2025-01/mms/1563440232/unspecified'],
+    ['Insomnia', 'G47.00', '7A0Z', 'https://id.who.int/icd/release/11/2025-01/mms/1038292737/unspecified'],
+    ['Coronary artery disease', 'I25.10', 'BA8Z', 'https://id.who.int/icd/release/11/2025-01/mms/1059873720/unspecified'],
+    ['Heart failure', 'I50.9', 'BD1Z', 'https://id.who.int/icd/release/11/2025-01/mms/1458683894/unspecified'],
 ];
 
 /**

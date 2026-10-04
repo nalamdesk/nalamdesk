@@ -49,7 +49,12 @@ jobs:
       - name: Install Electron system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64 libnss3 libxss1 libxtst6 xauth libsecret-1-0
+          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64 libnss3 libxss1 libxtst6 xauth libsecret-1-0 fontconfig
+
+      - name: Warm fontconfig cache
+        # First-ever Chromium launch scans all system fonts (can exceed the
+        # launch budget on cold runners); warming makes launches deterministic.
+        run: fc-cache -f > /dev/null
 
       - name: Start session keyring
         # Electron safeStorage uses gnome-libsecret (forced by the app) and
@@ -108,7 +113,7 @@ jobs:
             '06 online booking') TARGET='e2e/regression/06-online-booking.spec.ts' ;;
             *) TARGET='e2e/regression' ;;
           esac
-          xvfb-run -a node_modules/.bin/playwright test "$TARGET" --reporter=line
+          xvfb-run -a -s "-screen 0 1440x900x24" node_modules/.bin/playwright test "$TARGET" --reporter=line,html
 
       - name: Upload regression report
         if: failure()
@@ -116,3 +121,10 @@ jobs:
         with:
           name: regression-report
           path: desktop/playwright-report
+
+      - name: Upload test traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-traces
+          path: desktop/test-results

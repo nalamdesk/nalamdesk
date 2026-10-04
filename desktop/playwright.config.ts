@@ -3,7 +3,9 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
     testDir: './e2e',
-    timeout: 60000,
+    // Cold CI runners (fontconfig/shader caches, keyring init) need a larger
+    // first-launch budget; local runs keep the tighter default.
+    timeout: process.env['CI'] ? 120000 : 60000,
     retries: 0,
     workers: 1,
     reporter: 'html',

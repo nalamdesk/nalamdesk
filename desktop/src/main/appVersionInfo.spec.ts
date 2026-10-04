@@ -3,6 +3,7 @@ import {
     formatAppVersionDisplay,
     loadAppVersionInfo,
     readBuildIdentityFile,
+    readPackageVersion,
     resolveAppVersionInfo,
     shortCommit
 } from './appVersionInfo';
@@ -58,5 +59,19 @@ describe('app version display', () => {
         }))).toEqual({ version: '0.0.8', commit: 'abcdef1' });
         expect(readBuildIdentityFile('identity.json', () => 'null')).toBeNull();
         expect(readBuildIdentityFile('identity.json', () => '"not-an-object"')).toBeNull();
+    });
+
+    it('reads a semver package version for unpacked-run pinning', () => {
+        const read = (content: string) => () => content;
+        expect(readPackageVersion('/any', read(JSON.stringify({ version: '0.0.11' })))).toBe('0.0.11');
+        expect(readPackageVersion('/any', read(JSON.stringify({ version: ' 1.2.3-beta.1 ' })))).toBe('1.2.3-beta.1');
+    });
+
+    it('rejects missing, malformed, or non-semver versions instead of pinning them', () => {
+        const read = (content: string) => () => content;
+        expect(readPackageVersion('/any', read(JSON.stringify({ version: '0.0' })))).toBeNull();
+        expect(readPackageVersion('/any', read(JSON.stringify({ name: 'x' })))).toBeNull();
+        expect(readPackageVersion('/any', read('not json'))).toBeNull();
+        expect(readPackageVersion('/any', () => { throw new Error('unreadable'); })).toBeNull();
     });
 });

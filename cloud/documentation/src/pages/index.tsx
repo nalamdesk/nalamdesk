@@ -1,50 +1,8 @@
 import type { ReactNode } from 'react';
-import clsx from 'clsx';
-import Link from '@docusaurus/Link';
-import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
-import Layout from '@theme/Layout';
-import HomepageFeatures from '@site/src/components/HomepageFeatures';
-import Heading from '@theme/Heading';
+import { Redirect } from '@docusaurus/router';
 
-import styles from './index.module.css';
-
-function HomepageHeader() {
-  const { siteConfig } = useDocusaurusContext();
-  return (
-    <header className={clsx('hero hero--primary', styles.heroBanner)}>
-      <div className="container">
-        <Heading as="h1" className="hero__title">
-          {siteConfig.title}
-        </Heading>
-        <p className="hero__subtitle">{siteConfig.tagline}</p>
-        <div className={styles.buttons}>
-          <Link
-            className="button button--secondary button--lg"
-            to="/docs/user-guide/intro">
-            User Guide 📘
-          </Link>
-          <span style={{ margin: '0 10px' }}></span>
-          <Link
-            className="button button--warning button--lg"
-            to="/docs/developer-guide/local-setup">
-            Developer Guide 🔧
-          </Link>
-        </div>
-      </div>
-    </header>
-  );
-}
-
+// The docs site opens directly on the User Guide. Developer Guide pages
+// are excluded from the build while the repo is private.
 export default function Home(): ReactNode {
-  const { siteConfig } = useDocusaurusContext();
-  return (
-    <Layout
-      title={`Hello from ${siteConfig.title}`}
-      description="NalamDesk is a secure, offline-first Clinic Management System designed for doctors, offering local encryption and hybrid cloud sync.">
-      <HomepageHeader />
-      <main>
-        <HomepageFeatures />
-      </main>
-    </Layout>
-  );
+  return <Redirect to="/docs/user-guide/intro" />;
 }

@@ -40,10 +40,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/sankara-sabapathy/nalamdesk/tree/main/',
+          exclude: ['developer-guide/**'],
         },
         blog: {
           showReadingTime: true,
@@ -51,10 +48,6 @@ const config: Config = {
             type: ['rss', 'atom'],
             xslt: true,
           },
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/sankara-sabapathy/nalamdesk/tree/main/',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -91,7 +84,7 @@ const config: Config = {
       title: 'NalamDesk',
       logo: {
         alt: 'NalamDesk Logo',
-        src: 'img/logo.svg',
+        src: 'img/logo.png',
       },
       items: [
         {
@@ -99,17 +92,6 @@ const config: Config = {
           sidebarId: 'userGuideSidebar',
           position: 'left',
           label: 'User Guide',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'developerGuideSidebar',
-          position: 'left',
-          label: 'Developer Guide',
-        },
-        {
-          href: 'https://github.com/sankara-sabapathy/nalamdesk',
-          label: 'GitHub',
-          position: 'right',
         },
         {
           href: 'https://nalamdesk.com',
@@ -144,10 +126,6 @@ const config: Config = {
             {
               label: 'Website',
               href: 'https://nalamdesk.com',
-            },
-            {
-              label: 'GitHub',
-              href: 'https://github.com/sankara-sabapathy/nalamdesk',
             },
           ],
         },

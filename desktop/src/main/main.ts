@@ -49,7 +49,11 @@ preferLinuxGnomeLibsecret(app.commandLine);
 const isDev = isDevRuntime(app.isPackaged);
 if (isDev) {
     app.setName(DEV_APP_NAME);
-    app.setPath('userData', getDevUserDataPath(app.getPath('appData')));
+    // E2E regression isolation: an explicit env dir wins over the shared
+    // dev dir, so each Playwright worker gets a transient nalamdesk-test.db.
+    // Never honored in packaged builds (branch is dev-only by construction).
+    const e2eUserDataDir = process.env['NALAMDESK_E2E_USER_DATA'];
+    app.setPath('userData', e2eUserDataDir || getDevUserDataPath(app.getPath('appData')));
 }
 
 const userDataPath = app.getPath('userData');

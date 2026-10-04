@@ -103,7 +103,7 @@ test('NalamDesk Full Clinical Flow', async () => {
         await expect(window.locator('app-visit')).toBeVisible();
 
         // Verify Patient Name on Visit Page
-        await expect(window.locator(`h3:has-text("${patientName}")`)).toBeVisible();
+        await expect(window.locator(`h2:has-text("${patientName}")`)).toBeVisible();
 
         // Fill Diagnosis
         await window.locator('[data-testid="diagnosis-input"]').fill('Flu symptoms. Fever and cold.');
@@ -111,16 +111,16 @@ test('NalamDesk Full Clinical Flow', async () => {
         // Prescribe Medicine (First row is auto-added)
         const firstRowMock = window.locator('app-prescription .grid').first();
         await firstRowMock.locator('[data-testid="rx-medicine-0"]').fill('Paracetamol');
-        await firstRowMock.locator('input[placeholder="Duration (e.g. 5 days)"]').fill('3 days');
+        await firstRowMock.locator('input[aria-label="Duration"]').fill('3 days');
 
         // Save Progress
         await window.click('button:has-text("Save Progress")');
         // Verify it didn't crash
-        await expect(window.locator('button:has-text("Update Visit")')).toBeVisible();
+        await expect(window.locator('button:has-text("Update Record")')).toBeVisible();
 
         // 7. Complete Consultation
         console.log('Step 7: Completing Consultation...');
-        await window.click('button:has-text("End Consult")');
+        await window.click('button:has-text("Finish & Exit")');
 
         // Should return to Queue
         await expect(window.locator('app-queue')).toBeVisible();

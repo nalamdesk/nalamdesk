@@ -79,6 +79,14 @@ describe('preload bridge surface', () => {
         expect(electron.on).toHaveBeenCalledWith('updates:event', expect.any(Function));
     });
 
+    it('exposes cloud slot publish IPC alongside slot reads', async () => {
+        await api.cloud.publishSlots([{ date: '2026-10-04', time: '10:00' }], ['2026-10-04']);
+        await api.cloud.getPublishedSlots('2026-10-04');
+        expect(electron.invoke).toHaveBeenCalledWith(
+            'cloud:publishSlots', [{ date: '2026-10-04', time: '10:00' }], ['2026-10-04']);
+        expect(electron.invoke).toHaveBeenCalledWith('cloud:getPublishedSlots', '2026-10-04');
+    });
+
     it('exposes per-user override admin IPC', async () => {
         const input = { userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
         await api.db.getUserOverrides(20);

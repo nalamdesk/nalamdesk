@@ -1,6 +1,6 @@
 version: 1
 # Floor for the action release; the workflow `uses:` ref selects it.
-requires_action: ">=0.6.0"
+requires_action: ">=0.11.0"
 
 defaults:
   on: [opened, synchronize, ready_for_review]
@@ -31,6 +31,8 @@ reviews:
   - id: correctness
     if_paths: ["**"]
     strategy: majority
+    profile: balanced # noise preset (v0.11); explicit max_findings below wins
+    max_findings: 5 # mechanical cap matching the "at most 5" prompt instruction
     main:
       provider: glm
       instructions: >-
@@ -63,6 +65,8 @@ reviews:
   - id: security
     if_paths: ["desktop/src/main/**", "desktop/src/server/**", "desktop/src/shared/access.ts", "desktop/src/**/auth*", "desktop/src/**/settings/**"]
     strategy: any
+    profile: balanced # noise preset (v0.11); explicit max_findings below wins
+    max_findings: 5 # mechanical cap matching the "at most 5" prompt instruction
     main:
       provider: spacebunny
       instructions: >-

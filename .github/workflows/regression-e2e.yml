@@ -1,0 +1,77 @@
+name: Regression E2E (manual only)
+
+# Full-feature regression: real Electron + locally served renderer + transient
+# test DB (desktop/e2e/regression/, `npm run e2e:regression` in desktop/).
+#
+# MANUAL TRIGGER ONLY. This workflow has no push/pull_request/schedule
+# triggers by design: it never runs on branches, PRs, or commits. Launch it
+# from Actions → "Regression E2E (manual only)" → Run workflow, optionally
+# limiting the run to a single spec file.
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: 'Spec suite to run (full suite by default)'
+        required: false
+        default: 'full suite'
+        type: choice
+        options:
+          - 'full suite'
+          - '01 auth + RBAC'
+          - '02 navigation'
+          - '03 patients'
+          - '04 queue + visit'
+          - '05 settings + admin'
+          - '06 online booking'
+
+jobs:
+  regression-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ./desktop
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Electron system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2 libnss3 libxss1 libxtst6 xauth
+
+      - name: Run regression suite
+        # Headed Electron under a virtual display; the renderer is served
+        # locally by the Playwright webServer entry (ng serve) and each
+        # spec launches the real app against an isolated nalamdesk-test.db.
+        # The spec argument comes from a fixed choice list (never free text),
+        # mapped here so workflow input never reaches a shell command line.
+        run: |
+          case "${{ inputs.spec }}" in
+            '01 auth + RBAC') TARGET='e2e/regression/01-auth-rbac.spec.ts' ;;
+            '02 navigation') TARGET='e2e/regression/02-navigation.spec.ts' ;;
+            '03 patients') TARGET='e2e/regression/03-patients.spec.ts' ;;
+            '04 queue + visit') TARGET='e2e/regression/04-queue-visit.spec.ts' ;;
+            '05 settings + admin') TARGET='e2e/regression/05-settings-admin.spec.ts' ;;
+            '06 online booking') TARGET='e2e/regression/06-online-booking.spec.ts' ;;
+            *) TARGET='e2e/regression' ;;
+          esac
+          xvfb-run -a node_modules/.bin/playwright test "$TARGET" --reporter=line
+
+      - name: Upload regression report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report
+          path: desktop/playwright-report

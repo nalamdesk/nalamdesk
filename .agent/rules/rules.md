@@ -115,3 +115,10 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 ### 6.7 Global Scope Access
 - **Prefer `globalThis`** over `window` when accessing Electron APIs in the renderer process (e.g., `globalThis.electron` instead of `window.electron`). This improves testability and avoids issues in non-browser environments.
 - Use `node:` prefix for Node.js built-in imports (e.g., `import fs from 'node:fs'` instead of `import fs from 'fs'`).
+
+### 6.8 Regression Gate (Desktop E2E)
+- **After ANY desktop change** (feature, fix, or refactor touching renderer, main process, IPC, routes, or guards), run the full regression locally before considering the work done: `cd desktop && npm run e2e:regression` (real Electron + local renderer + isolated test DB).
+- **Red means stop**: if the suite fails, determine whether the product broke or the product intentionally changed. Fix the product in the first case.
+- **Keep the suite in sync**: any new route, guard, role, or module MUST extend `desktop/e2e/regression/` (new or updated spec) AND the module matrix in `desktop/e2e/regression/COVERAGE.md`. Never weaken an assertion to make red go away.
+- **Verify selectors against templates**: E2E locators must match the current component markup (AG Grid rows, reactive-form placeholders, live button labels) — read the template, don't guess.
+- **CI is manual-only** (`.github/workflows/regression-e2e.yml`, `workflow_dispatch`): it never runs on PRs by design, so the local run IS the gate.

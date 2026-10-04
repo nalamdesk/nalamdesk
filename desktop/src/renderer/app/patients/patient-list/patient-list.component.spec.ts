@@ -363,4 +363,36 @@ describe('PatientListComponent', () => {
         askSpy.mockRestore();
         restoreSpy.mockRestore();
     });
+
+    it('validates the ABHA number field inline', () => {
+        component.openAddModal();
+        component.patientForm.patchValue({ abha_number: '123' });
+        component.validateAbhaNumberField();
+        expect(component.abhaNumberError).toContain('14 digits');
+
+        component.patientForm.patchValue({ abha_number: '79927398713891' });
+        component.validateAbhaNumberField();
+        expect(component.abhaNumberError).toBe('');
+
+        component.patientForm.patchValue({ abha_number: '' });
+        component.validateAbhaNumberField();
+        expect(component.abhaNumberError).toBe('');
+    });
+
+    it('blocks save while the ABHA number is invalid', async () => {
+        component.openAddModal();
+        component.patientForm.patchValue({
+            name: 'Walk In', mobile: '9876543210', age: 30, gender: 'Male',
+            abha_number: '123'
+        });
+        mockPatientService.savePatient.mockClear();
+        await component.savePatient(false);
+        expect(component.abhaNumberError).toContain('14 digits');
+        expect(mockPatientService.savePatient).not.toHaveBeenCalled();
+    });
+
+    it('labels ABHA and registry duplicate signals', () => {
+        expect(component.duplicateSignalLabel('abha-number')).toBe('same ABHA number');
+        expect(component.duplicateSignalLabel('identifier')).toBe('same registered ID');
+    });
 });

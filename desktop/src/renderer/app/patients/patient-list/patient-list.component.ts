@@ -13,6 +13,7 @@ import { QueueCountService } from '../../shared/services/queue-count.service';
 import { PatientActionsRenderer } from './patient-actions.component';
 import { ColDef } from 'ag-grid-community';
 import { deriveAge } from '../../../../shared/patient-age';
+import { normalizeAbhaNumber, validateAbhaNumber } from '../../../../shared/patient-identifiers';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 
 @Component({
@@ -42,7 +43,7 @@ import { ReasonDialogComponent } from '../../shared/components/reason-dialog/rea
             type="text" 
             [(ngModel)]="searchQuery" 
             (ngModelChange)="onSearch()"
-            placeholder="Search by name or mobile..." 
+            placeholder="Search name, mobile, MRN, ABHA, or any ID..." 
             class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
           <span class="absolute left-3 top-2.5 text-gray-400">
@@ -243,6 +244,14 @@ import { ReasonDialogComponent } from '../../shared/components/reason-dialog/rea
                                     <label class="block text-sm font-medium text-gray-700">Email (Optional)</label>
                                     <input type="email" formControlName="email" placeholder="patient@example.com" class="w-full border p-2 rounded">
                                     <p *ngIf="isFieldInvalid('email')" class="text-xs text-red-500 mt-1">Invalid email format.</p>
+                                </div>
+                                <div class="col-span-1">
+                                    <label class="block text-sm font-medium text-gray-700">ABHA Number (Optional)</label>
+                                    <input formControlName="abha_number" placeholder="XX-XXXX-XXXX-XXXX"
+                                           (ngModelChange)="validateAbhaNumberField()"
+                                           class="w-full border p-2 rounded font-mono"
+                                           [class.border-red-500]="abhaNumberError">
+                                    <p *ngIf="abhaNumberError" class="text-xs text-red-500 mt-1">{{ abhaNumberError }}</p>
                                 </div>
                             </div>
 
@@ -476,7 +485,10 @@ export class PatientListComponent implements OnInit {
 
       // Insurance
       insurance_provider: [''],
-      policy_number: ['']
+      policy_number: [''],
+
+      // National health id (optional; validated inline, see abhaNumberError)
+      abha_number: ['']
     });
 
     this.patientForm.get('dob')?.valueChanges.subscribe(dob => {
@@ -501,13 +513,16 @@ export class PatientListComponent implements OnInit {
     if (!value || !this.showModal) return;
     const input = {
       name: value.name || '', dob: value.dob || null,
-      mobile: value.mobile || '', excludeId: value.id || 0
+      mobile: value.mobile || '', mrn: value.mrn || '',
+      abhaNumber: normalizeAbhaNumber(value.abha_number || '') || '',
+      identifier: value.abha_number || '',
+      excludeId: value.id || 0
     };
     // Sequence guard starts here, not at the invoke: a cleared form must
     // also retire any in-flight request, or its late response repopulates
     // a blank banner.
     const request = ++this.duplicateRequest;
-    if (!input.name && !input.mobile) {
+    if (!input.name && !input.mobile && !input.abhaNumber && !input.identifier) {
       this.ngZone.run(() => {
         this.duplicateCandidates = [];
         this.checkingDuplicates = false;
@@ -533,10 +548,30 @@ export class PatientListComponent implements OnInit {
   duplicateSignalLabel(signal: string): string {
     switch (signal) {
       case 'mrn': return 'same MRN';
+      case 'abha-number': return 'same ABHA number';
+      case 'identifier': return 'same registered ID';
       case 'name-dob': return 'same name + birth date';
       case 'name': return 'same name';
       case 'phone-shared-possible': return 'same phone (may be shared)';
       default: return signal;
+    }
+  }
+
+  // ABHA number validates inline (shape + checksum) so a typo never
+  // reaches the backend uniqueness check as a confusing error.
+  abhaNumberError = '';
+
+  validateAbhaNumberField(): void {
+    const raw = String(this.patientForm?.get('abha_number')?.value || '').trim();
+    if (!raw) {
+      this.abhaNumberError = '';
+      return;
+    }
+    try {
+      validateAbhaNumber(raw);
+      this.abhaNumberError = '';
+    } catch (e) {
+      this.abhaNumberError = e instanceof Error ? e.message : 'Invalid ABHA number.';
     }
   }
 
@@ -662,12 +697,14 @@ export class PatientListComponent implements OnInit {
     this.showAdditional = false;
     this.showModal = true;
     this.duplicateCandidates = [];
+    this.abhaNumberError = '';
   }
 
   editPatient(patient: Patient) {
     this.patientForm.patchValue(patient);
     this.showAdditional = true;
     this.showModal = true;
+    this.abhaNumberError = '';
   }
 
   // Submit from the form (Enter key) saves and queues a new walk-in.
@@ -675,6 +712,11 @@ export class PatientListComponent implements OnInit {
   async savePatient(addToQueueAfter = false) {
     if (this.patientForm.invalid) {
       this.patientForm.markAllAsTouched();
+      return;
+    }
+    this.validateAbhaNumberField();
+    if (this.abhaNumberError) {
+      this.patientForm.get('abha_number')?.markAsTouched();
       return;
     }
 

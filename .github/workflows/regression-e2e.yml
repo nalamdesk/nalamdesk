@@ -103,6 +103,10 @@ jobs:
         env:
           # Mirror main-process console to stderr so startup hangs are visible.
           ELECTRON_ENABLE_LOGGING: 1
+          # Stream Playwright's browser-launch handshake live (Debugger /
+          # DevTools listening lines). If electron.launch() stalls, the last
+          # printed line shows exactly which handshake stage never arrived.
+          DEBUG: 'pw:browser*'
         run: |
           case "${{ inputs.spec }}" in
             '01 auth + RBAC') TARGET='e2e/regression/01-auth-rbac.spec.ts' ;;

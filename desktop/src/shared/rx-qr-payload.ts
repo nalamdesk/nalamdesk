@@ -50,16 +50,18 @@ export function encodeRxQr(input: RxQrInput): string {
         throw new Error(`Prescription too large for QR (${bytes.length} bytes).`);
     }
     let binary = '';
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return 'ND1.' + btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    for (const byte of bytes) binary += String.fromCodePoint(byte);
+    let out = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
+    while (out.endsWith('=')) out = out.slice(0, -1);
+    return 'ND1.' + out;
 }
 
 /** Decode a QR string back to the payload (scanner side + tests). */
 export function decodeRxQr(text: string): Record<string, unknown> {
     if (!text.startsWith('ND1.')) throw new Error('Not a NalamDesk prescription code.');
-    const b64 = text.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+    const b64 = text.slice(4).replaceAll('-', '+').replaceAll('_', '/');
     const binary = atob(b64);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.codePointAt(i) || 0;
     return JSON.parse(strFromU8(inflateSync(bytes)));
 }

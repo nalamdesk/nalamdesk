@@ -25,6 +25,13 @@ describe('rx-qr-payload', () => {
         expect(decoded.rx[0][0]).toBe('Paracetamol (Crocin)');
     });
 
+    it('round-trips payloads whose base64 needs padding stripped', () => {
+        const encoded = encodeRxQr({ ...input, patient: { name: 'Al' } });
+        expect(encoded.endsWith('=')).toBe(false);
+        const decoded = decodeRxQr(encoded) as any;
+        expect(decoded.p[0]).toBe('Al');
+    });
+
     it('rejects foreign codes and oversized payloads', () => {
         expect(() => decodeRxQr('HELLO')).toThrow('Not a NalamDesk prescription code');
         const big = {

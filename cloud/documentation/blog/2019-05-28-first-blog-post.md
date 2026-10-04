@@ -1,16 +1,29 @@
 ---
-slug: first-blog-post
-title: First Blog Post
-authors: [slorber, yangshun]
-tags: [hola, docusaurus]
+slug: welcome
+title: Welcome to NalamDesk Docs
 ---
 
 # Welcome to NalamDesk
 
-We are excited to introduce NalamDesk, a secure, offline-first clinic management system.
+NalamDesk is a secure, offline-first clinic management system. Your patient
+data lives on your own computer, encrypted, and the clinic runs its full
+day with no internet.
 
-## Why NalamDesk?
+<!-- truncate -->
 
-Medical data privacy is paramount. Unlike cloud-based systems where you lose control of your data, NalamDesk stores everything locally on your device, encrypted with AES-256.
+Start with the [User Guide](/docs/user-guide/intro):
 
-Stay tuned for more updates on our features and roadmap!
+- **[Initial Setup](/docs/user-guide/initial-setup)**: create the
+  encrypted vault and the administrator account.
+- **[Admin Management](/docs/user-guide/admin-management)**: clinic
+  details, staff accounts, backups.
+- **[Clinic Operations](/docs/user-guide/clinic-operations)**:
+  registration, queue and triage, consultations, prescriptions.
+- **[Daily Collection](/docs/user-guide/daily-collection)**: receipts
+  and the ledger-derived day close.
+- **[Merging Duplicate Charts](/docs/user-guide/patient-merge)**:
+  preview-first merge with rollback.
+
+NalamDesk is free software under AGPL-3.0. The code lives on
+[GitHub](https://github.com/sankara-sabapathy/nalamdesk) and installers
+ship from [GitHub Releases](https://github.com/sankara-sabapathy/nalamdesk/releases).

@@ -233,12 +233,11 @@ describe('QueueComponent', () => {
         vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
         await component.remove(1);
+        expect(component.showRemoveDialog).toBe(true);
+        await component.onRemoveDecided('no-show');
 
         expect(alertSpy).not.toHaveBeenCalled();
-        expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'Remove from queue?',
-            type: 'confirm'
-        }));
+        expect(mockDataService.invoke).toHaveBeenCalledWith('removeFromQueue', { id: 1, reason: 'no-show' });
         expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({
             type: 'error',
             title: 'Error',
@@ -247,9 +246,9 @@ describe('QueueComponent', () => {
     });
 
     it('keeps the patient when removal is cancelled', async () => {
-        mockDialogService.open.mockResolvedValue(false);
-
         await component.remove(1);
+        expect(component.showRemoveDialog).toBe(true);
+        await component.onRemoveDecided(null);
 
         expect(mockDataService.invoke).not.toHaveBeenCalledWith('removeFromQueue', expect.anything());
     });

@@ -14,6 +14,7 @@ import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { newRequestId } from '../../services/request-id';
 import { combineLatest } from 'rxjs';
 import { VitalsFormComponent } from '../vitals/vitals-form.component';
+import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 
 interface PrescriptionItem {
   medicine: string;
@@ -38,7 +39,7 @@ interface Visit {
 @Component({
   selector: 'app-visit',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule, PrescriptionComponent, CatalogTypeaheadComponent, VitalsFormComponent],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, PrescriptionComponent, CatalogTypeaheadComponent, VitalsFormComponent, ReasonDialogComponent],
   template: `
     <div class="flex h-full bg-gray-50 font-sans overflow-hidden relative">
       
@@ -135,7 +136,7 @@ interface Visit {
            </div>
 
            <div class="flex flex-wrap gap-2 items-center justify-end">
-              <button *ngIf="editingVisitId && !isViewMode && currentUser?.role === 'admin'" (click)="deleteVisit()" class="border border-red-200 text-red-600 bg-white hover:bg-red-50 px-3 py-1 rounded text-sm font-medium transition">Delete</button>
+              <button *ngIf="editingVisitId && !isViewMode && currentUser?.role === 'admin'" (click)="deleteVisit()" class="border border-red-200 text-red-600 bg-white hover:bg-red-50 px-3 py-1 rounded text-sm font-medium transition">Mark entered-in-error</button>
               <button *ngIf="editingVisitId && !isViewMode" (click)="resetForm()" class="border border-blue-200 text-blue-600 bg-white hover:bg-blue-50 px-3 py-1 rounded text-sm font-medium transition">New Visit</button>
               <div class="text-right flex items-center gap-2" *ngIf="isViewMode">
                   <div class="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs font-bold">VIEW</div>
@@ -572,6 +573,14 @@ interface Visit {
           </div>
         </div>
       </div>
+      <app-reason-dialog
+        [open]="showVisitErrorDialog"
+        title="Mark visit entered-in-error"
+        message="The visit stays in history with this reason. Active encounters cannot be marked."
+        placeholder="Why was this visit entered in error?"
+        confirmText="Mark entered-in-error"
+        (decided)="onVisitErrorDecided($event)">
+      </app-reason-dialog>
     </div>
   `,
   styles: [`
@@ -1244,18 +1253,18 @@ export class VisitComponent implements OnInit {
     }
   }
 
-  async deleteVisit() {
+  deleteVisit() {
     if (!this.editingVisitId) return;
-    const confirmed = await this.dialogService?.open({
-      title: 'Delete this visit?',
-      message: 'The visit record will be permanently removed.',
-      type: 'confirm',
-      confirmText: 'Delete',
-      cancelText: 'Keep'
-    });
-    if (!confirmed) return;
+    this.showVisitErrorDialog = true;
+  }
+
+  showVisitErrorDialog = false;
+
+  async onVisitErrorDecided(reason: string | null): Promise<void> {
+    this.showVisitErrorDialog = false;
+    if (!reason || !this.editingVisitId) return;
     try {
-      await this.dataService.invoke('deleteVisit', this.editingVisitId);
+      await this.dataService.invoke('markVisitEnteredInError', { id: this.editingVisitId, reason });
       this.ngZone.run(() => {
         this.resetForm();
         this.loadData();
@@ -1263,8 +1272,8 @@ export class VisitComponent implements OnInit {
     } catch (e) {
       console.error(e);
       await this.dialogService?.open({
-        title: 'Delete failed',
-        message: 'The visit could not be deleted.',
+        title: 'Error',
+        message: e instanceof Error ? e.message : 'The visit could not be marked entered-in-error.',
         type: 'error'
       });
     }

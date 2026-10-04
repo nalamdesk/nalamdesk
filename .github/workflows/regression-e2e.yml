@@ -51,6 +51,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64 libnss3 libxss1 libxtst6 xauth
 
+      - name: Fix Electron sandbox permissions
+        # Chromium's SUID sandbox requires chrome-sandbox to be root-owned
+        # with mode 4755; npm extraction loses that. Keeps sandboxing on
+        # (preferable to --no-sandbox) for a faithful test environment.
+        run: |
+          sudo chown root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
       - name: Run regression suite
         # Headed Electron under a virtual display; the renderer is served
         # locally by the Playwright webServer entry (ng serve) and each

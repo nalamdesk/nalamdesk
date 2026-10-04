@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { decodeRxQr, encodeRxQr, RX_QR_BYTE_LIMIT } from './rx-qr-payload';
+import QRCode from 'qrcode';
+import { decodeRxQr, encodeRxQr, RX_QR_CHAR_LIMIT } from './rx-qr-payload';
 
 const input = {
     patient: { name: 'John Doe', age: 35, gender: 'Male' },
@@ -16,13 +17,19 @@ describe('rx-qr-payload', () => {
     it('round-trips a typical prescription through deflate', () => {
         const encoded = encodeRxQr(input);
         expect(encoded.startsWith('ND1.')).toBe(true);
-        expect(encoded.length).toBeLessThan(RX_QR_BYTE_LIMIT);
+        expect(encoded.length).toBeLessThan(RX_QR_CHAR_LIMIT);
         const decoded = decodeRxQr(encoded) as any;
         expect(decoded.app).toBe('ND-Rx');
         expect(decoded.v).toBe(1);
         expect(decoded.p[0]).toBe('John Doe');
         expect(decoded.rx).toHaveLength(2);
         expect(decoded.rx[0][0]).toBe('Paracetamol (Crocin)');
+    });
+
+    it('renders through the real QR encoder within capacity', async () => {
+        const encoded = encodeRxQr(input);
+        const url = await QRCode.toDataURL(encoded, { width: 132, margin: 1 });
+        expect(url.startsWith('data:image/png')).toBe(true);
     });
 
     it('round-trips payloads whose base64 needs padding stripped', () => {

@@ -8,8 +8,9 @@
  */
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 
-/** Maximum deflated bytes we will encode (QR breaks past ~3KB). */
-export const RX_QR_BYTE_LIMIT = 2800;
+/** Maximum encoded characters we will render: fits QR byte mode at EC
+ *  level M (~2331 bytes) with headroom for reliable phone scanning. */
+export const RX_QR_CHAR_LIMIT = 2000;
 
 export interface RxQrLine {
     medicine: string;
@@ -42,24 +43,29 @@ export function buildRxQrPayload(input: RxQrInput): Record<string, unknown> {
     };
 }
 
-/** Encode a payload to a QR-safe string. Throws when over the byte cap. */
+/** Encode a payload to a QR-safe string. Throws when over the char cap. */
 export function encodeRxQr(input: RxQrInput): string {
     const json = JSON.stringify(buildRxQrPayload(input));
     const bytes = deflateSync(strToU8(json));
-    if (bytes.length > RX_QR_BYTE_LIMIT) {
-        throw new Error(`Prescription too large for QR (${bytes.length} bytes).`);
-    }
     let binary = '';
     for (const byte of bytes) binary += String.fromCodePoint(byte);
     let out = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
     while (out.endsWith('=')) out = out.slice(0, -1);
-    return 'ND1.' + out;
+    const encoded = 'ND1.' + out;
+    // Cap the final text, not the deflated bytes: base64url adds ~33%,
+    // so a byte cap would still overflow the QR symbol.
+    if (encoded.length > RX_QR_CHAR_LIMIT) {
+        throw new Error(`Prescription too large for QR (${encoded.length} chars).`);
+    }
+    return encoded;
 }
 
 /** Decode a QR string back to the payload (scanner side + tests). */
 export function decodeRxQr(text: string): Record<string, unknown> {
     if (!text.startsWith('ND1.')) throw new Error('Not a NalamDesk prescription code.');
-    const b64 = text.slice(4).replaceAll('-', '+').replaceAll('_', '/');
+    let b64 = text.slice(4).replaceAll('-', '+').replaceAll('_', '/');
+    // Strict decoders reject unpadded input: restore the stripped '='.
+    while (b64.length % 4 !== 0) b64 += '=';
     const binary = atob(b64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.codePointAt(i) || 0;

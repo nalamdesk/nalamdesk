@@ -113,8 +113,11 @@ the responsible doctor. Only a `doctor` account finalizes encounters.
 5. **Prescription pad**: medicine typeahead from the clinic catalog,
    form (Tab, Cap, Syrup, Injection, Ointment, Drop), dose, route
    (Oral, IV, IM, SC, Topical), frequency (1-0-1, 1-1-1, SOS, STAT…),
-   duration, and instruction (After/Before Food…). Picking a diagnosis
-   with a configured preset fills suggested lines you can edit first.
+   duration, and instruction (After/Before Food…). Frequency accepts
+   Indian shorthand and Latin SIG interchangeably (`BID` saves as
+   `1-0-1`); unrecognized text is kept verbatim, never dropped.
+   Picking a diagnosis with a configured preset fills suggested lines
+   you can edit first.
 6. **Allergy Conflict Interceptor**: a prescribed drug matching an
    active allergy stops the save with the substance, criticality, and
    reaction on screen. Change the drug, or type an explicit **clinical

@@ -44,24 +44,16 @@ export function parseWeight(value: number, unit: string): number {
     return value;
 }
 
+import { frequencyLatin } from './clinical-timing';
+
 /**
  * Frequency display per mode. Canonical values are the Indian shorthand
  * (`1-0-1`, `SOS`); International mode renders the Latin equivalent.
  * Unknown values pass through unchanged -- never lose a schedule.
  */
-const FREQUENCY_LATIN: Record<string, string> = {
-    '1-0-1': 'BID',
-    '1-1-1': 'TID',
-    '1-0-0': 'OD',
-    '0-0-1': 'HS',
-    '0-1-0': 'QD (afternoon)',
-    'SOS': 'PRN',
-    'STAT': 'STAT'
-};
-
 export function displayFrequency(canonical: string, mode: StandardsMode): string {
     const value = String(canonical || '').trim();
-    if (mode === 'international') return FREQUENCY_LATIN[value] || value;
+    if (mode === 'international') return frequencyLatin(value);
     return value;
 }
 

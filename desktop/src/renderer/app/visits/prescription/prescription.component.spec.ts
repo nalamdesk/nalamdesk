@@ -118,4 +118,14 @@ describe('PrescriptionComponent', () => {
         expect(seen[0][0].frequency).toBe('1-0-1');
         expect(seen[0][1].frequency).toBe('every 6 hours');
     });
+
+    it('normalizes typed frequencies through the input handler', () => {
+        component.items.set([
+            { medicine: 'A', form: 'Tab', dosage: '', route: 'Oral', frequency: '', duration: '', instruction: '' }
+        ]);
+        component.onFrequencyTyped(0, 'tid');
+        expect(component.items()[0].frequency).toBe('1-1-1');
+        component.onFrequencyTyped(0, '');
+        expect(component.items()[0].frequency).toBe('');
+    });
 });

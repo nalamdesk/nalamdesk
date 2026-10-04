@@ -46,10 +46,10 @@ while `wrangler deploy` validates cleanly. `cf` stays available for
 account, DNS, and domain commands. Re-evaluate `cf deploy` when `cf`
 leaves beta.
 
-Custom domain (one-time, needs the zone on Cloudflare first —
-`nalamdesk.com` currently has no DNS): add the domain to the
-Cloudflare account, then attach it under Worker → Settings → Domains &
-Routes. The worker serves `<name>.workers.dev` until then.
+Custom domain (declared in `wrangler.jsonc` as a `custom_domain` route
+and applied by every deploy): `nalamdesk.com` must live in the same
+Cloudflare account (it does). First deploy attaches it and provisions
+the certificate; the worker serves `<name>.workers.dev` until then.
 
 ## Rules carried from the brief
 

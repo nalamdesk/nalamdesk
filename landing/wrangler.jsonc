@@ -4,6 +4,7 @@
 	"compatibility_flags": ["global_fetch_strictly_public"],
 	"name": "nalamdesk-landing",
 	"main": "@astrojs/cloudflare/entrypoints/server",
+	"routes": [{ "pattern": "nalamdesk.com", "custom_domain": true }],
 	"assets": {
 		"directory": "./dist",
 		"binding": "ASSETS"

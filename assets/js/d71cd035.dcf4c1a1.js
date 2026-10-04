@@ -1,1 +1,0 @@
-"use strict";(globalThis.webpackChunkdocumentation=globalThis.webpackChunkdocumentation||[]).push([[692],{5109(a){a.exports=JSON.parse('{"metadata":{"permalink":"/nalamdesk/blog","page":1,"postsPerPage":10,"totalPages":1,"totalCount":1,"blogDescription":"Blog","blogTitle":"Blog"}}')}}]);

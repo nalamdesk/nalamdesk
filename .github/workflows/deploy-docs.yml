@@ -16,6 +16,9 @@ jobs:
   deploy:
     name: Build and deploy docs
     runs-on: ubuntu-latest
+    concurrency:
+      group: "deploy-docs-${{ github.ref }}"
+      cancel-in-progress: true
     defaults:
       run:
         working-directory: ./cloud/documentation

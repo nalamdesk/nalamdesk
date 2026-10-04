@@ -9,7 +9,7 @@ NalamDesk is a secure, offline-first clinic management system. Your patient
 data lives on your own computer, encrypted, and the clinic runs its full
 day with no internet.
 
-<!-- truncate -->
+{/* truncate */}
 
 Start with the [User Guide](/docs/user-guide/intro):
 

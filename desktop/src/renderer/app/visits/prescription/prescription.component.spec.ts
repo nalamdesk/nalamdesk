@@ -97,4 +97,12 @@ describe('PrescriptionComponent', () => {
         component.onMedicineTyped(0, 'x');
         expect(component.items()[0].medicine).toBe('');
     });
+
+    it('labels frequencies per the profile lens without changing values', () => {
+        expect(component.frequencyLabel('1-0-1')).toBe('1-0-1 (BID)');
+        expect(component.frequencyLabel('STAT')).toBe('STAT');
+        (component as any).profileService = { mode: () => 'international' };
+        expect(component.frequencyLabel('1-0-1')).toBe('BID (1-0-1)');
+        expect(component.frequencyLabel('SOS')).toBe('PRN (SOS)');
+    });
 });

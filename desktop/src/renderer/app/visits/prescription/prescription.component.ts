@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CatalogTypeaheadComponent } from '../../shared/components/catalog-typeahead/catalog-typeahead.component';
 import { DataService } from '../../services/api.service';
+import { PracticeProfileService } from '../../services/practice-profile.service';
+import { displayFrequency } from '../../../../shared/practice-profile';
 
 @Component({
   selector: 'app-prescription',
@@ -86,13 +88,7 @@ import { DataService } from '../../services/api.service';
           <div class="col-span-6 md:col-span-2">
             <span class="text-xs text-gray-500 md:hidden">Frequency</span>
             <select [(ngModel)]="item.frequency" (ngModelChange)="emitChange()" [disabled]="disabled" aria-label="Frequency" class="select select-bordered select-sm w-full">
-              <option value="1-0-1">1-0-1 (BID)</option>
-              <option value="1-1-1">1-1-1 (TID)</option>
-              <option value="1-0-0">1-0-0 (OD)</option>
-              <option value="0-0-1">0-0-1 (HS)</option>
-              <option value="0-1-0">0-1-0 (Afternoon)</option>
-              <option value="SOS">SOS</option>
-              <option value="STAT">STAT</option>
+              <option *ngFor="let f of frequencies" [value]="f">{{ frequencyLabel(f) }}</option>
             </select>
           </div>
 
@@ -134,6 +130,18 @@ import { DataService } from '../../services/api.service';
 })
 export class PrescriptionComponent {
   private readonly dataService = inject(DataService, { optional: true });
+  private readonly profileService = inject(PracticeProfileService, { optional: true });
+
+  /** Canonical schedule values; labels follow the profile lens. */
+  readonly frequencies = ['1-0-1', '1-1-1', '1-0-0', '0-0-1', '0-1-0', 'SOS', 'STAT'];
+
+  frequencyLabel(canonical: string): string {
+    const mode = this.profileService?.mode() || 'india_abdm';
+    const latin = displayFrequency(canonical, 'international');
+    if (mode === 'international' && latin !== canonical) return `${latin} (${canonical})`;
+    if (mode !== 'international' && latin !== canonical) return `${canonical} (${latin})`;
+    return canonical;
+  }
 
   @Input() set initialData(value: any[]) {
     if (value && value.length > 0) this.items.set(value);

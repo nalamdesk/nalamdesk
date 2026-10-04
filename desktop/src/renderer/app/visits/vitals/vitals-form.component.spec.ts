@@ -199,4 +199,18 @@ describe('VitalsFormComponent', () => {
         expect(amended.vitalsForm.get('temperature')?.value).toBe(37);
         expect(amended.vitalsForm.get('temperature')?.valid).toBe(true);
     });
+
+    it('defaults to Celsius under the International lens', () => {
+        const intl = new VitalsFormComponent(fb, mockDataService, mockNgZone, undefined,
+            { mode: () => 'international' } as any);
+        intl.ngOnInit();
+        expect(intl.tempUnit).toBe('°C');
+    });
+
+    it('stays in Fahrenheit under the India lens', () => {
+        const india = new VitalsFormComponent(fb, mockDataService, mockNgZone, undefined,
+            { mode: () => 'india_abdm' } as any);
+        india.ngOnInit();
+        expect(india.tempUnit).toBe('°F');
+    });
 });

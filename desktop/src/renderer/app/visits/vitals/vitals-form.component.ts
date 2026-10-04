@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { AbstractControl, FormBuilder, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { DataService } from '../../services/api.service';
 import { DialogService } from '../../shared/services/dialog.service';
+import { PracticeProfileService } from '../../services/practice-profile.service';
 import { DEFAULT_VITAL_UNITS, VITALS_PHYSIOLOGICAL_RANGES, fToC, cToF, kgToLbs, lbsToKg, toCanonicalUcumUnit } from '../../../../shared/vitals-validator';
 
 function isPresent(val: unknown): boolean {
@@ -205,7 +206,7 @@ export class VitalsFormComponent implements OnInit {
         return '';
     }
 
-    constructor(private fb: FormBuilder, private dataService: DataService, private ngZone: NgZone, private dialogService?: DialogService) {
+    constructor(private fb: FormBuilder, private dataService: DataService, private ngZone: NgZone, private dialogService?: DialogService, private profileService?: PracticeProfileService) {
         const ranges = VITALS_PHYSIOLOGICAL_RANGES;
         this.vitalsForm = this.fb.group({
             height: [null, [Validators.min(ranges['height'].min), Validators.max(ranges['height'].max)]],
@@ -224,6 +225,11 @@ export class VitalsFormComponent implements OnInit {
     }
 
     ngOnInit(): void {
+        // Profile default lens (issue #51): International clinics start in
+        // °C; the toggle stays available and conversion stays canonical.
+        if (this.profileService?.mode() === 'international') {
+            this.toggleTempUnit('°C');
+        }
         this.populateExistingVitalsIfPresent();
     }
 

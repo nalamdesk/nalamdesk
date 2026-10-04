@@ -21,6 +21,7 @@ import {
     ExportablePrescriptionLine, FREQUENCY_PATTERN, IPS_SECTIONS, OP_CONSULT_SECTIONS,
     isExportableMedicationRequest
 } from './nrces';
+import { parseFrequency } from '../clinical-timing';
 
 export interface ExportPrescriptionLine {
     medicine: string;
@@ -138,7 +139,9 @@ function supplyDuration(duration?: string): Quantity | undefined {
 
 function dosageFor(line: ExportPrescriptionLine): Dosage {
     const dosage: Dosage = {};
-    const pattern = FREQUENCY_PATTERN[line.frequency || ''];
+    // Normalize first (issue #52): typed Latin folds to canonical, so BID
+    // exports coded timing instead of a free-text warning.
+    const pattern = FREQUENCY_PATTERN[parseFrequency(line.frequency || '')];
     if (pattern) {
         dosage.timing = {
             repeat: { frequency: pattern.frequency, period: pattern.period, periodUnit: pattern.periodUnit }
@@ -407,7 +410,7 @@ function bundleFor(
         if (!line.medicine?.trim()) continue;
         const built = medicationRequest(line, input, date, warnings);
         if (!built) continue;
-        if (!FREQUENCY_PATTERN[line.frequency || ''] && line.frequency) {
+        if (!FREQUENCY_PATTERN[parseFrequency(line.frequency || '')] && line.frequency) {
             warnings.push(`Frequency kept as free text (no coded mapping): ${line.medicine} — ${line.frequency}`);
         }
         prescriptionRefs.push(push(built, `medicationrequest-${entries.length}`));

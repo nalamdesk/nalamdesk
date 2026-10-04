@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { CatalogTypeaheadComponent } from '../../shared/components/catalog-typeahead/catalog-typeahead.component';
 import { DataService } from '../../services/api.service';
 import { PracticeProfileService } from '../../services/practice-profile.service';
-import { displayFrequency } from '../../../../shared/practice-profile';
+import { frequencyLatin, parseFrequency } from '../../../../shared/clinical-timing';
 
 @Component({
   selector: 'app-prescription',
@@ -137,7 +137,7 @@ export class PrescriptionComponent {
 
   frequencyLabel(canonical: string): string {
     const mode = this.profileService?.mode() || 'india_abdm';
-    const latin = displayFrequency(canonical, 'international');
+    const latin = frequencyLatin(canonical);
     if (mode === 'international' && latin !== canonical) return `${latin} (${canonical})`;
     if (mode !== 'international' && latin !== canonical) return `${canonical} (${latin})`;
     return canonical;
@@ -182,6 +182,18 @@ export class PrescriptionComponent {
 
   emitChange() {
     if (this.disabled) return;
+    // Normalize schedules on the way out (issue #52): typed Latin,
+    // presets, and imports all fold to canonical; unknowns pass through.
+    const normalized = this.items().map((item) => {
+      const raw = item?.frequency;
+      // Empty stays empty: never fabricate a schedule for a blank line.
+      if (raw == null || String(raw).trim() === '') return item;
+      const folded = parseFrequency(raw);
+      return folded === raw ? item : { ...item, frequency: folded };
+    });
+    if (normalized.some((line, i) => line.frequency !== this.items()[i]?.frequency)) {
+      this.items.set(normalized);
+    }
     this.changed.emit(this.items());
   }
 

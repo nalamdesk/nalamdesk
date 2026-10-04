@@ -81,6 +81,21 @@ describe('buildOpConsultRecord', () => {
         expect(warnings.join(' ')).toContain('SOS');
     });
 
+    it('codes typed Latin schedules through the parser', () => {
+        const input = fixture();
+        input.prescriptions = [
+            { medicine: 'Amoxicillin', dosage: '500mg', route: 'Oral', frequency: 'BID', duration: '3 days' },
+            { medicine: 'Cetirizine', dosage: '10mg', route: 'Oral', frequency: 'prn', duration: '5 days' }
+        ];
+        const { bundle, warnings } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const requests: any[] = bundle.entry
+            .filter((e) => e.resource?.resourceType === 'MedicationRequest')
+            .map((e) => e.resource);
+        const bid = requests.find((r) => r.medicationCodeableConcept?.text === 'Amoxicillin');
+        expect(bid.dosageInstruction[0].timing.repeat).toMatchObject({ frequency: 2, periodUnit: 'd' });
+        expect(warnings.join(' ')).not.toContain('BID');
+    });
+
     it('omits inactive allergies and blank lines without warnings', () => {
         const input = fixture();
         input.prescriptions = [

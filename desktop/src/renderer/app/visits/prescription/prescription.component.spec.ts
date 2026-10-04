@@ -4,6 +4,7 @@
 import '@angular/compiler';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PrescriptionComponent } from './prescription.component';
+import { PracticeProfileService } from '../../services/practice-profile.service';
 
 // Mock inject for standalone components
 vi.mock('@angular/core', async () => {
@@ -104,5 +105,17 @@ describe('PrescriptionComponent', () => {
         (component as any).profileService = { mode: () => 'international' };
         expect(component.frequencyLabel('1-0-1')).toBe('BID (1-0-1)');
         expect(component.frequencyLabel('SOS')).toBe('PRN (SOS)');
+    });
+
+    it('folds typed Latin schedules to canonical on emit', () => {
+        const seen: any[][] = [];
+        component.changed.subscribe((lines) => seen.push(lines));
+        component.items.set([
+            { medicine: 'A', form: 'Tab', dosage: '500mg', route: 'Oral', frequency: 'BID', duration: '3 days', instruction: 'After Food' },
+            { medicine: 'B', form: 'Tab', dosage: '', route: 'Oral', frequency: 'every 6 hours', duration: '', instruction: '' }
+        ]);
+        component.emitChange();
+        expect(seen[0][0].frequency).toBe('1-0-1');
+        expect(seen[0][1].frequency).toBe('every 6 hours');
     });
 });

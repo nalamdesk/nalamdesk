@@ -1,17 +1,21 @@
 # NalamDesk landing (`landing/`)
 
-Public marketing homepage for **nalamdesk.com**. Astro 7 static build,
-deployed to Cloudflare Pages. Persuade surface in the lightbox world; the
-surface brief with the direction contract lives at
+Public marketing homepage for **nalamdesk.com**. Astro 7 served as
+Cloudflare Workers Static Assets (worker `nalamdesk-landing`, assets
+from `./dist`, see `wrangler.jsonc`). Persuade surface in the lightbox
+world; the surface brief with the direction contract lives at
 `.impeccable/surfaces/landing-index.md`.
 
 ## Commands
 
 - `npm run dev` (local preview)
-- `npm run build` (`dist/`, deploy this to Cloudflare Pages)
+- `npm run build` (Astro build to `dist/`)
 - `npm run preview` (serve `dist/`)
+- `npm run deploy:dry-run` (validate worker config, no credentials)
+- `npm run deploy` (build output live via Wrangler, needs Cloudflare auth)
 
-Node 22. No SSR adapter; output is static by default.
+Node 22. The `@astrojs/cloudflare` adapter emits the worker entry plus
+static assets; `wrangler.jsonc` is its generated config, committed.
 
 ## Scope
 
@@ -26,6 +30,26 @@ Landing carries outcomes and checkable proof. Step-by-step how-tos live in the
 Docusaurus site (`cloud/documentation`, deployed at
 https://sankara-sabapathy.github.io/nalamdesk/), which the header Docs link
 points at. The docs navbar links back to https://nalamdesk.com.
+
+## Deploy pipeline
+
+`.github/workflows/deploy-landing.yml` builds on every PR with a
+credential-free `wrangler deploy --dry-run`, and deploys on pushes to
+`master`. Required repo secrets: `CLOUDFLARE_API_TOKEN` (recommend the
+“Edit Cloudflare Workers” template, covering Workers Scripts plus the
+KV/Images rights behind the adapter's SESSION/IMAGES bindings) and
+`CLOUDFLARE_ACCOUNT_ID`.
+
+Why Wrangler and not `cf deploy`: `cf` (beta) cannot consume the Astro
+adapter's build output yet (it demands `.cloudflare/output/v0/`),
+while `wrangler deploy` validates cleanly. `cf` stays available for
+account, DNS, and domain commands. Re-evaluate `cf deploy` when `cf`
+leaves beta.
+
+Custom domain (one-time, needs the zone on Cloudflare first —
+`nalamdesk.com` currently has no DNS): add the domain to the
+Cloudflare account, then attach it under Worker → Settings → Domains &
+Routes. The worker serves `<name>.workers.dev` until then.
 
 ## Rules carried from the brief
 

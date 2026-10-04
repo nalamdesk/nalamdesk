@@ -1,7 +1,8 @@
-import { Component, NgZone, OnInit, inject } from '@angular/core';
+import { Component, NgZone, OnInit, Optional, inject } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
+import { PracticeProfileService } from '../../services/practice-profile.service';
 
 import { DataService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
@@ -115,8 +116,11 @@ import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patie
                         {{ patient?.mobile }}
                     </div>
                     <div class="flex items-center justify-between gap-3 text-sm" *ngIf="currentUser?.role !== 'nurse'">
-                        <span class="text-gray-600 truncate">{{ patient?.abha_address || 'No health ID linked' }}</span>
-                        <button class="text-blue-600 hover:underline font-medium text-xs shrink-0" (click)="showAbhaModal = true">
+                        <span class="text-gray-600 truncate">
+                          <span class="text-xs text-gray-400 mr-1">{{ profileService?.mode() === 'international' ? 'MRN' : 'Health ID' }}</span>
+                          {{ profileService?.mode() === 'international' ? (patient?.mrn || '—') : (patient?.abha_address || 'No health ID linked') }}
+                        </span>
+                        <button *ngIf="profileService?.mode() !== 'international'" class="text-blue-600 hover:underline font-medium text-xs shrink-0" (click)="showAbhaModal = true">
                             {{ patient?.abha_address ? 'Manage' : 'Link Health ID' }}
                         </button>
                     </div>
@@ -1376,7 +1380,8 @@ export class PatientDetailsComponent implements OnInit {
         private fb: FormBuilder,
         private dataService: DataService,
         private authService: AuthService,
-        private dialogService: DialogService
+        private dialogService: DialogService,
+        @Optional() readonly profileService?: PracticeProfileService
     ) {
         this.initForm();
         this.initClinicalForms();

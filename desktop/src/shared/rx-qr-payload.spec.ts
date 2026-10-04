@@ -65,4 +65,8 @@ describe('rx-qr-payload', () => {
         while (out.endsWith('=')) out = out.slice(0, -1);
         expect(() => decodeRxQr('ND1.' + out)).toThrow('beyond the accepted limit');
     });
+
+    it('rejects oversized inputs before inflating', () => {
+        expect(() => decodeRxQr('ND1.' + 'A'.repeat(2100))).toThrow('exceeds the accepted size');
+    });
 });

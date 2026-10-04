@@ -75,6 +75,13 @@ export function encodeRxQr(input: RxQrInput): string {
  */
 export function decodeRxQr(text: string): Record<string, unknown> {
     if (!text.startsWith('ND1.')) throw new Error('Not a NalamDesk prescription code.');
+    // Bound allocation before touching inflate: our own encoder never
+    // emits past the char cap, so anything longer is hostile or corrupt.
+    // Worst case past this gate is ~1.5MB transient (deflate's max
+    // expansion ratio on ~1.5KB input) -- harmless on desktop.
+    if (text.length > RX_QR_CHAR_LIMIT + 4) {
+        throw new Error('QR payload exceeds the accepted size.');
+    }
     let b64 = text.slice(4).replaceAll('-', '+').replaceAll('_', '/');
     // Strict decoders reject unpadded input: restore the stripped '='.
     while (b64.length % 4 !== 0) b64 += '=';

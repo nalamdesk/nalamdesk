@@ -49,7 +49,20 @@ jobs:
       - name: Install Electron system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64 libnss3 libxss1 libxtst6 xauth
+          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64 libnss3 libxss1 libxtst6 xauth libsecret-1-0
+
+      - name: Start session keyring
+        # Electron safeStorage uses gnome-libsecret (forced by the app) and
+        # needs a session bus plus an unlocked login keyring. Verified:
+        # without this, device setup fails with ENCRYPTION_UNAVAILABLE.
+        run: |
+          sudo apt-get install -y gnome-keyring dbus-x11
+          eval "$(dbus-launch --sh-syntax)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
+          echo "DBUS_SESSION_BUS_PID=$DBUS_SESSION_BUS_PID" >> $GITHUB_ENV
+          printf 'nalamdesk-ci' | gnome-keyring-daemon --daemonize --login --components=secrets
+          sleep 1
+          printf 'nalamdesk-ci' | gnome-keyring-daemon --replace --unlock --components=secrets
 
       - name: Fix Electron sandbox permissions
         # Chromium's SUID sandbox requires chrome-sandbox to be root-owned
@@ -83,8 +96,6 @@ jobs:
         env:
           # Mirror main-process console to stderr so startup hangs are visible.
           ELECTRON_ENABLE_LOGGING: 1
-          # No OS keyring exists on runners; plain store keeps safeStorage up.
-          NALAMDESK_E2E_CHROMIUM_FLAGS: --password-store=basic
         run: |
           case "${{ inputs.spec }}" in
             '01 auth + RBAC') TARGET='e2e/regression/01-auth-rbac.spec.ts' ;;

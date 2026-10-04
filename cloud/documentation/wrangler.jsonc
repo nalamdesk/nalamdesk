@@ -1,6 +1,6 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
-	"compatibility_date": "2026-10-01",
+	"compatibility_date": "2026-09-01",
 	"name": "nalamdesk-docs",
 	"assets": {
 		"directory": "./build",

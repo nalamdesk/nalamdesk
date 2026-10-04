@@ -2,16 +2,16 @@
 
 > Offline-first practice management for small clinics. Encrypted local vault, no cloud records.
 
-- User Guide: https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/intro
-  - Initial Setup (vault creation): https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/initial-setup
-  - Admin Management (users, roles, security, catalogs, ABDM, audit): https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/admin-management
-  - Clinic Operations (registration, queue triage, vitals, consultation): https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/clinic-operations
-  - Daily Collection and Day Close (receipts, review queue, ledger): https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/daily-collection
-  - Merging Duplicate Charts (preview, rollback, archive): https://sankara-sabapathy.github.io/nalamdesk/docs/user-guide/patient-merge
-- Data and Backups (schedule, retention, restore, Drive): https://sankara-sabapathy.github.io/nalamdesk/docs/backups
-- Developer Guide: https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/local-setup
-  - Architecture (Electron, Fastify :3000, SQLCipher, RBAC): https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/architecture
-  - Database Schema (migrations, ledgers, identifiers): https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/database-schema
-  - Testing Strategy (vitest workspaces, Playwright E2E): https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/testing-strategy
+- User Guide: https://docs.nalamdesk.com/docs/user-guide/intro
+  - Initial Setup (vault creation): https://docs.nalamdesk.com/docs/user-guide/initial-setup
+  - Admin Management (users, roles, security, catalogs, ABDM, audit): https://docs.nalamdesk.com/docs/user-guide/admin-management
+  - Clinic Operations (registration, queue triage, vitals, consultation): https://docs.nalamdesk.com/docs/user-guide/clinic-operations
+  - Daily Collection and Day Close (receipts, review queue, ledger): https://docs.nalamdesk.com/docs/user-guide/daily-collection
+  - Merging Duplicate Charts (preview, rollback, archive): https://docs.nalamdesk.com/docs/user-guide/patient-merge
+- Data and Backups (schedule, retention, restore, Drive): https://docs.nalamdesk.com/docs/backups
+- Developer Guide: https://docs.nalamdesk.com/docs/developer-guide/local-setup
+  - Architecture (Electron, Fastify :3000, SQLCipher, RBAC): https://docs.nalamdesk.com/docs/developer-guide/architecture
+  - Database Schema (migrations, ledgers, identifiers): https://docs.nalamdesk.com/docs/developer-guide/database-schema
+  - Testing Strategy (vitest workspaces, Playwright E2E): https://docs.nalamdesk.com/docs/developer-guide/testing-strategy
 - Marketing site: https://nalamdesk.com/
 - Source: https://github.com/sankara-sabapathy/nalamdesk (AGPL-3.0)

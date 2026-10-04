@@ -113,9 +113,17 @@ test.describe.serial('UI navigation — all modules', () => {
             localStorage.removeItem('nalamdesk_user');
             localStorage.removeItem('nalamdesk_token');
         });
-        for (const hash of ['#/login', '#/recover', '#/change-password']) {
-            await gotoHash(ctx.window, hash);
-            await expect(ctx.window.locator('input[type="password"]').first()).toBeVisible({ timeout: 15000 });
+        // Route-specific markers (each absent from the previous page, so a
+        // pass always proves the navigation landed — a generic selector would
+        // match the stale page while the router is still tearing it down).
+        const cases = [
+            { hash: '#/login', marker: 'input[name="password"]' },
+            { hash: '#/recover', marker: 'h2:has-text("Recover This Device")' },
+            { hash: '#/change-password', marker: 'input[name="currentPassword"]' },
+        ];
+        for (const c of cases) {
+            await gotoHash(ctx.window, c.hash);
+            await expect(ctx.window.locator(c.marker).first()).toBeVisible({ timeout: 15000 });
         }
         // Restore admin session for subsequent specs (each spec uses its own app instance,
         // but leave this one clean).

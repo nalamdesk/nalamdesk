@@ -16,6 +16,8 @@ world; the surface brief with the direction contract lives at
 
 Node 22. The `@astrojs/cloudflare` adapter emits the worker entry plus
 static assets; `wrangler.jsonc` is its generated config, committed.
+Fonts are self-hosted variable woff2 in `public/fonts/` (OFL, via
+fontsource); no third-party requests on the page.
 
 ## Scope
 

@@ -1,5 +1,21 @@
 @import 'tailwindcss';
 
+/* Self-hosted variable fonts (OFL, via fontsource files in public/fonts). */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-var-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/jakarta-var-latin.woff2') format('woff2');
+}
+
 @theme {
   --color-bar: #101828;
   --color-wash: #eef2f5;

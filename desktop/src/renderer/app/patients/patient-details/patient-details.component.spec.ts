@@ -891,5 +891,76 @@ describe('PatientDetailsComponent', () => {
         await component.unmergeChart();
         expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Unmerge failed' }));
     });
+
+    it('loads chart identifiers with patient data', async () => {
+        const rows = [{ id: 1, system: 'mrn', value: 'ND-100001', is_primary: 1 }];
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'getPatientById') return Promise.resolve({ id: 123, name: 'Test Patient' });
+            if (endpoint === 'getIdentifiers') return Promise.resolve(rows);
+            return Promise.resolve(null);
+        });
+        component.patientId = 123;
+        await component.loadData();
+        expect(component.identifiers).toEqual(rows);
+    });
+
+    it('adds an identifier after inline validation and reloads', async () => {
+        component.patientId = 123;
+        component.identifierForm = { system: 'abha-number', value: '79927398713891', isPrimary: false };
+        await component.addIdentifier();
+        expect(mockDataService.invoke).toHaveBeenCalledWith('saveIdentifier', {
+            patientId: 123, system: 'abha-number', value: '79927398713891', isPrimary: false
+        });
+        expect(component.identifierForm.value).toBe('');
+        expect(component.identifierError).toBe('');
+    });
+
+    it('rejects malformed identifiers inline without invoking', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockClear();
+        component.identifierForm = { system: 'abha-number', value: '123', isPrimary: false };
+        await component.addIdentifier();
+        expect(component.identifierError).toContain('14 digits');
+        expect(mockDataService.invoke).not.toHaveBeenCalledWith('saveIdentifier', expect.anything());
+    });
+
+    it('surfaces backend identifier failures inline', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'saveIdentifier') return Promise.reject(new Error('another chart'));
+            return Promise.resolve(null);
+        });
+        component.identifierForm = { system: 'mrn', value: 'ND-100008', isPrimary: false };
+        await component.addIdentifier();
+        expect(component.identifierError).toContain('another chart');
+    });
+
+    it('removes identifiers and surfaces failures inline', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'deleteIdentifier') return Promise.resolve({ deleted: true });
+            if (endpoint === 'getIdentifiers') return Promise.resolve([]);
+            return Promise.resolve(null);
+        });
+        await component.removeIdentifier(11);
+        expect(mockDataService.invoke).toHaveBeenCalledWith('deleteIdentifier', 11);
+        expect(component.identifierError).toBe('');
+
+        mockDataService.invoke.mockImplementation((endpoint: string) => {
+            if (endpoint === 'deleteIdentifier') return Promise.reject(new Error('chart identity'));
+            return Promise.resolve(null);
+        });
+        await component.removeIdentifier(12);
+        expect(component.identifierError).toContain('chart identity');
+    });
+
+    it('gates identifier curation to desk roles', () => {
+        mockAuthService.getUser.mockReturnValue({ role: 'nurse' });
+        component.ngOnInit();
+        expect(component.canCurateIdentifiers).toBe(false);
+        mockAuthService.getUser.mockReturnValue({ role: 'receptionist' });
+        component.ngOnInit();
+        expect(component.canCurateIdentifiers).toBe(true);
+    });
 });
 

@@ -14,6 +14,7 @@ import { deriveAge } from '../../../../shared/patient-age';
 import { ColDef } from 'ag-grid-community';
 import { newRequestId } from '../../services/request-id';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
+import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patient-identifiers';
 
 @Component({
     selector: 'app-patient-details',
@@ -124,6 +125,44 @@ import { ReasonDialogComponent } from '../../shared/components/reason-dialog/rea
                     </div>
                     <div class="flex items-center gap-3 text-sm text-gray-600">
                         {{ patient?.blood_group || '-' }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Identifiers (issue #55): every id system on one chart -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-bold text-gray-800">Identifiers</h3>
+                    <span *ngIf="patient?.mrn" class="text-xs font-mono text-gray-500">{{ patient.mrn }}</span>
+                </div>
+                <div *ngIf="identifiers.length === 0" class="text-xs text-gray-500 mb-3">No identifiers on file beyond the chart MRN.</div>
+                <div *ngFor="let ident of identifiers" class="flex items-center gap-2 py-1.5 border-b border-gray-100 last:border-0 text-sm">
+                    <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                          [ngClass]="ident.is_primary ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'">
+                        {{ ident.system }}
+                    </span>
+                    <span class="font-mono text-gray-800 truncate flex-1" [title]="ident.value">{{ ident.value }}</span>
+                    <span *ngIf="ident.is_primary" class="text-[10px] text-blue-600 font-bold">PRIMARY</span>
+                    <button *ngIf="canCurateIdentifiers && ident.system !== 'mrn'"
+                            (click)="removeIdentifier(ident.id)"
+                            class="text-gray-400 hover:text-red-600 text-xs shrink-0" title="Remove identifier">Remove</button>
+                    <span *ngIf="ident.system === 'mrn'" class="text-[10px] text-gray-400 shrink-0" title="The clinic MRN is the chart identity and cannot be removed">locked</span>
+                </div>
+                <div *ngIf="canCurateIdentifiers" class="mt-3 pt-3 border-t border-gray-100">
+                    <div class="grid grid-cols-2 gap-2">
+                        <select [(ngModel)]="identifierForm.system" class="border p-1.5 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                            <option *ngFor="let s of identifierSystems" [value]="s">{{ s }}</option>
+                        </select>
+                        <input [(ngModel)]="identifierForm.value" (ngModelChange)="identifierError = ''"
+                               placeholder="Value" class="border p-1.5 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
+                    </div>
+                    <p *ngIf="identifierError" class="text-xs text-red-500 mt-1">{{ identifierError }}</p>
+                    <div class="mt-2 flex items-center justify-between">
+                        <label class="flex items-center gap-1.5 text-xs text-gray-600">
+                            <input type="checkbox" [(ngModel)]="identifierForm.isPrimary" class="checkbox checkbox-xs" />
+                            Set as primary
+                        </label>
+                        <button (click)="addIdentifier()" class="text-xs text-blue-600 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded">Add identifier</button>
                     </div>
                 </div>
             </div>
@@ -1469,8 +1508,61 @@ export class PatientDetailsComponent implements OnInit {
                 this.conditions = safetyContext?.conditions || [];
                 this.medications = safetyContext?.medications || [];
             });
+            await this.loadIdentifiers();
         } catch (e) {
             console.error('Failed to load patient details', e);
+        }
+    }
+
+    // Flexible identifiers (issue #55). Nurses read; curation is a
+    // desk action (doctor/receptionist/admin), matching the IPC grants.
+    identifiers: any[] = [];
+    readonly identifierSystems = [...IDENTIFIER_SYSTEMS];
+    identifierForm = { system: 'abha-number', value: '', isPrimary: false };
+    identifierError = '';
+
+    get canCurateIdentifiers(): boolean {
+        return ['doctor', 'receptionist', 'admin'].includes(this.currentUser?.role);
+    }
+
+    async loadIdentifiers(): Promise<void> {
+        try {
+            const rows = await this.dataService.invoke<any[]>('getIdentifiers', this.patientId);
+            this.ngZone.run(() => { this.identifiers = rows || []; });
+        } catch (e) {
+            console.error('Failed to load identifiers', e);
+        }
+    }
+
+    async addIdentifier(): Promise<void> {
+        const value = (this.identifierForm.value || '').trim();
+        try {
+            validateIdentifier(this.identifierForm.system, value);
+        } catch (e) {
+            this.identifierError = e instanceof Error ? e.message : 'Invalid identifier.';
+            return;
+        }
+        try {
+            await this.dataService.invoke('saveIdentifier', {
+                patientId: this.patientId,
+                system: this.identifierForm.system,
+                value,
+                isPrimary: this.identifierForm.isPrimary
+            });
+            this.identifierForm = { system: 'abha-number', value: '', isPrimary: false };
+            this.identifierError = '';
+            await this.loadIdentifiers();
+        } catch (e) {
+            this.identifierError = e instanceof Error ? e.message : 'Could not save the identifier.';
+        }
+    }
+
+    async removeIdentifier(id: number): Promise<void> {
+        try {
+            await this.dataService.invoke('deleteIdentifier', id);
+            await this.loadIdentifiers();
+        } catch (e) {
+            this.identifierError = e instanceof Error ? e.message : 'Could not remove the identifier.';
         }
     }
 

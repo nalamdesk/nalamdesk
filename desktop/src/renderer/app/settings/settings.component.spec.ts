@@ -48,6 +48,31 @@ describe('SettingsComponent Validation', () => {
         vi.stubGlobal('alert', vi.fn());
         component = new SettingsComponent(mockNgZone);
         component.isElectron = false;
+        (component as any).profileService = {
+            mode: () => 'india_abdm',
+            load: vi.fn().mockResolvedValue(undefined),
+            setMode: vi.fn().mockResolvedValue(undefined),
+            exportLabel: () => 'ABDM NRCeS FHIR R4',
+            identifierLabel: () => 'ABHA Number'
+        };
+    });
+
+    it('switches the standards profile and toasts the result', async () => {
+        const setMode = vi.fn().mockResolvedValue(undefined);
+        const toast = { success: vi.fn() };
+        (component as any).profileService.setMode = setMode;
+        (component as any).toastService = toast;
+        await component.setStandardsMode('international');
+        expect(setMode).toHaveBeenCalledWith('international');
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('International'), 'Profile updated');
+    });
+
+    it('surfaces standards switch failures as dialogs', async () => {
+        const dialogSpy = vi.fn(() => Promise.resolve(true));
+        (component as any).dialogService = { open: dialogSpy };
+        (component as any).profileService = { setMode: vi.fn().mockRejectedValue(new Error('db down')) };
+        await component.setStandardsMode('international');
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Profile failed' }));
     });
 
     it('should validate required fields', () => {

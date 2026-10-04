@@ -384,7 +384,7 @@ export class DatabaseService {
             backup_schedule, cloud_backup_schedule, mrn_prefix, consultation_fee,
             abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id,
             abdm_hfr_id, abdm_hpr_id, abdm_hip_endpoint, abdm_recipient_key,
-            abdm_hiu_public_key
+            abdm_hiu_public_key, standards_mode
             FROM settings LIMIT 1`).get();
     }
 
@@ -396,7 +396,7 @@ export class DatabaseService {
     getSanitizedSettings() {
         return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, cloud_enabled,
             abdm_gateway_env, abdm_mock, abdm_hip_id, abdm_counter_id,
-            abdm_hfr_id, abdm_hip_endpoint, abdm_hiu_public_key
+            abdm_hfr_id, abdm_hip_endpoint, abdm_hiu_public_key, standards_mode
             FROM settings LIMIT 1`).get();
     }
 
@@ -463,7 +463,7 @@ export class DatabaseService {
     // ... (existing code)
 
     getPublicSettings() {
-        return this.db.prepare('SELECT clinic_name, doctor_name, logo_path, cloud_enabled FROM settings LIMIT 1').get();
+        return this.db.prepare('SELECT clinic_name, doctor_name, logo_path, cloud_enabled, standards_mode FROM settings LIMIT 1').get();
     }
 
     // RBAC
@@ -726,13 +726,21 @@ export class DatabaseService {
             'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
             'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
             'abdm_hiu_public_key',
-            'abdm_callback_secret'
+            'abdm_callback_secret',
+            'standards_mode'
         ];
 
         // Filter incoming settings to only allowed columns
         const validKeys = Object.keys(settings).filter(k => ALLOWED_COLUMNS.includes(k));
 
         if (validKeys.length === 0) return; // Nothing to update/insert
+
+        // Practice profile is a closed vocabulary: unknown modes would
+        // silently fork display behavior across clients.
+        if (validKeys.includes('standards_mode')
+            && settings.standards_mode !== 'india_abdm' && settings.standards_mode !== 'international') {
+            throw new Error('Unknown standards mode.');
+        }
 
         if (existing) {
             // Build dynamic update query using whitelisted keys

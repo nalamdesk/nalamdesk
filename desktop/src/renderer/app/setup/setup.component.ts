@@ -151,6 +151,24 @@ import { jsPDF } from 'jspdf';
                 <label class="block text-gray-400 text-sm mb-1">Doctor Name</label>
                 <input type="text" [(ngModel)]="doctorName" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
               </div>
+              <div>
+                <span class="block text-gray-400 text-sm mb-1">Practice standards</span>
+                <div class="grid grid-cols-2 gap-2">
+                  <button type="button" (click)="standardsMode = 'india_abdm'"
+                          [class.ring-2]="standardsMode === 'india_abdm'"
+                          class="text-left bg-gray-700 border border-gray-600 rounded px-3 py-2 ring-blue-500">
+                    <span class="block text-white text-sm font-medium">India · ABDM</span>
+                    <span class="block text-gray-400 text-xs mt-0.5">1-0-1 · °F · ABHA first</span>
+                  </button>
+                  <button type="button" (click)="standardsMode = 'international'"
+                          [class.ring-2]="standardsMode === 'international'"
+                          class="text-left bg-gray-700 border border-gray-600 rounded px-3 py-2 ring-blue-500">
+                    <span class="block text-white text-sm font-medium">International</span>
+                    <span class="block text-gray-400 text-xs mt-0.5">BID · °C · MRN first</span>
+                  </button>
+                </div>
+                <p class="text-gray-500 text-xs mt-1">Display and export lens only. Records stay canonical; changeable later in Settings.</p>
+              </div>
             </div>
 
             <div class="mt-8 flex justify-between">
@@ -208,6 +226,7 @@ export class SetupComponent implements OnInit {
   confirmPassword = '';
   clinicName = '';
   doctorName = '';
+  standardsMode: 'india_abdm' | 'international' = 'india_abdm';
 
   isSubmitting = false;
   recoveryCode = '';
@@ -308,6 +327,7 @@ export class SetupComponent implements OnInit {
         clinicDetails: {
           clinic_name: this.clinicName,
           doctor_name: this.doctorName,
+          standards_mode: this.standardsMode,
           cloud_enabled: 0
         },
         adminDetails: {}

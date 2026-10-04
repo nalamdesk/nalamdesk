@@ -92,3 +92,20 @@ describe('SetupComponent external backup selection', () => {
         expect(value.restoreError).toBe('');
     });
 });
+
+describe('SetupComponent practice profile', () => {
+    it('defaults to India ABDM and passes the choice through setup', async () => {
+        const setup = vi.fn().mockResolvedValue({ success: true, recoveryCode: 'RC' });
+        const value = new SetupComponent({ setup } as any, { navigate: vi.fn() } as any, { run: (fn: () => void) => fn() } as any);
+        expect(value.standardsMode).toBe('india_abdm');
+        value.password = 'pw';
+        value.clinicName = 'Clinic';
+        value.doctorName = 'Doc';
+        value.standardsMode = 'international';
+        await value.finishSetup();
+        expect(setup).toHaveBeenCalledWith(expect.objectContaining({
+            clinicDetails: expect.objectContaining({ standards_mode: 'international' })
+        }));
+        expect(value.step).toBe(4);
+    });
+});

@@ -902,10 +902,14 @@ describe('Database Migrations', () => {
                 return { run: (perms: string, name: string) => { writes[name] = perms; } };
             });
             MIGRATIONS.find((m) => m.version === 42)!.up(mockDb);
-            for (const method of ['transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment']) {
+            for (const method of ['transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment']) {
                 expect(JSON.parse(writes['doctor'])).toContain(method);
                 expect(JSON.parse(writes['receptionist'])).toContain(method);
             }
+            // Fulfill is clinical: doctor/admin only, never receptionist.
+            expect(JSON.parse(writes['doctor'])).toContain('fulfillAppointment');
+            expect(JSON.parse(writes['admin'] || '[]')).toContain('fulfillAppointment');
+            expect(JSON.parse(writes['receptionist'] || '[]')).not.toContain('fulfillAppointment');
             expect(writes['nurse']).toBeUndefined();
         });
     });

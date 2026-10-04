@@ -3455,7 +3455,15 @@ export class DatabaseService {
         'no-show': []
     };
 
-    transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number }) {
+    transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }) {
+        // Transactional core split: checkInAppointment and fulfillAppointment
+        // call the core inside their own transactions (better-sqlite3
+        // transactions do not nest), while direct callers get atomicity here.
+        return this.db.transaction(() =>
+            this._transitionAppointment(Number(id), String(to || ''), input))();
+    }
+
+    private _transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }) {
         const target = String(to || '').toLowerCase();
         if (!DatabaseService.APPOINTMENT_STATUSES.includes(target)) {
             throw new Error(`Unknown appointment status: ${to}.`);
@@ -3474,22 +3482,25 @@ export class DatabaseService {
         const actorId = input?.actorId != null ? Number(input.actorId) : null;
         const updates: string[] = ['status = ?'];
         const params: unknown[] = [target];
-        // First reschedule stamps the originals; later moves keep them.
-        if (input && typeof (input as any).date === 'string' && (input as any).date !== row.date) {
+        // First reschedule stamps BOTH originals, even when only one side
+        // moves: a later change must never rewrite history with a new time.
+        const dateMoved = input && typeof (input as any).date === 'string' && (input as any).date !== row.date;
+        const timeMoved = input && typeof (input as any).time === 'string' && (input as any).time !== row.time;
+        if (dateMoved) {
             updates.push('date = ?');
             params.push((input as any).date);
-            if (!row.original_date) {
-                updates.push('original_date = ?');
-                params.push(row.date);
-            }
         }
-        if (input && typeof (input as any).time === 'string' && (input as any).time !== row.time) {
+        if (timeMoved) {
             updates.push('time = ?');
             params.push((input as any).time);
-            if (!row.original_time) {
-                updates.push('original_time = ?');
-                params.push(row.time);
-            }
+        }
+        if ((dateMoved || timeMoved) && !row.original_date) {
+            updates.push('original_date = ?');
+            params.push(row.date);
+        }
+        if ((dateMoved || timeMoved) && !row.original_time) {
+            updates.push('original_time = ?');
+            params.push(row.time);
         }
         if (target === 'cancelled' || target === 'no-show') {
             updates.push('status_reason = ?');
@@ -3570,7 +3581,7 @@ export class DatabaseService {
                 if (live) return { appointmentId: Number(id), queueEntryId: Number(row.queue_entry_id), reused: true };
             }
             if (String(row.status || '').toLowerCase() !== 'arrived') {
-                this.transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined });
+                this._transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined });
             }
             const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
             const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
@@ -3586,16 +3597,19 @@ export class DatabaseService {
      * cross-patient linkage is rejected, not recorded.
      */
     fulfillAppointment(id: number, visitId: number, actingUserId?: number) {
-        const row = this.db.prepare('SELECT id, patient_id, status FROM appointments WHERE id = ?').get(Number(id)) as any;
-        if (!row) throw new Error('Appointment not found.');
-        const visit = this.db.prepare('SELECT id, patient_id FROM visits WHERE id = ?').get(Number(visitId)) as any;
-        if (!visit) throw new Error('Visit not found.');
-        if (Number(visit.patient_id) !== Number(row.patient_id)) {
-            throw new Error('Visit belongs to another patient.');
-        }
-        const moved = this.transitionAppointment(Number(id), 'fulfilled', { actorId: actingUserId ?? undefined });
-        this.db.prepare('UPDATE appointments SET visit_id = ? WHERE id = ?').run(Number(visitId), Number(id));
-        return { ...moved, visitId: Number(visitId) };
+        const fulfill = this.db.transaction(() => {
+            const row = this.db.prepare('SELECT id, patient_id, status FROM appointments WHERE id = ?').get(Number(id)) as any;
+            if (!row) throw new Error('Appointment not found.');
+            const visit = this.db.prepare('SELECT id, patient_id FROM visits WHERE id = ?').get(Number(visitId)) as any;
+            if (!visit) throw new Error('Visit not found.');
+            if (Number(visit.patient_id) !== Number(row.patient_id)) {
+                throw new Error('Visit belongs to another patient.');
+            }
+            const moved = this._transitionAppointment(Number(id), 'fulfilled', { actorId: actingUserId ?? undefined });
+            this.db.prepare('UPDATE appointments SET visit_id = ? WHERE id = ?').run(Number(visitId), Number(id));
+            return { ...moved, visitId: Number(visitId) };
+        });
+        return fulfill();
     }
 
     searchConditions(query?: string, limit?: number) {

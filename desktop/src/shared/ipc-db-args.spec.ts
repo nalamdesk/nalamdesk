@@ -83,4 +83,19 @@ describe('resolveDbMethodArgs addToQueue', () => {
         expect(resolveDbMethodArgs('voidInvoice', [{ invoiceId: 9, reason: 'Cancelled' }], 99))
             .toEqual([9, 'Cancelled', 99]);
     });
+
+    it('unpacks appointment lifecycle calls with the authenticated actor', () => {
+        // actorId always comes from the session, never the renderer payload:
+        // a forged actorId in input is overwritten, not honored.
+        expect(resolveDbMethodArgs('transitionAppointment',
+            [{ id: 3, to: 'confirmed', reason: 'called', actorId: 666 }], 99))
+            .toEqual([3, 'confirmed', { reason: 'called', actorId: 99, date: undefined, time: undefined }]);
+        expect(resolveDbMethodArgs('getAppointmentHistory', [3], 99)).toEqual([3, 99]);
+        expect(resolveDbMethodArgs('getAppointmentHistory', [{ id: 3 }], 99)).toEqual([3, 99]);
+        expect(resolveDbMethodArgs('detectConflicts', [{ doctorId: 5, date: '2026-10-05', time: '10:00' }], 99))
+            .toEqual([{ doctorId: 5, date: '2026-10-05', time: '10:00' }]);
+        expect(resolveDbMethodArgs('checkInAppointment', [3], 99)).toEqual([3, 99]);
+        expect(resolveDbMethodArgs('fulfillAppointment', [{ id: 3, visitId: 50 }], 99))
+            .toEqual([3, 50, 99]);
+    });
 });

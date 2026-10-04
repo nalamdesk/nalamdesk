@@ -1589,11 +1589,12 @@ export const MIGRATIONS = [
                 db.exec(`UPDATE appointments SET original_time = time
                     WHERE original_time IS NULL OR original_time = ''`);
             } catch (e) { }
-            const appointmentMethods = ['getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment'];
+            const appointmentMethods = ['getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment'];
+            const clinicalAppointmentMethods = [...appointmentMethods, 'fulfillAppointment'];
             grantRoleMethods(db, {
-                doctor: appointmentMethods,
+                doctor: clinicalAppointmentMethods,
                 receptionist: appointmentMethods,
-                admin: appointmentMethods
+                admin: clinicalAppointmentMethods
             });
         }
     }

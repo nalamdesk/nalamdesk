@@ -1485,5 +1485,151 @@ export const MIGRATIONS = [
                 admin: identifierMethods
             });
         }
+    },
+    {
+        version: 40,
+        up: (db: any) => {
+            console.log('Running Migration v40 (catalog enrichment: generics, ICD-10)...');
+            // NMC generic-first prescribing (issue #56): catalog rows carry
+            // the generic composition alongside the brand, and conditions
+            // carry ICD-10. SNOMED columns exist for future mapping; seeds
+            // leave them NULL rather than guess codes.
+            try { db.exec('ALTER TABLE medicine_catalog ADD COLUMN generic_name TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE medicine_catalog ADD COLUMN brand_name TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE medicine_catalog ADD COLUMN snomed_form_code TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE medicine_catalog ADD COLUMN snomed_route_code TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE condition_catalog ADD COLUMN icd10_code TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE condition_catalog ADD COLUMN snomed_code TEXT'); } catch (e) { }
+            const insertCondition = db.prepare(`INSERT OR IGNORE INTO condition_catalog
+                (name, icd10_code, active, created_at, updated_at)
+                VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
+            const stampCondition = db.prepare(`UPDATE condition_catalog
+                SET icd10_code = ? WHERE name = ? AND (icd10_code IS NULL OR icd10_code = '')`);
+            for (const [name, icd10] of SEED_CONDITIONS) {
+                insertCondition.run(name, icd10);
+                stampCondition.run(icd10, name);
+            }
+            const insertMedicine = db.prepare(`INSERT OR IGNORE INTO medicine_catalog
+                (name, generic_name, brand_name, form, dosage, route, frequency, duration, instruction,
+                 active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
+            const stampMedicine = db.prepare(`UPDATE medicine_catalog
+                SET generic_name = ?, brand_name = ? WHERE name = ? AND (generic_name IS NULL OR generic_name = '')`);
+            for (const [name, generic, brand, form, dosage] of SEED_MEDICINES) {
+                insertMedicine.run(name, generic, brand, form, dosage, 'Oral', '1-0-1', '3 days', 'After Food');
+                stampMedicine.run(generic, brand, name);
+            }
+        }
     }
+];
+
+/**
+ * Essential outpatient conditions with ICD-10 (issue #56 seed core).
+ * Curated, extensible: append rows, never edit shipped ones.
+ */
+const SEED_CONDITIONS: Array<[string, string]> = [
+    ['Essential hypertension', 'I10'],
+    ['Type 2 diabetes mellitus', 'E11.9'],
+    ['Type 1 diabetes mellitus', 'E10.9'],
+    ['Acute upper respiratory infection', 'J06.9'],
+    ['Acute pharyngitis', 'J02.9'],
+    ['Acute bronchitis', 'J20.9'],
+    ['Asthma', 'J45.909'],
+    ['COPD', 'J44.9'],
+    ['Pneumonia', 'J18.9'],
+    ['Chronic sinusitis', 'J32.9'],
+    ['Allergic rhinitis', 'J30.9'],
+    ['Chronic rhinitis', 'J31.0'],
+    ['Gastritis', 'K29.70'],
+    ['Gastro-oesophageal reflux disease', 'K21.9'],
+    ['Dyspepsia', 'K30'],
+    ['Irritable bowel syndrome', 'K58.9'],
+    ['Constipation', 'K59.00'],
+    ['Infectious diarrhoea', 'A09'],
+    ['Typhoid fever', 'A01.00'],
+    ['Malaria', 'B54'],
+    ['Dengue fever', 'A90'],
+    ['Chickenpox', 'B01.9'],
+    ['Measles', 'B05.9'],
+    ['Mumps', 'B26.9'],
+    ['Anaemia', 'D64.9'],
+    ['Iron deficiency anaemia', 'D50.9'],
+    ['Hypothyroidism', 'E03.9'],
+    ['Hyperthyroidism', 'E05.90'],
+    ['Obesity', 'E66.9'],
+    ['Hyperlipidaemia', 'E78.5'],
+    ['Polycystic ovarian syndrome', 'E28.2'],
+    ['Migraine', 'G43.909'],
+    ['Tension headache', 'G44.209'],
+    ['Headache', 'R51'],
+    ['Fever', 'R50.9'],
+    ['Cough', 'R05'],
+    ['Abdominal pain', 'R10.9'],
+    ['Dizziness', 'R42'],
+    ['Low back pain', 'M54.50'],
+    ['Osteoarthritis', 'M19.90'],
+    ['Rheumatoid arthritis', 'M05.9'],
+    ['Urinary tract infection', 'N39.0'],
+    ['Kidney stone', 'N20.0'],
+    ['Dysmenorrhoea', 'N94.6'],
+    ['Vaginitis', 'N76.0'],
+    ['Eczema', 'L30.9'],
+    ['Urticaria', 'L50.9'],
+    ['Itching of skin', 'L29.9'],
+    ['Scabies', 'B86'],
+    ['Conjunctivitis', 'H10.9'],
+    ['Otitis media', 'H66.90'],
+    ['Dental caries', 'K02.9'],
+    ['Anxiety', 'F41.9'],
+    ['Depression', 'F32.9'],
+    ['Insomnia', 'G47.00'],
+    ['Coronary artery disease', 'I25.10'],
+    ['Heart failure', 'I50.9'],
+    ['Stroke', 'I63.9']
+];
+
+/**
+ * Essential medicines: brand row name, generic composition, common form
+ * and strength (issue #56 seed core). Brands are widespread Indian
+ * examples; the generic column is the normative one.
+ */
+const SEED_MEDICINES: Array<[string, string, string, string, string]> = [
+    ['Crocin 500', 'Paracetamol', 'Crocin', 'Tab', '500mg'],
+    ['Dolo 650', 'Paracetamol', 'Dolo', 'Tab', '650mg'],
+    ['Brufen 400', 'Ibuprofen', 'Brufen', 'Tab', '400mg'],
+    ['Voveran 50', 'Diclofenac', 'Voveran', 'Tab', '50mg'],
+    ['Azithral 500', 'Azithromycin', 'Azithral', 'Tab', '500mg'],
+    ['Moxikind 500', 'Amoxicillin', 'Moxikind', 'Cap', '500mg'],
+    ['Augmentin 625', 'Amoxicillin + Clavulanate', 'Augmentin', 'Tab', '625mg'],
+    ['Zifi 200', 'Cefixime', 'Zifi', 'Tab', '200mg'],
+    ['Metrogyl 400', 'Metronidazole', 'Metrogyl', 'Tab', '400mg'],
+    ['Cetzine 10', 'Cetirizine', 'Cetzine', 'Tab', '10mg'],
+    ['Lorfast 10', 'Loratadine', 'Lorfast', 'Tab', '10mg'],
+    ['Montair 10', 'Montelukast', 'Montair', 'Tab', '10mg'],
+    ['Asthalin inhaler', 'Salbutamol', 'Asthalin', 'Inhaler', '100mcg'],
+    ['Omez 20', 'Omeprazole', 'Omez', 'Cap', '20mg'],
+    ['Pantocid 40', 'Pantoprazole', 'Pantocid', 'Tab', '40mg'],
+    ['Domstal 10', 'Domperidone', 'Domstal', 'Tab', '10mg'],
+    ['Emeset 4', 'Ondansetron', 'Emeset', 'Tab', '4mg'],
+    ['Electral powder', 'Oral rehydration salts', 'Electral', 'Powder', '21.8g'],
+    ['Glycomet 500', 'Metformin', 'Glycomet', 'Tab', '500mg'],
+    ['Amaryl 1', 'Glimepiride', 'Amaryl', 'Tab', '1mg'],
+    ['Atorva 10', 'Atorvastatin', 'Atorva', 'Tab', '10mg'],
+    ['Amlopress 5', 'Amlodipine', 'Amlopress', 'Tab', '5mg'],
+    ['Losar 50', 'Losartan', 'Losar', 'Tab', '50mg'],
+    ['Metolar 50', 'Metoprolol', 'Metolar', 'Tab', '50mg'],
+    ['Ecosprin 75', 'Aspirin', 'Ecosprin', 'Tab', '75mg'],
+    ['Clopilet 75', 'Clopidogrel', 'Clopilet', 'Tab', '75mg'],
+    ['Thyrox 50', 'Levothyroxine', 'Thyrox', 'Tab', '50mcg'],
+    ['Wysolone 5', 'Prednisolone', 'Wysolone', 'Tab', '5mg'],
+    ['Decadron 0.5', 'Dexamethasone', 'Decadron', 'Tab', '0.5mg'],
+    ['Flucos 150', 'Fluconazole', 'Flucos', 'Cap', '150mg'],
+    ['Permite 5%', 'Permethrin', 'Permite', 'Cream', '5%'],
+    ['Betadine ointment', 'Povidone-iodine', 'Betadine', 'Oint', '10%'],
+    ['Calamine lotion', 'Calamine + Zinc oxide', 'Calamine', 'Lotion', '8%+8%'],
+    ['Becosules', 'B-complex + Vitamin C', 'Becosules', 'Cap', '1 cap'],
+    ['Shelcal', 'Calcium + Vitamin D3', 'Shelcal', 'Tab', '500mg+250IU'],
+    ['Uprise-D3', 'Cholecalciferol', 'Uprise-D3', 'Cap', '60k IU'],
+    ['Autrin', 'Ferrous sulfate + Folic acid', 'Autrin', 'Cap', '150mg+0.5mg'],
+    ['Mecobalamin 500', 'Methylcobalamin', 'Nurokind', 'Tab', '500mcg']
 ];

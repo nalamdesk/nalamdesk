@@ -173,4 +173,45 @@ describe('condition and medicine catalogs', () => {
         expect(service.getConditionMedPresets(0)).toEqual([]);
         expect(() => service.replaceConditionMedPresets({ conditionId: 999, lines: [] })).toThrow('CONDITION_NOT_FOUND');
     });
+
+    it('stores generics, brands, and ICD-10 codes on catalog rows', () => {
+        const medicine = service.createMedicine({
+            name: 'Crocin 500 T', generic_name: 'Paracetamol', brand_name: 'Crocin'
+        });
+        expect(medicine.generic_name).toBe('Paracetamol');
+        expect(medicine.brand_name).toBe('Crocin');
+        const condition = service.createCondition({ name: 'Hypertension X', icd10_code: 'i10' });
+        expect(condition.icd10_code).toBe('I10');
+    });
+
+    it('finds medicines by generic composition or brand', () => {
+        service.createMedicine({ name: 'Crocin 500 T', generic_name: 'Paracetamol', brand_name: 'Crocin' });
+        expect(service.searchMedicines('paracetamol').length).toBeGreaterThan(0);
+        expect(service.searchMedicines('crocin').length).toBeGreaterThan(0);
+        expect(service.searchConditions('I10').some((c: any) => c.icd10_code === 'I10')).toBe(true);
+    });
+
+    it('persists uncatalogued free text with a NULL generic (Zero-Roadblock)', () => {
+        const medicine = service.createMedicine({ name: 'Village herbal mix' });
+        expect(medicine.generic_name).toBeNull();
+        expect(service.searchMedicines('herbal')[0].generic_name).toBeNull();
+    });
+
+    it('ships seeded generics and ICD-10 codes from migration v40', () => {
+        const crocin = service.searchMedicines('paracetamol');
+        expect(crocin.some((m: any) => m.generic_name === 'Paracetamol')).toBe(true);
+        const hyper = service.searchConditions('I10');
+        expect(hyper.some((c: any) => c.icd10_code === 'I10')).toBe(true);
+    });
+
+    it('updates generics and codes without losing Rx defaults', () => {
+        const medicine = service.createMedicine({ name: 'GenUp', dosage: '500mg' });
+        const updated = service.updateMedicine({ id: medicine.id, generic_name: 'Paracetamol', brand_name: 'GenBrand' });
+        expect(updated.generic_name).toBe('Paracetamol');
+        expect(updated.brand_name).toBe('GenBrand');
+        expect(updated.dosage).toBe('500mg');
+        const condition = service.createCondition({ name: 'CodeUp' });
+        const recoded = service.updateCondition({ id: condition.id, name: 'CodeUp', icd10_code: 'J06.9' });
+        expect(recoded.icd10_code).toBe('J06.9');
+    });
 });

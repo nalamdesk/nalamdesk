@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 39 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(39);
+        it('should have 40 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(40);
         });
     });
 
@@ -827,6 +827,28 @@ describe('Database Migrations', () => {
                 expect(JSON.parse(writes['receptionist'])).toContain(method);
             }
             expect(writes['nurse']).toBeUndefined();
+        });
+    });
+
+    describe('Migration v40 (catalog enrichment)', () => {
+        it('adds generic, brand, and code columns with seed data', () => {
+            MIGRATIONS.find((m) => m.version === 40)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('ADD COLUMN generic_name');
+            expect(sql).toContain('ADD COLUMN brand_name');
+            expect(sql).toContain('ADD COLUMN icd10_code');
+            expect(sql).toContain('ADD COLUMN snomed_code');
+        });
+
+        it('seeds conditions and medicines through prepared statements', () => {
+            const seen: string[] = [];
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                seen.push(sqlText);
+                return { run: vi.fn(), get: vi.fn() };
+            });
+            MIGRATIONS.find((m) => m.version === 40)!.up(mockDb);
+            expect(seen.some((s) => s.includes('INSERT OR IGNORE INTO condition_catalog'))).toBe(true);
+            expect(seen.some((s) => s.includes('INSERT OR IGNORE INTO medicine_catalog'))).toBe(true);
         });
     });
 });

@@ -17,6 +17,15 @@ export interface MedicineCatalogRow extends CatalogRow {
     frequency: string | null;
     duration: string | null;
     instruction: string | null;
+    generic_name: string | null;
+    brand_name: string | null;
+    snomed_form_code: string | null;
+    snomed_route_code: string | null;
+}
+
+export interface ConditionCatalogRow extends CatalogRow {
+    icd10_code: string | null;
+    snomed_code: string | null;
 }
 
 export interface PrescriptionLine {
@@ -48,27 +57,44 @@ interface CatalogWriteFields {
     frequency?: string;
     duration?: string;
     instruction?: string;
+    generic_name?: string | null;
+    brand_name?: string | null;
+    snomed_form_code?: string | null;
+    snomed_route_code?: string | null;
+    icd10_code?: string | null;
+    snomed_code?: string | null;
 }
 
-export function searchConditions(db: SqliteDb, query?: string, limit?: number): CatalogRow[] {
-    return searchActive(db, 'condition_catalog', query, limit);
+export function searchConditions(db: SqliteDb, query?: string, limit?: number): ConditionCatalogRow[] {
+    return searchActive(db, 'condition_catalog', query, limit) as ConditionCatalogRow[];
 }
 
 export function searchMedicines(db: SqliteDb, query?: string, limit?: number): MedicineCatalogRow[] {
     return searchActive(db, 'medicine_catalog', query, limit) as MedicineCatalogRow[];
 }
 
-export function createCondition(db: SqliteDb, input: { name?: string } | string): CatalogRow {
-    const name = normalizeName(typeof input === 'string' ? input : input?.name);
-    return insertNamed(db, 'condition_catalog', { name });
+export function createCondition(db: SqliteDb, input: { name?: string; icd10_code?: string; snomed_code?: string } | string): ConditionCatalogRow {
+    const raw = typeof input === 'string' ? { name: input } : input;
+    const name = normalizeName(raw?.name);
+    return insertNamed(db, 'condition_catalog', {
+        name,
+        icd10_code: normalizeUpperCode(raw?.icd10_code),
+        snomed_code: normalizeUpperCode(raw?.snomed_code)
+    }) as ConditionCatalogRow;
 }
 
 export function createMedicine(db: SqliteDb, input: Partial<MedicineCatalogRow> & { name?: string }): MedicineCatalogRow {
     const name = normalizeName(input?.name);
     const defaults = defaultRxFields(input);
+    // Zero-Roadblock: free-text entries persist immediately with a NULL
+    // generic — the workflow never blocks on an uncatalogued medicine.
     const row = insertNamed(db, 'medicine_catalog', {
         name,
-        ...defaults
+        ...defaults,
+        generic_name: normalizeCode(input?.generic_name),
+        brand_name: normalizeOptionalName(input?.brand_name) || null,
+        snomed_form_code: normalizeUpperCode(input?.snomed_form_code),
+        snomed_route_code: normalizeUpperCode(input?.snomed_route_code)
     });
     return { ...row, ...defaults };
 }
@@ -95,10 +121,14 @@ export function listMedicines(db: SqliteDb, includeRetired = false): MedicineCat
     return listCatalog(db, 'medicine_catalog', includeRetired) as MedicineCatalogRow[];
 }
 
-export function updateCondition(db: SqliteDb, input: { id?: number; name?: string }): CatalogRow {
+export function updateCondition(db: SqliteDb, input: { id?: number; name?: string; icd10_code?: string; snomed_code?: string }): ConditionCatalogRow {
     const id = requireId(input?.id);
     const name = normalizeName(input?.name);
-    return updateNamed(db, 'condition_catalog', id, { name });
+    return updateNamed(db, 'condition_catalog', id, {
+        name,
+        icd10_code: normalizeUpperCode(input?.icd10_code),
+        snomed_code: normalizeUpperCode(input?.snomed_code)
+    }) as ConditionCatalogRow;
 }
 
 export function updateMedicine(db: SqliteDb, input: Partial<MedicineCatalogRow> & { id?: number; name?: string }): MedicineCatalogRow {
@@ -107,7 +137,14 @@ export function updateMedicine(db: SqliteDb, input: Partial<MedicineCatalogRow> 
     if (!existing) throw new Error('CATALOG_NOT_FOUND');
     const name = normalizeName(input?.name != null ? input.name : existing.name);
     const defaults = defaultRxFields(mergeMedicineFields(existing, input));
-    return updateNamed(db, 'medicine_catalog', id, { name, ...defaults }) as MedicineCatalogRow;
+    return updateNamed(db, 'medicine_catalog', id, {
+        name,
+        ...defaults,
+        generic_name: input?.generic_name !== undefined ? normalizeCode(input.generic_name) : existing.generic_name,
+        brand_name: input?.brand_name !== undefined ? (normalizeOptionalName(input.brand_name) || null) : existing.brand_name,
+        snomed_form_code: input?.snomed_form_code !== undefined ? normalizeUpperCode(input.snomed_form_code) : existing.snomed_form_code,
+        snomed_route_code: input?.snomed_route_code !== undefined ? normalizeUpperCode(input.snomed_route_code) : existing.snomed_route_code
+    }) as MedicineCatalogRow;
 }
 
 export function retireCondition(db: SqliteDb, id: number): { id: number; active: number } {
@@ -162,12 +199,21 @@ function searchActive(db: SqliteDb, table: 'condition_catalog' | 'medicine_catal
     }
     const contains = likeContains(term);
     const prefix = likePrefix(term);
+    // Medicines match on brand, generic composition, or name: a doctor
+    // typing either side of GENERIC (Brand) lands on the same row.
+    const extraCount = table === 'medicine_catalog' ? 2 : table === 'condition_catalog' ? 1 : 0;
+    const extra = table === 'medicine_catalog'
+        ? 'OR generic_name LIKE ? ESCAPE \'\\\' OR brand_name LIKE ? ESCAPE \'\\\''
+        : table === 'condition_catalog'
+            ? 'OR icd10_code LIKE ? ESCAPE \'\\\''
+            : '';
+    const extras = Array.from({ length: extraCount }, () => contains);
     return db.prepare(`
         SELECT * FROM ${table}
-        WHERE active = 1 AND name LIKE ? ESCAPE '\\'
+        WHERE active = 1 AND (name LIKE ? ESCAPE '\\' ${extra})
         ORDER BY CASE WHEN name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END, name COLLATE NOCASE
         LIMIT ?
-    `).all(contains, prefix, capped);
+    `).all(contains, ...extras, prefix, capped);
 }
 
 function listCatalog(db: SqliteDb, table: 'condition_catalog' | 'medicine_catalog', includeRetired: boolean) {
@@ -181,16 +227,20 @@ function insertNamed(db: SqliteDb, table: 'condition_catalog' | 'medicine_catalo
     try {
         if (table === 'condition_catalog') {
             const result = db.prepare(`
-                INSERT INTO condition_catalog (name, active, created_at, updated_at)
-                VALUES (?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            `).run(fields.name);
+                INSERT INTO condition_catalog (name, icd10_code, snomed_code, active, created_at, updated_at)
+                VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `).run(fields.name, fields.icd10_code ?? null, fields.snomed_code ?? null);
             return db.prepare('SELECT * FROM condition_catalog WHERE id = ?').get(Number(result.lastInsertRowid));
         }
         const result = db.prepare(`
             INSERT INTO medicine_catalog (
-                name, form, dosage, route, frequency, duration, instruction, active, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        `).run(fields.name, fields.form, fields.dosage, fields.route, fields.frequency, fields.duration, fields.instruction);
+                name, form, dosage, route, frequency, duration, instruction,
+                generic_name, brand_name, snomed_form_code, snomed_route_code,
+                active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).run(fields.name, fields.form, fields.dosage, fields.route, fields.frequency, fields.duration,
+            fields.instruction, fields.generic_name ?? null, fields.brand_name ?? null,
+            fields.snomed_form_code ?? null, fields.snomed_route_code ?? null);
         return db.prepare('SELECT * FROM medicine_catalog WHERE id = ?').get(Number(result.lastInsertRowid));
     } catch (error) {
         throw mapConstraint(error);
@@ -203,20 +253,37 @@ function updateNamed(db: SqliteDb, table: 'condition_catalog' | 'medicine_catalo
     try {
         if (table === 'condition_catalog') {
             db.prepare(`
-                UPDATE condition_catalog SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-            `).run(fields.name, id);
+                UPDATE condition_catalog SET name = ?, icd10_code = ?, snomed_code = ?,
+                    updated_at = CURRENT_TIMESTAMP WHERE id = ?
+            `).run(fields.name, fields.icd10_code ?? null, fields.snomed_code ?? null, id);
         } else {
             db.prepare(`
                 UPDATE medicine_catalog
                 SET name = ?, form = ?, dosage = ?, route = ?, frequency = ?, duration = ?, instruction = ?,
+                    generic_name = ?, brand_name = ?, snomed_form_code = ?, snomed_route_code = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-            `).run(fields.name, fields.form, fields.dosage, fields.route, fields.frequency, fields.duration, fields.instruction, id);
+            `).run(fields.name, fields.form, fields.dosage, fields.route, fields.frequency, fields.duration,
+                fields.instruction, fields.generic_name ?? null, fields.brand_name ?? null,
+                fields.snomed_form_code ?? null, fields.snomed_route_code ?? null, id);
         }
         return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
     } catch (error) {
         throw mapConstraint(error);
     }
+}
+
+/** Optional codes and names: blank means unmapped. Case preserved. */
+function normalizeCode(value: unknown): string | null {
+    if (value == null) return null;
+    const text = String(value).trim().replace(/\s+/g, ' ');
+    return text ? text.slice(0, 64) : null;
+}
+
+/** ICD-10 / SNOMED codes are conventionally uppercase. */
+function normalizeUpperCode(value: unknown): string | null {
+    const text = normalizeCode(value);
+    return text ? text.toUpperCase().slice(0, 32) : null;
 }
 
 function retireRow(db: SqliteDb, table: 'condition_catalog' | 'medicine_catalog', id: number) {

@@ -61,6 +61,15 @@ describe('CatalogTypeaheadComponent', () => {
         expect(component.canAdd).toBe(false);
     });
 
+    it('subtitles enriched rows with generic, brand, and ICD codes', () => {
+        expect(component.hitSubtitle({ id: 1, name: 'Crocin 500', generic_name: 'Paracetamol', brand_name: 'Crocin' } as any))
+            .toBe('Paracetamol (Crocin)');
+        expect(component.hitSubtitle({ id: 2, name: 'Essential hypertension', icd10_code: 'I10', icd11_code: 'BA00.Z' } as any))
+            .toBe('ICD-11 BA00.Z');
+        expect(component.hitSubtitle({ id: 3, name: 'Old entry' } as any)).toBe('');
+        expect(component.hitSubtitle({ id: 4, name: 'Paracetamol', generic_name: 'Paracetamol' } as any)).toBe('');
+    });
+
     it('maps add-new validation errors', async () => {
         component.value = ' ';
         await component.addNew();

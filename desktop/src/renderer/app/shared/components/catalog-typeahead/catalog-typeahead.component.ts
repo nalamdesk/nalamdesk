@@ -25,7 +25,10 @@ export interface CatalogPick {
       <div *ngIf="open && !disabled" class="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-y-auto">
         <button type="button" *ngFor="let hit of hits"
                 class="block w-full text-left px-3 py-2 text-sm hover:bg-blue-50"
-                (click)="pick(hit)">{{ hit.name }}</button>
+                (click)="pick(hit)">
+          <span class="block font-medium text-gray-800">{{ hit.name }}</span>
+          <span *ngIf="hitSubtitle(hit)" class="block text-xs text-gray-500 truncate">{{ hitSubtitle(hit) }}</span>
+        </button>
         <button type="button" *ngIf="canAdd"
                 class="block w-full text-left px-3 py-2 text-sm text-blue-700 hover:bg-blue-50 font-medium"
                 (click)="addNew()">+ Add new “{{ value.trim() }}”</button>
@@ -77,6 +80,27 @@ export class CatalogTypeaheadComponent implements OnDestroy {
         this.valueChange.emit(hit.name);
         this.open = false;
         this.picked.emit(hit);
+    }
+
+    /**
+     * Second-line hint for enriched rows (issue #56 PR-B): generic plus
+     * brand for medicines, ICD codes for conditions. Plain rows (free-text
+     * history, uncoded entries) show no subtitle.
+     */
+    hitSubtitle(hit: CatalogPick): string {
+        const parts: string[] = [];
+        const generic = String(hit?.generic_name || '').trim();
+        const brand = String(hit?.brand_name || '').trim();
+        if (generic && generic.toLowerCase() !== String(hit?.name || '').trim().toLowerCase()) {
+            parts.push(brand && brand.toLowerCase() !== generic.toLowerCase() ? `${generic} (${brand})` : generic);
+        } else if (brand && brand.toLowerCase() !== String(hit?.name || '').trim().toLowerCase()) {
+            parts.push(`Brand: ${brand}`);
+        }
+        const icd11 = String(hit?.icd11_code || '').trim();
+        const icd10 = String(hit?.icd10_code || '').trim();
+        if (icd11) parts.push(`ICD-11 ${icd11}`);
+        else if (icd10) parts.push(`ICD-10 ${icd10}`);
+        return parts.join(' · ');
     }
 
     async addNew(): Promise<void> {

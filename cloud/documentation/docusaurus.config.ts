@@ -117,6 +117,10 @@ const config: Config = {
           label: 'Website',
           position: 'right',
         },
+        {
+          type: 'search',
+          position: 'right',
+        },
       ],
     },
     footer: {

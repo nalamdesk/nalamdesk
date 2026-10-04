@@ -25,6 +25,7 @@ export interface MedicineCatalogRow extends CatalogRow {
 
 export interface ConditionCatalogRow extends CatalogRow {
     icd10_code: string | null;
+    icd11_code: string | null;
     snomed_code: string | null;
 }
 
@@ -62,6 +63,7 @@ interface CatalogWriteFields {
     snomed_form_code?: string | null;
     snomed_route_code?: string | null;
     icd10_code?: string | null;
+    icd11_code?: string | null;
     snomed_code?: string | null;
 }
 
@@ -73,12 +75,13 @@ export function searchMedicines(db: SqliteDb, query?: string, limit?: number): M
     return searchActive(db, 'medicine_catalog', query, limit) as MedicineCatalogRow[];
 }
 
-export function createCondition(db: SqliteDb, input: { name?: string; icd10_code?: string; snomed_code?: string } | string): ConditionCatalogRow {
+export function createCondition(db: SqliteDb, input: { name?: string; icd10_code?: string; icd11_code?: string; snomed_code?: string } | string): ConditionCatalogRow {
     const raw = typeof input === 'string' ? { name: input } : input;
     const name = normalizeName(raw?.name);
     return insertNamed(db, 'condition_catalog', {
         name,
         icd10_code: normalizeUpperCode(raw?.icd10_code),
+        icd11_code: normalizeUpperCode(raw?.icd11_code),
         snomed_code: normalizeUpperCode(raw?.snomed_code)
     }) as ConditionCatalogRow;
 }
@@ -121,12 +124,13 @@ export function listMedicines(db: SqliteDb, includeRetired = false): MedicineCat
     return listCatalog(db, 'medicine_catalog', includeRetired) as MedicineCatalogRow[];
 }
 
-export function updateCondition(db: SqliteDb, input: { id?: number; name?: string; icd10_code?: string; snomed_code?: string }): ConditionCatalogRow {
+export function updateCondition(db: SqliteDb, input: { id?: number; name?: string; icd10_code?: string; icd11_code?: string; snomed_code?: string }): ConditionCatalogRow {
     const id = requireId(input?.id);
     const name = normalizeName(input?.name);
     return updateNamed(db, 'condition_catalog', id, {
         name,
         icd10_code: normalizeUpperCode(input?.icd10_code),
+        icd11_code: normalizeUpperCode(input?.icd11_code),
         snomed_code: normalizeUpperCode(input?.snomed_code)
     }) as ConditionCatalogRow;
 }
@@ -227,9 +231,9 @@ function insertNamed(db: SqliteDb, table: 'condition_catalog' | 'medicine_catalo
     try {
         if (table === 'condition_catalog') {
             const result = db.prepare(`
-                INSERT INTO condition_catalog (name, icd10_code, snomed_code, active, created_at, updated_at)
-                VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            `).run(fields.name, fields.icd10_code ?? null, fields.snomed_code ?? null);
+                INSERT INTO condition_catalog (name, icd10_code, icd11_code, snomed_code, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `).run(fields.name, fields.icd10_code ?? null, fields.icd11_code ?? null, fields.snomed_code ?? null);
             return db.prepare('SELECT * FROM condition_catalog WHERE id = ?').get(Number(result.lastInsertRowid));
         }
         const result = db.prepare(`
@@ -253,9 +257,9 @@ function updateNamed(db: SqliteDb, table: 'condition_catalog' | 'medicine_catalo
     try {
         if (table === 'condition_catalog') {
             db.prepare(`
-                UPDATE condition_catalog SET name = ?, icd10_code = ?, snomed_code = ?,
+                UPDATE condition_catalog SET name = ?, icd10_code = ?, icd11_code = ?, snomed_code = ?,
                     updated_at = CURRENT_TIMESTAMP WHERE id = ?
-            `).run(fields.name, fields.icd10_code ?? null, fields.snomed_code ?? null, id);
+            `).run(fields.name, fields.icd10_code ?? null, fields.icd11_code ?? null, fields.snomed_code ?? null, id);
         } else {
             db.prepare(`
                 UPDATE medicine_catalog

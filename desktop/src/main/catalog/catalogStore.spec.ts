@@ -73,20 +73,20 @@ describe('condition and medicine catalogs', () => {
         expect(condition.name).toBe('Viral fever');
         expect(service.searchConditions('viral')[0].id).toBe(condition.id);
 
-        const medicine = service.createMedicine({ name: 'Paracetamol', dosage: '500mg' });
+        const medicine = service.createMedicine({ name: 'Paracetamol T1', dosage: '500mg' });
         expect(medicine.dosage).toBe('500mg');
-        expect(service.searchMedicines('para')[0].name).toBe('Paracetamol');
+        expect(service.searchMedicines('paracetamol t1').some((row: any) => row.id === medicine.id)).toBe(true);
 
         expect(() => service.createCondition({ name: '   ' })).toThrow('NAME_REQUIRED');
         expect(() => service.createMedicine({ name: '' })).toThrow('NAME_REQUIRED');
         expect(() => service.createCondition({ name: 'viral fever' })).toThrow('DUPLICATE_ACTIVE_NAME');
-        expect(() => service.createMedicine({ name: 'paracetamol' })).toThrow('DUPLICATE_ACTIVE_NAME');
+        expect(() => service.createMedicine({ name: 'paracetamol t1' })).toThrow('DUPLICATE_ACTIVE_NAME');
     });
 
     it('applies ordered presets as editable Rx lines', () => {
         const condition = service.createCondition({ name: 'URI' });
-        const para = service.createMedicine({ name: 'Paracetamol', dosage: '500mg', frequency: '1-1-1' });
-        const cet = service.createMedicine({ name: 'Cetirizine', dosage: '10mg' });
+        const para = service.createMedicine({ name: 'Para-Rx', dosage: '500mg', frequency: '1-1-1' });
+        const cet = service.createMedicine({ name: 'Ceti-Rx', dosage: '10mg' });
         const presets = service.replaceConditionMedPresets({
             conditionId: condition.id,
             lines: [
@@ -95,7 +95,7 @@ describe('condition and medicine catalogs', () => {
             ]
         });
         expect(presets).toHaveLength(2);
-        expect(presets[0].medicine).toBe('Paracetamol');
+        expect(presets[0].medicine).toBe('Para-Rx');
         expect(presets[0].dosage).toBe('500mg');
         expect(presets[1].duration).toBe('5 days');
         presets[0].duration = '7 days';
@@ -104,7 +104,7 @@ describe('condition and medicine catalogs', () => {
 
     it('soft-retires catalog rows without changing a saved visit snapshot', () => {
         const condition = service.createCondition({ name: 'Influenza' });
-        const medicine = service.createMedicine({ name: 'Oseltamivir', dosage: '75mg' });
+        const medicine = service.createMedicine({ name: 'Osel-Rx', dosage: '75mg' });
         service.replaceConditionMedPresets({
             conditionId: condition.id,
             lines: [{ medicine_id: medicine.id }]
@@ -127,16 +127,16 @@ describe('condition and medicine catalogs', () => {
         const stored = db.prepare('SELECT diagnosis, prescription_json FROM visits WHERE id = ?').get(encounter.id);
         expect(stored.diagnosis).toBe('Influenza');
         const snapshot = JSON.parse(stored.prescription_json);
-        expect(snapshot[0].medicine).toBe('Oseltamivir');
+        expect(snapshot[0].medicine).toBe('Osel-Rx');
         expect(snapshot[0].duration).toBe('5 days');
         expect(service.searchConditions('Influenza')).toHaveLength(0);
-        expect(service.searchMedicines('Oseltamivir')).toHaveLength(0);
+        expect(service.searchMedicines('Osel-Rx')).toHaveLength(0);
         expect(service.listConditions(true).some((row: any) => row.id === condition.id && row.active === 0)).toBe(true);
     });
 
     it('omits retired medicines when loading condition presets', () => {
         const condition = service.createCondition({ name: 'URI' });
-        const active = service.createMedicine({ name: 'Paracetamol' });
+        const active = service.createMedicine({ name: 'Para-Keep' });
         const retired = service.createMedicine({ name: 'Old syrup' });
         service.replaceConditionMedPresets({
             conditionId: condition.id,
@@ -149,12 +149,12 @@ describe('condition and medicine catalogs', () => {
         service.retireMedicine(retired.id);
 
         const presets = service.getConditionMedPresets(condition.id);
-        expect(presets.map((line: any) => line.medicine)).toEqual(['Paracetamol', 'ORS']);
+        expect(presets.map((line: any) => line.medicine)).toEqual(['Para-Keep', 'ORS']);
     });
 
     it('keeps existing Rx defaults when a medicine is renamed', () => {
         const medicine = service.createMedicine({
-            name: 'Paracetamol', dosage: '500mg', frequency: '1-1-1', duration: '5 days'
+            name: 'Para-Rename', dosage: '500mg', frequency: '1-1-1', duration: '5 days'
         });
         const updated = service.updateMedicine({ id: medicine.id, name: 'Acetaminophen' });
         expect(updated.name).toBe('Acetaminophen');

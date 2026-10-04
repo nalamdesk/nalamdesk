@@ -3,6 +3,8 @@
  * the desk-grant migrations (v32, v33) so repair migrations cannot drift
  * from the original grant logic.
  */
+import { NLEM_2022_GENERICS } from '../catalog/nlem2022.seeds';
+
 function grantRoleMethods(db: any, grants: Record<string, string[]>) {
     const get = db.prepare('SELECT permissions FROM roles WHERE name = ?');
     const set = db.prepare('UPDATE roles SET permissions = ? WHERE name = ?');
@@ -1500,6 +1502,7 @@ export const MIGRATIONS = [
             try { db.exec('ALTER TABLE medicine_catalog ADD COLUMN snomed_route_code TEXT'); } catch (e) { }
             try { db.exec('ALTER TABLE condition_catalog ADD COLUMN icd10_code TEXT'); } catch (e) { }
             try { db.exec('ALTER TABLE condition_catalog ADD COLUMN snomed_code TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE condition_catalog ADD COLUMN icd11_code TEXT'); } catch (e) { }
             const insertCondition = db.prepare(`INSERT OR IGNORE INTO condition_catalog
                 (name, icd10_code, active, created_at, updated_at)
                 VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
@@ -1518,6 +1521,15 @@ export const MIGRATIONS = [
             for (const [name, generic, brand, form, dosage] of SEED_MEDICINES) {
                 insertMedicine.run(name, generic, brand, form, dosage, 'Oral', '1-0-1', '3 days', 'After Food');
                 stampMedicine.run(generic, brand, name);
+            }
+            // NLEM 2022 generics (384): every essential generic exists as a
+            // searchable row even without brand or strength detail. Curated
+            // rows above win on detail; this only fills the gaps.
+            const ensureNlem = db.prepare(`INSERT OR IGNORE INTO medicine_catalog
+                (name, generic_name, active, created_at, updated_at)
+                VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
+            for (const generic of NLEM_2022_GENERICS) {
+                ensureNlem.run(generic, generic);
             }
         }
     }

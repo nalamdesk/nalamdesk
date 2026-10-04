@@ -37,7 +37,7 @@ test.describe.serial('Queue + consultation lifecycle', () => {
     test('add patient to queue', async () => {
         const row = gridRow(ctx.window, patientName);
         await expect(row).toBeVisible({ timeout: 15000 });
-        await ctx.window.locator('input[placeholder="Search by name or mobile..."]').fill(patientName);
+        await ctx.window.locator('input[placeholder="Search name, mobile, MRN, ABHA, or any ID..."]').fill(patientName);
         // Grid action renderer labels the button "Queue" / "In Queue".
         await row.locator('button', { hasText: 'Queue' }).click();
         await expect(row.locator('button', { hasText: 'In Queue' })).toBeVisible({ timeout: 15000 });

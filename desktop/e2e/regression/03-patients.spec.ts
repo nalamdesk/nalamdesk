@@ -44,13 +44,13 @@ test.describe.serial('Patients module', () => {
 
     test('search filters the patient list', async () => {
         await gotoHash(ctx.window, '#/patients');
-        await ctx.window.locator('input[placeholder="Search by name or mobile..."]').fill(patientName);
+        await ctx.window.locator('input[placeholder="Search name, mobile, MRN, ABHA, or any ID..."]').fill(patientName);
         await expect(gridRow(ctx.window, patientName)).toBeVisible({ timeout: 15000 });
     });
 
     test('patient details page shows chart + history', async () => {
         await gotoHash(ctx.window, '#/patients');
-        await ctx.window.locator('input[placeholder="Search by name or mobile..."]').fill(patientName);
+        await ctx.window.locator('input[placeholder="Search name, mobile, MRN, ABHA, or any ID..."]').fill(patientName);
         const row = gridRow(ctx.window, patientName);
         await expect(row).toBeVisible({ timeout: 15000 });
         // Row click routes to the chart (checkbox + action buttons don't

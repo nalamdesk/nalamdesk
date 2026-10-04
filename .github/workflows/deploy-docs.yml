@@ -1,41 +1,52 @@
 name: Deploy Documentation
 
+# Docs site (Docusaurus static build) to Cloudflare Workers Static Assets
+# (worker `nalamdesk-docs`, custom domain docs.nalamdesk.com).
+# GitHub Pages cannot serve this private repo on the current plan
+# (API returns 422), so the old peaceiris gh-pages step is retired.
 on:
   push:
     branches:
       - master
     paths:
       - 'cloud/documentation/**'
-
-permissions:
-  contents: write
+      - '.github/workflows/deploy-docs.yml'
 
 jobs:
   deploy:
-    name: Deploy to GitHub Pages
+    name: Build and deploy docs
     runs-on: ubuntu-latest
     concurrency:
-      group: "deploy-pages-${{ github.ref }}"
+      group: "deploy-docs-${{ github.ref }}"
       cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: ./cloud/documentation
+    env:
+      CF_SEND_TELEMETRY: 'false'
+      WRANGLER_SEND_METRICS: 'false'
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
           cache-dependency-path: cloud/documentation/package-lock.json
 
       - name: Install Dependencies
-        working-directory: cloud/documentation
         run: npm ci
 
       - name: Build Website
-        working-directory: cloud/documentation
         run: npm run build
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./cloud/documentation/build
+      - name: Validate Worker config (no credentials)
+        run: npx wrangler deploy --dry-run
+
+      - name: Deploy to Cloudflare
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

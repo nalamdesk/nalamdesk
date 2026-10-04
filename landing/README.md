@@ -30,7 +30,7 @@ day close, vault, backups, roles).
 
 Landing carries outcomes and checkable proof. Step-by-step how-tos live in the
 Docusaurus site (`cloud/documentation`, deployed at
-https://sankara-sabapathy.github.io/nalamdesk/), which the header Docs link
+https://docs.nalamdesk.com/), which the header Docs link
 points at. The docs navbar links back to https://nalamdesk.com.
 
 ## Deploy pipeline

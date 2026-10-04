@@ -14,11 +14,10 @@ const config: Config = {
     v4: true, // Improve compatibility with the upcoming Docusaurus v4
   },
 
-  // Set the production url of your site here
-  url: 'https://sankara-sabapathy.github.io',
-  // Set the /<baseUrl>/ pathname under which your site is served
-  // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/nalamdesk/',
+  // Production URL of the docs site (Cloudflare Worker + docs.nalamdesk.com).
+  url: 'https://docs.nalamdesk.com',
+  // Served from the domain root, so no subpath.
+  baseUrl: '/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
@@ -41,10 +40,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/sankara-sabapathy/nalamdesk/tree/main/',
+          exclude: ['developer-guide/**'],
         },
         blog: {
           showReadingTime: true,
@@ -52,10 +48,6 @@ const config: Config = {
             type: ['rss', 'atom'],
             xslt: true,
           },
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/sankara-sabapathy/nalamdesk/tree/main/',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -83,8 +75,8 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with your project's social card
-    image: 'img/docusaurus-social-card.jpg',
+    // Social card shared with nalamdesk.com
+    image: 'img/og.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },
@@ -92,7 +84,7 @@ const config: Config = {
       title: 'NalamDesk',
       logo: {
         alt: 'NalamDesk Logo',
-        src: 'img/logo.svg',
+        src: 'img/logo.png',
       },
       items: [
         {
@@ -100,17 +92,6 @@ const config: Config = {
           sidebarId: 'userGuideSidebar',
           position: 'left',
           label: 'User Guide',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'developerGuideSidebar',
-          position: 'left',
-          label: 'Developer Guide',
-        },
-        {
-          href: 'https://github.com/sankara-sabapathy/nalamdesk',
-          label: 'GitHub',
-          position: 'right',
         },
         {
           href: 'https://nalamdesk.com',
@@ -145,10 +126,6 @@ const config: Config = {
             {
               label: 'Website',
               href: 'https://nalamdesk.com',
-            },
-            {
-              label: 'GitHub',
-              href: 'https://github.com/sankara-sabapathy/nalamdesk',
             },
           ],
         },

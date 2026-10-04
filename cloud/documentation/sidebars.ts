@@ -43,20 +43,23 @@ const sidebars: SidebarsConfig = {
     },
   ],
 
-  developerGuideSidebar: [
-    {
-      type: 'category',
-      label: 'Developer Guide',
-      items: [
-        'developer-guide/local-setup',
-        'developer-guide/architecture',
-        'developer-guide/database-schema',
-        'developer-guide/testing-strategy',
-        'developer-guide/data-sources-licensing',
-      ],
-      collapsible: false,
-    },
-  ],
+  // Developer Guide sidebar removed while the repo is private
+  // (docs/developer-guide/** is excluded from the build).
+  // To republish: drop the `exclude` above and restore this block:
+  // developerGuideSidebar: [
+  //   {
+  //     type: 'category',
+  //     label: 'Developer Guide',
+  //     items: [
+  //       'developer-guide/local-setup',
+  //       'developer-guide/architecture',
+  //       'developer-guide/database-schema',
+  //       'developer-guide/testing-strategy',
+  //       'developer-guide/data-sources-licensing',
+  //     ],
+  //     collapsible: false,
+  //   },
+  // ],
 };
 
 export default sidebars;

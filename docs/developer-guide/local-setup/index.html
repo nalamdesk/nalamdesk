@@ -5,7 +5,7 @@
 <meta name="generator" content="Docusaurus v3.9.2">
 <title data-rh="true">Setup Guide | NalamDesk Docs</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://sankara-sabapathy.github.io/nalamdesk/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://sankara-sabapathy.github.io/nalamdesk/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/local-setup"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Setup Guide | NalamDesk Docs"><meta data-rh="true" name="description" content="This guide describes how to set up the NalamDesk development environment."><meta data-rh="true" property="og:description" content="This guide describes how to set up the NalamDesk development environment."><link data-rh="true" rel="icon" href="/nalamdesk/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/local-setup"><link data-rh="true" rel="alternate" href="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/local-setup" hreflang="en"><link data-rh="true" rel="alternate" href="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/local-setup" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Setup Guide","item":"https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/local-setup"}]}</script><link rel="alternate" type="application/rss+xml" href="/nalamdesk/blog/rss.xml" title="NalamDesk Docs RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/nalamdesk/blog/atom.xml" title="NalamDesk Docs Atom Feed"><link rel="stylesheet" href="/nalamdesk/assets/css/styles.62a2ef41.css">
-<script src="/nalamdesk/assets/js/runtime~main.12b58760.js" defer="defer"></script>
+<script src="/nalamdesk/assets/js/runtime~main.790d2164.js" defer="defer"></script>
 <script src="/nalamdesk/assets/js/main.1b416a37.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -16,7 +16,7 @@
 <p>This guide describes how to set up the NalamDesk development environment.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="prerequisites">Prerequisites<a href="#prerequisites" class="hash-link" aria-label="Direct link to Prerequisites" title="Direct link to Prerequisites" translate="no">​</a></h2>
 <ul>
-<li class=""><strong>Node.js</strong>: Version 18 or higher.</li>
+<li class=""><strong>Node.js</strong>: Version 22.5 or higher (<code>engines</code> in <code>desktop/package.json</code>).</li>
 <li class=""><strong>npm</strong>: Included with Node.js.</li>
 <li class=""><strong>Git</strong>: For version control.</li>
 </ul>
@@ -32,13 +32,13 @@
 </li>
 <li class="">
 <p><strong>Install Application Dependencies:</strong></p>
-<p>The application uses Electron, Angular, and native modules (better-sqlite3, argon2).</p>
+<p>The application uses Electron, Angular, and native modules (<code>better-sqlite3-multiple-ciphers</code>, <code>argon2</code>). The UI stack is Angular 17 with TailwindCSS and daisyUI.</p>
 <ul>
 <li class=""><strong>Windows</strong>: Requires <a href="https://visualstudio.microsoft.com/visual-cpp-build-tools/" target="_blank" rel="noopener noreferrer" class="">Visual Studio Build Tools</a> (Desktop development with C++) and Python 3.</li>
 <li class=""><strong>macOS</strong>: Requires Xcode Command Line Tools (<code>xcode-select --install</code>) and Python 3.</li>
 <li class=""><strong>Linux</strong>: Requires <code>build-essential</code> and Python 3.</li>
 </ul>
-<p><code>npm install</code> will automatically attempt to build these. <code>npm run postinstall</code> can be run manually if automatic scripts are disabled.</p>
+<p><code>npm install</code> inside <code>desktop/</code> triggers <code>electron-builder install-app-deps</code> (<code>postinstall</code>) to recompile native modules for Electron. <code>npm run postinstall</code> can be run manually if automatic scripts are disabled.</p>
 <div class="language-bash codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-bash codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#393A34"><span class="token plain">npm run postinstall</span><br></span></code></pre></div></div>
 </li>
 </ol>

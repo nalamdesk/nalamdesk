@@ -5,7 +5,7 @@
 <meta name="generator" content="Docusaurus v3.9.2">
 <title data-rh="true">Architecture Overview | NalamDesk Docs</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://sankara-sabapathy.github.io/nalamdesk/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://sankara-sabapathy.github.io/nalamdesk/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/architecture"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Architecture Overview | NalamDesk Docs"><meta data-rh="true" name="description" content="NalamDesk uses a secure, local-first hybrid desktop architecture designed for resilience and performance."><meta data-rh="true" property="og:description" content="NalamDesk uses a secure, local-first hybrid desktop architecture designed for resilience and performance."><link data-rh="true" rel="icon" href="/nalamdesk/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/architecture"><link data-rh="true" rel="alternate" href="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/architecture" hreflang="en"><link data-rh="true" rel="alternate" href="https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/architecture" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Architecture Overview","item":"https://sankara-sabapathy.github.io/nalamdesk/docs/developer-guide/architecture"}]}</script><link rel="alternate" type="application/rss+xml" href="/nalamdesk/blog/rss.xml" title="NalamDesk Docs RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/nalamdesk/blog/atom.xml" title="NalamDesk Docs Atom Feed"><link rel="stylesheet" href="/nalamdesk/assets/css/styles.62a2ef41.css">
-<script src="/nalamdesk/assets/js/runtime~main.12b58760.js" defer="defer"></script>
+<script src="/nalamdesk/assets/js/runtime~main.790d2164.js" defer="defer"></script>
 <script src="/nalamdesk/assets/js/main.1b416a37.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -32,15 +32,22 @@
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="2-local-api-server-fastify">2. Local API Server (Fastify)<a href="#2-local-api-server-fastify" class="hash-link" aria-label="Direct link to 2. Local API Server (Fastify)" title="Direct link to 2. Local API Server (Fastify)" translate="no">​</a></h3>
 <ul>
-<li class=""><strong>Entry Point</strong>: <code>src/main/server.ts</code></li>
+<li class=""><strong>Entry Point</strong>: <code>src/server/app.ts</code> (bootstrapped via <code>src/server/bootstrap.ts</code>, served by <code>src/server/index.ts</code>; built with <code>tsconfig.server.json</code>)</li>
 <li class=""><strong>Port</strong>: <code>3000</code> (Localhost)</li>
 <li class=""><strong>Role</strong>: Validates requests and proxies them to the <code>DatabaseService</code>.</li>
 <li class=""><strong>Security</strong>:<!-- -->
 <ul>
 <li class=""><strong>JWT Authentication</strong>: Validates tokens on protected routes.</li>
-<li class=""><strong>IP Restriction</strong>: Admin login is restricted to local IP (<code>127.0.0.1</code> or <code>::1</code>) to prevent network-based attacks.</li>
+<li class=""><strong>IP Restriction</strong>: With <code>STRICT_ADMIN_IP=true</code>, admin login is
+restricted to local IP (<code>127.0.0.1</code> or <code>::1</code>) to prevent
+network-based attacks. The server otherwise listens on all
+interfaces (<code>0.0.0.0:3000</code>); the header shows the LAN URL for
+clinic devices.</li>
 </ul>
 </li>
+<li class=""><strong>Renderer access</strong>: the Angular app reaches the main process through a
+preload IPC bridge (<code>src/main/preload.ts</code>); the local API additionally
+serves LAN consumers with token + RBAC checks.</li>
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="3-database-layer">3. Database Layer<a href="#3-database-layer" class="hash-link" aria-label="Direct link to 3. Database Layer" title="Direct link to 3. Database Layer" translate="no">​</a></h3>
 <ul>
@@ -57,8 +64,16 @@
 <li class=""><strong>Implementation</strong>: <code>src/main/services/DatabaseService.ts</code> -&gt; <code>saveUser</code> / <code>validateUser</code>.</li>
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="role-based-access-control-rbac">Role-Based Access Control (RBAC)<a href="#role-based-access-control-rbac" class="hash-link" aria-label="Direct link to Role-Based Access Control (RBAC)" title="Direct link to Role-Based Access Control (RBAC)" translate="no">​</a></h3>
-<p>Access control is enforced at the API level in <code>server.ts</code>.</p>
-<table><thead><tr><th style="text-align:left">Role</th><th style="text-align:left">Permissions</th></tr></thead><tbody><tr><td style="text-align:left"><strong>Admin</strong></td><td style="text-align:left"><strong>Full Access</strong>. User management, Clinic Settings, Backup/Restore.</td></tr><tr><td style="text-align:left"><strong>Doctor</strong></td><td style="text-align:left">Responsible licensed practitioner. Clinical Encounters, Prescriptions, Queue Triage, Vitals.</td></tr><tr><td style="text-align:left"><strong>Receptionist</strong></td><td style="text-align:left">Patient Registration, Queue Management &amp; Triage, Vitals.</td></tr><tr><td style="text-align:left"><strong>Nurse</strong></td><td style="text-align:left">Patient Vitals, Queue Triage &amp; Monitoring.</td></tr></tbody></table>
+<p>Access control is enforced at the API layer, with a shared permission
+model in <code>src/shared/access.ts</code> (built-in roles <code>admin</code>, <code>doctor</code>,
+<code>nurse</code>, <code>receptionist</code>; Cedar policy checks behind handler-gated
+clinical actions) and a permission-conformance spec at
+<code>src/server/access-conformance.spec.ts</code>.</p>
+<table><thead><tr><th style="text-align:left">Role</th><th style="text-align:left">Permissions</th></tr></thead><tbody><tr><td style="text-align:left"><strong>Admin</strong></td><td style="text-align:left"><strong>Full Access</strong>. User management, custom roles and per-user overrides, Clinic Settings, Backup/Restore. Acts as scribe in consults (must pick the responsible doctor).</td></tr><tr><td style="text-align:left"><strong>Doctor</strong></td><td style="text-align:left">Responsible licensed practitioner. Clinical Encounters, Prescriptions, Queue Triage, Vitals, Chart Merge, Billing.</td></tr><tr><td style="text-align:left"><strong>Receptionist</strong></td><td style="text-align:left">Patient Registration, Queue Management &amp; Triage, Vitals, Billing &amp; Day Close, Chart Archive. No safety-data edits, no merges.</td></tr><tr><td style="text-align:left"><strong>Nurse</strong></td><td style="text-align:left">Patient Vitals, Queue Triage &amp; Monitoring. No queue removal, no billing, no merges.</td></tr></tbody></table>
+<p>Settings routes additionally require <code>admin</code> (<code>adminGuard</code> redirects
+everyone else to the dashboard). Handler-gated actions (consult
+finalization, merges) reject non-qualifying roles even when a custom
+role or override would otherwise permit them.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="clinical-safety--governance-architecture">Clinical Safety &amp; Governance Architecture<a href="#clinical-safety--governance-architecture" class="hash-link" aria-label="Direct link to Clinical Safety &amp; Governance Architecture" title="Direct link to Clinical Safety &amp; Governance Architecture" translate="no">​</a></h2>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="1-responsible-licensed-practitioner-provenance">1. Responsible Licensed Practitioner Provenance<a href="#1-responsible-licensed-practitioner-provenance" class="hash-link" aria-label="Direct link to 1. Responsible Licensed Practitioner Provenance" title="Direct link to 1. Responsible Licensed Practitioner Provenance" translate="no">​</a></h3>
 <p>To ensure medico-legal compliance and patient safety:</p>

@@ -58,7 +58,7 @@ export class PdfService {
 
         // Footer: signature right, scannable prescription QR left.
         // Oversized payloads skip the code instead of printing junk:
-        // encodeRxQr throws past the byte cap.
+        // encodeRxQr throws past the char cap.
         const finalY = (doc as any).lastAutoTable.finalY + 30;
         doc.text('Doctor Signature', 150, finalY);
         try {
@@ -78,10 +78,17 @@ export class PdfService {
             });
             const { default: QRCode } = await import('qrcode');
             const qrUrl = await QRCode.toDataURL(qrText, { width: 132, margin: 1 });
-            doc.addImage(qrUrl, 'PNG', 14, finalY - 28, 32, 32);
+            // A4 page is 297 units tall: spill the QR block onto a fresh
+            // page instead of printing past the bottom margin.
+            let qrY = finalY - 28;
+            if (qrY + 40 > 287) {
+                doc.addPage();
+                qrY = 20;
+            }
+            doc.addImage(qrUrl, 'PNG', 14, qrY, 32, 32);
             doc.setFontSize(8);
             doc.setTextColor(100);
-            doc.text('Scan for digital prescription', 14, finalY + 8);
+            doc.text('Scan for digital prescription', 14, qrY + 36);
         } catch (e) {
             console.warn('Prescription QR skipped:', e instanceof Error ? e.message : e);
         }

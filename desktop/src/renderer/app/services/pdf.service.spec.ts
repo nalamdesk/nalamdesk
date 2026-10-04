@@ -13,6 +13,7 @@ const { mockDoc, mockAutoTable, mockQrCode } = vi.hoisted(() => {
         line: vi.fn(),
         save: vi.fn(),
         addImage: vi.fn(),
+        addPage: vi.fn(),
         lastAutoTable: { finalY: 100 }
     };
     return {
@@ -164,6 +165,17 @@ describe('PdfService', () => {
             mockDoc.addImage.mockClear();
             await service.generatePrescription(big, mockPatient, mockDoctor);
             expect(mockDoc.addImage).not.toHaveBeenCalled();
+        });
+
+        it('spills the QR onto a fresh page near the bottom margin', async () => {
+            mockDoc.lastAutoTable.finalY = 270;
+            mockDoc.addPage.mockClear();
+            mockDoc.addImage.mockClear();
+            await service.generatePrescription(mockVisit, mockPatient, mockDoctor);
+            expect(mockDoc.addPage).toHaveBeenCalled();
+            expect(mockDoc.addImage).toHaveBeenCalledWith(
+                'data:image/png;base64,QR', 'PNG', 14, 20, 32, 32);
+            mockDoc.lastAutoTable.finalY = 100;
         });
 
         it('should handle empty prescription array', async () => {

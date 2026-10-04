@@ -6,7 +6,7 @@
  * prescriptions scannable; oversized payloads refuse loudly instead of
  * printing an unscannable code.
  */
-import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
+import { Inflate, deflateSync, strFromU8, strToU8 } from 'fflate';
 
 /** Maximum inflated bytes accepted on decode (zip-bomb guard). */
 export const RX_QR_INFLATE_LIMIT = 65536;
@@ -88,9 +88,29 @@ export function decodeRxQr(text: string): Record<string, unknown> {
     const binary = atob(b64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.codePointAt(i) || 0;
-    const inflated = inflateSync(bytes);
-    if (inflated.length > RX_QR_INFLATE_LIMIT) {
-        throw new Error('QR payload expands beyond the accepted limit.');
+    return JSON.parse(strFromU8(inflateCapped(bytes)));
+}
+
+/**
+ * Streaming inflate with a hard output cap: aborts mid-stream instead of
+ * allocating the full expansion first. A zip bomb dies on the first
+ * over-limit chunk instead of after the damage.
+ */
+export function inflateCapped(data: Uint8Array, limit = RX_QR_INFLATE_LIMIT): Uint8Array {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    const stream = new Inflate();
+    stream.ondata = (chunk) => {
+        total += chunk.length;
+        if (total > limit) throw new Error('QR payload expands beyond the accepted limit.');
+        chunks.push(chunk);
+    };
+    stream.push(data, true);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.length;
     }
-    return JSON.parse(strFromU8(inflated));
+    return out;
 }

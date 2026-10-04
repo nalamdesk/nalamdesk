@@ -41,8 +41,16 @@ export async function launchApp(): Promise<RegressionApp> {
     // NOTE: `--user-data-dir` alone is NOT enough: main.ts overrides userData
     // with the shared dev dir, so isolation goes through NALAMDESK_E2E_USER_DATA.
     const userDataDir = mkdtempSync(join(tmpdir(), 'nalamdesk-reg-'));
+    // CI runners have no OS keyring ( GNOME libsecret under xvfb hangs or
+    // fails safeStorage); allow extra Chromium switches for such envs, e.g.
+    // NALAMDESK_E2E_CHROMIUM_FLAGS=--password-store=basic. Local runs default
+    // to none, matching packaged behavior.
+    const chromiumFlags = (process.env['NALAMDESK_E2E_CHROMIUM_FLAGS'] || '')
+        .split(' ')
+        .map((s) => s.trim())
+        .filter(Boolean);
     const app = await electron.launch({
-        args: [join(__dirname, '../../dist/main/main.js')],
+        args: [...chromiumFlags, join(__dirname, '../../dist/main/main.js')],
         env: { ...process.env, NODE_ENV: 'test', NALAMDESK_E2E_USER_DATA: userDataDir },
     });
     const window = await app.firstWindow();

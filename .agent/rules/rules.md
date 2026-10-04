@@ -118,7 +118,7 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 
 ### 6.8 Regression Gate (Desktop E2E)
 - **After ANY desktop change** (feature, fix, or refactor touching renderer, main process, IPC, routes, or guards), run the full regression locally before considering the work done: `cd desktop && npm run e2e:regression` (real Electron + local renderer + isolated test DB).
-- **Red means stop**: if the suite fails, determine whether the product broke or the product intentionally changed. Fix the product in the first case.
-- **Keep the suite in sync**: any new route, guard, role, or module MUST extend `desktop/e2e/regression/` (new or updated spec) AND the module matrix in `desktop/e2e/regression/COVERAGE.md`. Never weaken an assertion to make red go away.
+- **Red means stop and triage — do NOT jump to fixing tests.** A failing run means one of three things; determine which BEFORE touching anything: (1) an existing functionality broke (product regression — fix the product, not the test); (2) the product intentionally changed (update the spec + `COVERAGE.md` to the new intended behavior); (3) the spec is stale (selector/markup drift — re-verify against the template). Read the failure snapshot/trace first; never weaken an assertion to make red go away.
+- **New code brings new coverage**: adding any component, module, route, guard, role, or feature MUST extend `desktop/e2e/regression/` in the SAME change (new or updated spec) AND the module matrix in `desktop/e2e/regression/COVERAGE.md`. Untested new UI is incomplete work.
 - **Verify selectors against templates**: E2E locators must match the current component markup (AG Grid rows, reactive-form placeholders, live button labels) — read the template, don't guess.
 - **CI is manual-only** (`.github/workflows/regression-e2e.yml`, `workflow_dispatch`): it never runs on PRs by design, so the local run IS the gate.

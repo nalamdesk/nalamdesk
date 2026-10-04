@@ -65,6 +65,11 @@ jobs:
         # spec launches the real app against an isolated nalamdesk-test.db.
         # The spec argument comes from a fixed choice list (never free text),
         # mapped here so workflow input never reaches a shell command line.
+        env:
+          # Mirror main-process console to stderr so startup hangs are visible.
+          ELECTRON_ENABLE_LOGGING: 1
+          # No OS keyring exists on runners; plain store keeps safeStorage up.
+          NALAMDESK_E2E_CHROMIUM_FLAGS: --password-store=basic
         run: |
           case "${{ inputs.spec }}" in
             '01 auth + RBAC') TARGET='e2e/regression/01-auth-rbac.spec.ts' ;;

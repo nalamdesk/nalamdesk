@@ -42,6 +42,9 @@ The system will generate a **Recovery Key**.
 Once verified, you will be redirected to the **Login Screen**.
 - Enter your new credentials to access the Dashboard.
 
+![NalamDesk login screen](/img/nalamdesk-login.png)
+*Sign in with your username and password. Logout clears the session.*
+
 ---
 
 ## Troubleshooting

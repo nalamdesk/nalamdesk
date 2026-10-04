@@ -167,14 +167,14 @@ describe('PdfService', () => {
             expect(mockDoc.addImage).not.toHaveBeenCalled();
         });
 
-        it('spills the QR onto a fresh page near the bottom margin', async () => {
+        it('spills the whole footer block onto a fresh page near the bottom margin', async () => {
             mockDoc.lastAutoTable.finalY = 270;
             mockDoc.addPage.mockClear();
             mockDoc.addImage.mockClear();
             await service.generatePrescription(mockVisit, mockPatient, mockDoctor);
             expect(mockDoc.addPage).toHaveBeenCalled();
             expect(mockDoc.addImage).toHaveBeenCalledWith(
-                'data:image/png;base64,QR', 'PNG', 14, 20, 32, 32);
+                'data:image/png;base64,QR', 'PNG', 14, 22, 32, 32);
             mockDoc.lastAutoTable.finalY = 100;
         });
 

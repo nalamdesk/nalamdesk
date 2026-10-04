@@ -41,6 +41,8 @@ export async function launchApp(): Promise<RegressionApp> {
     // NOTE: `--user-data-dir` alone is NOT enough: main.ts overrides userData
     // with the shared dev dir, so isolation goes through NALAMDESK_E2E_USER_DATA.
     const userDataDir = mkdtempSync(join(tmpdir(), 'nalamdesk-reg-'));
+    const stamp = () => new Date().toISOString().slice(11, 19);
+    console.log(`[regression ${stamp()}] launching Electron (userData=${userDataDir})`);
     // CI runners have no OS keyring ( GNOME libsecret under xvfb hangs or
     // fails safeStorage); allow extra Chromium switches for such envs, e.g.
     // NALAMDESK_E2E_CHROMIUM_FLAGS=--password-store=basic. Local runs default
@@ -49,11 +51,23 @@ export async function launchApp(): Promise<RegressionApp> {
         .split(' ')
         .map((s) => s.trim())
         .filter(Boolean);
-    const app = await electron.launch({
-        args: [...chromiumFlags, join(__dirname, '../../dist/main/main.js')],
-        env: { ...process.env, NODE_ENV: 'test', NALAMDESK_E2E_USER_DATA: userDataDir },
-    });
-    const window = await app.firstWindow();
+    const app = await withTimeout(
+        electron.launch({
+            args: [...chromiumFlags, join(__dirname, '../../dist/main/main.js')],
+            env: { ...process.env, NODE_ENV: 'test', NALAMDESK_E2E_USER_DATA: userDataDir },
+        }),
+        90000,
+        'electron.launch() never resolved (CDP handshake stall?)'
+    );
+    console.log(`[regression ${stamp()}] process up pid=${app.process()?.pid}, waiting for app window`);
+    // Dev builds open DevTools as a second window; firstWindow() may grab
+    // devtools:// instead of the app. Fall through to the real window.
+    let window = await app.firstWindow({ timeout: 60000 });
+    if (window.url().startsWith('devtools://')) {
+        console.log(`[regression ${stamp()}] got DevTools window, waiting for app window`);
+        window = await waitForAppWindow(app, window);
+    }
+    console.log(`[regression ${stamp()}] window ready: ${window.url()}`);
     await window.waitForLoadState('domcontentloaded');
     // Dev Electron docks DevTools on the right, shrinking the page below the
     // md: breakpoint (cards layout). Force a desktop viewport so specs cover
@@ -190,6 +204,36 @@ export async function gotoHash(window: any, hash: string): Promise<void> {
 /** Sidebar link visibility check (role-based nav). */
 export async function sidebarHasLink(window: any, name: string): Promise<boolean> {
     return window.getByRole('link', { name }).count().then((n: number) => n > 0);
+}
+
+/** Race a promise against a diagnostic timeout (hangs otherwise die silently). */
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error(`[regression] TIMEOUT after ${ms}ms: ${label}`)), ms);
+            }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** Wait for a non-DevTools window (dev builds open DevTools alongside the app). */
+async function waitForAppWindow(app: any, first: any): Promise<any> {
+    const deadline = Date.now() + 60000;
+    for (;;) {
+        const candidate = app
+            .windows()
+            .find((p: any) => p !== first && !p.url().startsWith('devtools://'));
+        if (candidate) return candidate;
+        if (Date.now() > deadline) {
+            throw new Error('[regression] TIMEOUT: only a DevTools window appeared, no app window');
+        }
+        await new Promise((r) => setTimeout(r, 500));
+    }
 }
 
 export interface NewPatient {

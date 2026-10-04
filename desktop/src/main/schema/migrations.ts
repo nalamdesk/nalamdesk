@@ -1534,6 +1534,17 @@ export const MIGRATIONS = [
                 ensureNlem.run(generic, generic);
             }
         }
+    },
+    {
+        version: 41,
+        up: (db: any) => {
+            console.log('Running Migration v41 (practice standards profile)...');
+            try { db.exec(`ALTER TABLE settings ADD COLUMN standards_mode TEXT DEFAULT '${PRACTICE_PROFILE_DEFAULT}'`); } catch (e) { }
+            try {
+                db.exec(`UPDATE settings SET standards_mode = '${PRACTICE_PROFILE_DEFAULT}'
+                    WHERE standards_mode IS NULL OR standards_mode = ''`);
+            } catch (e) { /* partial DBs (migration-compat tests) may lack settings */ }
+        }
     }
 ];
 
@@ -1650,3 +1661,10 @@ const SEED_MEDICINES: Array<[string, string, string, string, string]> = [
     ['Autrin', 'Ferrous sulfate + Folic acid', 'Autrin', 'Cap', '150mg+0.5mg'],
     ['Mecobalamin 500', 'Methylcobalamin', 'Nurokind', 'Tab', '500mcg']
 ];
+
+/**
+ * Practice Standards Profile (issue #51): clinic-wide presentation lens.
+ * Stored records stay canonical; this only selects display defaults,
+ * input presets, and export targets. India ABDM is the default.
+ */
+const PRACTICE_PROFILE_DEFAULT = 'india_abdm';

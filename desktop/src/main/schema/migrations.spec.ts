@@ -34,7 +34,7 @@ describe('Database Migrations', () => {
         });
 
         it('should have 40 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(40);
+            expect(MIGRATIONS).toHaveLength(41);
         });
     });
 
@@ -864,6 +864,15 @@ describe('Database Migrations', () => {
             const nlemInserts = runs.filter((a) => typeof a[0] === 'string' && a[0] === 'Zolpidem');
             expect(nlemInserts.length).toBeGreaterThan(0);
             expect(nlemInserts[0][1]).toBe('Zolpidem');
+        });
+    });
+
+    describe('Migration v41 (practice standards profile)', () => {
+        it('adds standards_mode defaulted to India ABDM', () => {
+            MIGRATIONS.find((m) => m.version === 41)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('ADD COLUMN standards_mode');
+            expect(sql).toContain('india_abdm');
         });
     });
 });

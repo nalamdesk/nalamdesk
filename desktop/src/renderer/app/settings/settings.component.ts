@@ -6,6 +6,8 @@ import { AuthService } from '../services/auth.service';
 import { Router } from '@angular/router';
 import { SharedTableComponent } from '../shared/components/table/table.component';
 import { ActionRendererComponent } from '../shared/components/table/renderers/action-renderer.component';
+import { PracticeProfileService } from '../services/practice-profile.service';
+import { StandardsMode } from '../../../shared/practice-profile';
 import { ColDef, ValueGetterParams } from 'ag-grid-community';
 import { DatePickerComponent } from '../shared/components/date-picker/date-picker.component';
 import { CatalogSettingsComponent } from './catalog-settings.component';
@@ -367,11 +369,13 @@ export class SettingsComponent implements OnInit {
   private authService = inject(AuthService);
   private router = inject(Router);
   private updates = inject(AppUpdateService, { optional: true });
+  readonly profileService = inject(PracticeProfileService);
   constructor(private ngZone: NgZone, private dialogService?: DialogService, private toastService?: ToastService) { }
 
   ngOnInit() {
     this.currentUser = this.authService.getUser();
     this.loadSettings();
+    void this.profileService.load();
     this.loadAppVersion();
     if (this.isElectron) {
       this.listBackups();
@@ -818,6 +822,20 @@ export class SettingsComponent implements OnInit {
       await this.dialogService?.open({
         title: 'Cannot purge',
         message: e instanceof Error ? e.message : 'This user cannot be purged.',
+        type: 'error'
+      });
+    }
+  }
+
+  // Practice standards lens (issue #51): clinic-wide, reactive.
+  async setStandardsMode(mode: StandardsMode): Promise<void> {
+    try {
+      await this.profileService.setMode(mode);
+      this.toastService?.success(`Standards profile: ${mode === 'india_abdm' ? 'India · ABDM' : 'International · IPS'}.`, 'Profile updated');
+    } catch (e) {
+      await this.dialogService?.open({
+        title: 'Profile failed',
+        message: e instanceof Error ? e.message : 'Could not switch the standards profile.',
         type: 'error'
       });
     }

@@ -120,6 +120,30 @@
                 </form>
             </div>
 
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
+                <h3 class="text-lg font-medium text-gray-800 mb-1">Practice standards</h3>
+                <p class="text-sm text-gray-500 mb-4">Display and export lens. Records stay canonical in either mode.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <button type="button" (click)="setStandardsMode('india_abdm')"
+                            [class.ring-2]="profileService.mode() === 'india_abdm'"
+                            class="text-left border rounded-lg p-3 hover:bg-gray-50 ring-blue-500"
+                            [class.border-blue-500]="profileService.mode() === 'india_abdm'"
+                            [class.border-gray-200]="profileService.mode() !== 'india_abdm'">
+                        <span class="block font-bold text-gray-800 text-sm">India · ABDM</span>
+                        <span class="block text-xs text-gray-500 mt-1">1-0-1 · °F · kg · ABHA first · GENERIC (Brand) · NRCeS FHIR R4</span>
+                    </button>
+                    <button type="button" (click)="setStandardsMode('international')"
+                            [class.ring-2]="profileService.mode() === 'international'"
+                            class="text-left border rounded-lg p-3 hover:bg-gray-50 ring-blue-500"
+                            [class.border-blue-500]="profileService.mode() === 'international'"
+                            [class.border-gray-200]="profileService.mode() !== 'international'">
+                        <span class="block font-bold text-gray-800 text-sm">International · IPS</span>
+                        <span class="block text-xs text-gray-500 mt-1">BID · °C · kg/lbs · MRN first · INN generic · HL7 IPS</span>
+                    </button>
+                </div>
+                <p class="text-xs text-gray-400 mt-3">Exports to {{ profileService.exportLabel() }}. Identity prompts lead with {{ profileService.identifierLabel() }}.</p>
+            </div>
+
             <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200" *ngIf="isElectron">
                 <div class="flex items-center justify-between mb-4">
                     <div>

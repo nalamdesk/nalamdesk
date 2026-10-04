@@ -4,22 +4,29 @@ sidebar_position: 4
 
 # Testing Strategy 🧪
 
-NalamDesk employs a "Battle-Tested" testing strategy tailored to its hybrid architecture. We aim for **101% coverage** of critical business logic using a combination of specialized test runners for each domain.
+NalamDesk tests the desktop app in three layers: unit suites split by
+process boundary, plus Playwright end-to-end against a throwaway
+database. Spec files live next to their source (`*.spec.ts`).
 
-## 1. Desktop Application (`/desktop`)
+## 1. Unit Suites (Vitest Workspaces)
 
-The Desktop app runs on Electron and uses **Vitest** (powered by AnalogJS). To handle the complexity of testing Angular components within an Electron environment, we utilize a **Dual-Environment Architecture**.
+`desktop/vitest.workspace.js` defines two projects sharing
+`vitest.config.js`:
 
-### Unit Testing Strategy
-Due to the complex interaction between Angular's `zone.js` and the Vitest JSDOM environment (specifically `ProxyZone` limitations), we enforce a **Manual Instantiation** strategy for business logic.
+| Project | Files | Environment | Run |
+| :--- | :--- | :--- | :--- |
+| `renderer` | `src/renderer/**/*.spec.ts` | `jsdom` | `npm run test:renderer` (config `vitest.config.renderer.mjs`) |
+| `main` | `src/main/**`, `src/shared/**`, `src/server/**` | `node` | `npm run test:main` (config `vitest.config.main.js`) |
 
-#### A. Manual Component Instantiation ("Isolated Testing")
-This is the **primary** method for testing Angular components in this project.
-- **Why**: Bypasses unstable `TestBed` and `ProxyZone` issues.
-- **How**: Instantiate the component class directly with mocked dependencies.
-- **Focus**: Pure business logic, input validation, service calls.
+`npm test` runs both. A `vitest.config.pure.mjs` covers dependency-free
+modules.
 
-**Example**:
+### Component Testing Convention
+
+Angular components are tested by **manual instantiation** with mocked
+dependencies, not `TestBed`, to avoid `zone.js`/`ProxyZone`
+instability in JSDOM:
+
 ```typescript
 // GOOD: Stable & Fast
 beforeEach(() => {
@@ -28,50 +35,29 @@ beforeEach(() => {
 });
 ```
 
-#### B. Integration Testing
-Since unit tests do not render the template, we rely on **Playwright** (E2E) to verify DOM rendering, bindings, and user interactions.
+Template rendering, bindings, and user interactions are verified one
+layer up, in E2E.
 
-### Running Tests
-```bash
-# Run all renderer tests
-npm run test:renderer
+### Migration & Policy Specs
 
-# Run specific file
-npx vitest run src/renderer/app/login/login.component.spec.ts
-```
+Schema changes ship with assertions in
+`src/main/schema/migrations.spec.ts` (each migration v1–v39 applies
+cleanly and newer grants hold). The shared RBAC model has a
+conformance spec at `src/server/access-conformance.spec.ts`. Touching
+either area means extending its spec first.
 
----
+## 2. End-to-End (Playwright)
 
-## 2. Cloud Web Platform (`/cloud/web`)
+`desktop/playwright.config.ts` (`testDir: ./e2e`, run with
+`npm run e2e`) drives the packaged main process plus renderer:
 
-The Cloud Web application is a standard Angular PWA. It uses the traditional Angular CLI testing stack.
+- `e2e/full-flow.spec.ts`: registration → queue → consult → print.
+- `e2e/visual.spec.ts`, `e2e/availability.spec.ts`: rendering and
+  presence checks.
 
-- **Test Runner**: **Karma** & **Jasmine**
-- **Configuration**: `karma.conf.js`
-- **Methodology**: Standard Angular `TestBed` testing.
-- **Run Command**:
-  ```bash
-  ng test
-  ```
+E2E runs against a **transient test database** (`nalamdesk-test.db`,
+selected when `NODE_ENV=test`), never the clinic vault:
 
----
-
-## 3. Cloud API (`/cloud/api`)
-
-The Cloud API is a Node.js Fastify server.
-
-*(Testing framework pending implementation - likely Node Tap or Vitest)*
-
----
-
-## 4. End-to-End (E2E) Tests
-
-We use **Playwright** with Electron support for full-system verification.
-
-### Isolation
-E2E tests run against a **Transient Test Database** (`nalamdesk-test.db`) to ensure your production data is never touched.
-
-### Running E2E
 ```bash
 # 1. Close all NalamDesk instances
 # 2. Build the main process
@@ -80,3 +66,10 @@ npm run build:main
 # 3. Run Playwright
 npm run e2e
 ```
+
+## 3. CI Expectations
+
+Feature CI builds Angular, runs `npm test`, and (on `master` pushes)
+packages all three OS targets. It fails the job when artifact names,
+`latest*.yml`, `build-identity.json`, and the Settings-displayed
+version disagree — so bump versions and identities together.

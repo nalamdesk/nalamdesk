@@ -1,68 +1,86 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 ---
 
 # Admin Management
 
-The Admin Dashboard allows you to configure your clinic settings and manage staff access.
+**Settings** is admin-only: the route itself refuses non-admin users, so
+everything below requires an Administrator login. Tabs: **General**,
+**Users**, **Security**, **Data & Backup**, **Audit Logs**,
+**Catalogs**, **ABDM**. The footer shows the packaged version
+(`NalamDesk v0.0.11 (abc1234)` style, `(development)` for dev builds);
+quote it when reporting defects. Logout clears the session.
 
-## Accessing Settings
-1. Click on the **Settings** icon in the main navigation bar.
-2. Ensure you are logged in as an **Admin**.
+## General
 
-The Settings footer shows the packaged application version (and a short commit when the build embeds one). Use that string when reporting defects. Development builds are labeled `(development)`.
+- **Clinic Name**: appears on prescriptions, receipts, and reports.
+- **Consultation Fee**: auto-added as the first invoice line on every
+  visit bill. Zero disables it.
+- **Updates**: installed version plus **Check for updates**. Packaged
+  apps check an approved feed; a failed check shows a plain error and
+  never touches the vault. Unsigned or checksum-only feeds do not claim
+  full signature verification.
 
-Logout from the user menu clears the main-process session. The previous user's role cannot be reused after logout or a window reload.
+## User Management (Users tab)
 
-## Clinic Details
-In the **General** tab:
-- **Clinic Name**: Enter the name of your practice. This will appear on reports and the dashboard.
-- **Save Details**: Click to apply changes.
+### Adding a User
 
-## User Management
-In the **Users** tab (Admin only):
+1. Click **Add User**.
+2. Fill in: **Username** (unique, minimum 3 characters, locked after
+   creation), **Full Name**, **Role**, mobile (10 digits), email,
+   address, date of birth, joining date, designation.
+3. Doctors may carry an **HPR ID** (optional, preserved across edits).
+4. Set a **Temporary Password** (minimum 6 characters, new users only).
+   Existing users reset through a dedicated workflow, not by editing.
+5. Click **Save**.
 
-### Adding a New User
-1. Click the **+ Add User** button.
-2. Fill in the details:
-    - **Username**: Unique login ID (e.g., `dr_smith`).
-    - **Name**: Full display name.
-    - **Role**: Select `Doctor`, `Receptionist`, or `Nurse`.
-    - **Specialty/License**: Required for Doctors.
-    - **Password**: Set a temporary password.
-3. Click **Save**.
+Built-in roles are `admin`, `doctor`, `nurse`, `receptionist`. Admins
+can also compose **custom roles** from permission templates (Front
+Desk, Observer, Triage Nurse, Blank) and grant or forbid individual
+permissions per user with a recorded reason. Some duties stay
+role-gated no matter what: only doctors finalize encounters, and only
+doctors and admins merge charts.
 
 ### Managing Existing Users
-- **Edit**: Click to update details or reset passwords.
-- **Delete**: Remove a user from the system (Soft delete).
+
+- **Edit**: update details or disable the account.
+- **Deactivate**: batch-disable selected users. Removing a user who
+  owns clinical history is blocked; history is deactivated, never
+  silently deleted.
+
+## Security Tab
+
+- **Change Login Password**: changes only the sign-in credential.
+- **Rotate Device Envelope**: re-protects the unchanged database key
+  for this device. Login passwords and the recovery code are
+  unaffected.
+- **Portable Vault Recovery Code**: generate the code that restores
+  backups. The previous code stays valid until you confirm the new
+  one — finish the ceremony, don't abandon it halfway.
+
+## Catalogs Tab
+
+Diagnosis and medicine inventories plus condition-to-medicine presets.
+**Soft-retire** hides a term from typeahead; past visit text is
+unchanged. Presets fill suggested prescription lines when their
+condition is diagnosed.
+
+## ABDM Tab (India)
+
+One-time facility setup: HIP ID, counter ID, HFR facility ID, and each
+doctor's HPR ID. Until credentials are configured the gateway stays in
+mock mode and everything works offline: the counter QR, scan check-in,
+callback inbox, and consent-based outside records are documented in
+the desktop User Guide. Connection test and the pending-callback
+acknowledgement live on this tab.
+
+## Audit Logs Tab
+
+A paged grid (50 per page) of security-relevant actions: who did what,
+to which record, and when. Triage reassessments, merges, overrides,
+and restores all leave entries here.
 
 ## Data & Backup
+
 Local backups, restore, and Google Drive live under **Settings > Data &
 Backup**. See [Data & Backups](../backups.md) for the full guide.
-
-### Connecting Google Drive
-1. Go to **Settings > Data & Backup > Google Drive Backup**.
-2. Paste your own **Client ID** and **Client Secret** (Bring Your Own Key:
-   NalamDesk never sees your Drive credentials). See
-   [Google Drive Setup](../google-drive-setup.md) for creating them.
-3. Click **Connect Drive** and approve the permissions in the browser window.
-4. Once connected, the daily encrypted backup uploads to a hidden
-   `appDataFolder` in your Drive. The upload schedule is configurable;
-   it runs while the app is open.
-
-### Creating a Backup
-- Local backups run automatically every day at the configured time.
-- Click **Create Snapshot Now** (Google Drive section) to immediately
-  upload a snapshot of your encrypted database.
-
-### Restoring from Backup
-> [!WARNING]
-> Restoring replaces the current vault. Proceed with caution.
-
-Local restore (Settings > Data & Backup > Restore from Backup File,
-or the same picker on the Welcome screen):
-1. Click **Choose Backup File…** and pick a `.ndbackup` file.
-2. Enter the **Recovery Code** and the current **administrator password**.
-3. Click **Restore Vault**. The app restarts with the restored data.
-
-Drive snapshots restore from the backup list in the Google Drive section.

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 5
 ---
 
 # Daily Collection & Day Close
@@ -35,7 +35,31 @@ stored totals.*
   method, the invoice it belongs to, and the recorded reason if any.
   Non-cash rows missing a reference are flagged **missing ref**.
 
-When nothing needs attention, the section reads *Clean — nothing to review.*
+When nothing needs attention, the section reads *Clean, nothing to review.*
+
+## Visit Billing (Invoices, Receipts, Refunds)
+
+Billing lives inside the consultation workbench, next to the Total Fee
+field, and is visible to admins, doctors, and receptionists.
+
+- **Create invoice**: allowed only after the encounter is finished.
+  The invoice starts with the clinic's configured consultation fee
+  (when non-zero) plus the visit's charge lines. Totals are computed
+  from the lines; every invoice gets a unique number.
+- **Record payment**: cash, UPI, or card. Amounts must be positive and
+  cannot exceed the balance. Each payment is idempotent and gets a
+  unique receipt number.
+- **Receipt**: open and print any payment's receipt. Reprints carry a
+  **DUPLICATE** watermark; **Print last receipt** reprints the latest.
+- **Refund**: reverses a payment in whole or part with a mandatory
+  reason. Refunds appear as reversal rows and land in the day-close
+  review queue. Over-refunds are refused.
+- **Void**: cancels an invoice with a mandatory reason. Invoices with
+  outstanding payments cannot be voided.
+
+Invoices are never edited or deleted. Corrections flow through refunds
+and voids with reasons, so the ledger always reconciles. The day-close
+modal verifies exactly that.
 
 ## Billing Rules Behind It
 

@@ -20,7 +20,11 @@ Welcome to the NalamDesk User Guide. This section is designed to help Doctors, R
 
 | Role | Key Responsibilities |
 | :--- | :--- |
-| **Admin** | System configuration, User creation, Data backups. |
+| **Admin** | System configuration, User creation, Custom roles, Data backups. |
 | **Doctor** | Consulting patients, Creating prescriptions, Viewing history, Merging duplicate charts. |
-| **Receptionist** | Registering patients, Managing the waiting queue, Recording payments. |
+| **Receptionist** | Registering patients, Managing the waiting queue, Recording payments, Archiving charts. |
 | **Nurse** | Recording vitals, Monitoring the triage queue. |
+
+Only doctors finalize encounters; only doctors and admins merge charts
+or edit safety data. Admins can compose custom roles, but clinical
+finalization and merges stay gated regardless.

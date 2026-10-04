@@ -45,6 +45,24 @@ needed only for the annual mapping run -- never at clinic runtime.
 
 Get a key: register at `https://icd.who.int/icdapi` (free, ~2 minutes).
 
+## URL registry
+
+Every external source and portal in one place:
+
+- NLEM 2022 PDF (MoHFW via WHO mirror):
+  `https://cdn.who.int/media/docs/default-source/essential-medicines/national-essential-medicines-lists-(neml)/searo_neml/india-2022.pdf`
+- NLEM list page (CDSCO): `https://cdsco.gov.in/opencms/opencms/en/consumer/Essential-Medicines/`
+- WHO ICD API portal (free key registration): `https://icd.who.int/icdapi`
+- ICD-11 license: `https://icd.who.int/docs/icd-api/license/`
+- ICD-11 offline deployment (Docker / Windows / Linux):
+  `https://icd.who.int/docs/icd-api/ICDAPI-LocalDeployment/`
+- SNOMED India licensing (MLDS): `https://mlds.ihtsdotools.org/` → landing `/IN`
+- NRCeS (standards, tools, help `nrc-help@cdac.in`): `https://nrces.in`
+- BHTS terminology browser: `https://nrces.in/bhts/`
+- BHTS FHIR API base: `https://nrces.in/bhts/api/v1/ts/fhir`
+- ABDM FHIR profiles (NRCeS): `https://nrces.in/ndhm/fhir/r4/`
+- WHO eEML database: `https://list.essentialmeds.org/`
+
 ## Annual refresh
 
 1. Run `map_icd11.py conditions.txt` with the current ICD release.

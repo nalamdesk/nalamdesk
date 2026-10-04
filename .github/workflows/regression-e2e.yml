@@ -59,6 +59,21 @@ jobs:
           sudo chown root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
 
+      - name: Preflight Electron startup
+        # Boots the real app once (no Playwright) and fails fast with logs
+        # if it crashes or never creates a window — instead of timing out
+        # 6 spec files at 60s each with zero diagnostics.
+        env:
+          NODE_ENV: test
+          NALAMDESK_E2E_USER_DATA: /tmp/e2e-preflight
+          ELECTRON_ENABLE_LOGGING: 1
+        run: |
+          npm run build:main
+          timeout 25 xvfb-run -a node_modules/.bin/electron --password-store=basic dist/main/main.js > /tmp/preflight.log 2>&1; code=$?
+          tail -30 /tmp/preflight.log
+          if [ $code -ne 124 ]; then echo "app exited early (code=$code)"; exit 1; fi
+          grep -q "BrowserWindow created" /tmp/preflight.log || { echo "no window created within 25s"; exit 1; }
+
       - name: Run regression suite
         # Headed Electron under a virtual display; the renderer is served
         # locally by the Playwright webServer entry (ng serve) and each

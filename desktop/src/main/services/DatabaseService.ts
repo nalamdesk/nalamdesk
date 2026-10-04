@@ -3425,14 +3425,33 @@ export class DatabaseService {
     saveAppointment(appt: any) {
         if (!this.db) throw new Error('DB not initialized');
         if (appt.id) {
-            return this.db.prepare(`
-                UPDATE appointments SET status = ? WHERE id = ?
-            `).run(appt.status, appt.id);
+            // Field edits apply directly; status NEVER writes raw -- it
+            // routes through the audited transition machine (or rejects).
+            // This closes direct-to-terminal writes from any caller.
+            const fields: string[] = [];
+            const params: unknown[] = [];
+            for (const key of ['patient_id', 'date', 'time', 'reason', 'doctor_id']) {
+                if (appt[key] !== undefined) {
+                    fields.push(`${key} = ?`);
+                    params.push(appt[key]);
+                }
+            }
+            let updated: any = { changes: 0 };
+            if (fields.length > 0) {
+                params.push(appt.id);
+                updated = this.db.prepare(
+                    `UPDATE appointments SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+            }
+            if (appt.status != null && String(appt.status).trim() !== '') {
+                return this.transitionAppointment(Number(appt.id), String(appt.status));
+            }
+            return updated;
         } else {
+            // Registration always books; status arrives via transitions.
             return this.db.prepare(`
-                INSERT INTO appointments (patient_id, date, time, reason, status)
-                VALUES (?, ?, ?, ?, 'CONFIRMED')
-            `).run(appt.patient_id, appt.date, appt.time, appt.reason);
+                INSERT INTO appointments (patient_id, date, time, reason, doctor_id, status)
+                VALUES (?, ?, ?, ?, ?, 'booked')
+            `).run(appt.patient_id, appt.date, appt.time, appt.reason, appt.doctor_id ?? null);
         }
     }
 
@@ -3449,7 +3468,10 @@ export class DatabaseService {
         proposed: ['booked', 'cancelled'],
         booked: ['confirmed', 'cancelled'],
         confirmed: ['arrived', 'cancelled', 'no-show'],
-        arrived: ['fulfilled', 'cancelled', 'no-show'],
+        // arrived -> fulfilled is NOT listed: fulfillment runs only through
+        // fulfillAppointment (visit-linked, doctor/admin), never through the
+        // generic transition both desk roles hold.
+        arrived: ['cancelled', 'no-show'],
         fulfilled: [],
         cancelled: [],
         'no-show': []
@@ -3463,8 +3485,19 @@ export class DatabaseService {
             this._transitionAppointment(Number(id), String(to || ''), input))();
     }
 
-    private _transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }) {
-        const target = String(to || '').toLowerCase();
+    /**
+     * Legacy uppercase statuses from pre-lifecycle callers (dashboard
+     * check-in). Folded before validation so old flows travel the audited
+     * path instead of breaking or bypassing it.
+     */
+    private static readonly APPOINTMENT_STATUS_ALIASES: Record<string, string> = {
+        checked_in: 'arrived', completed: 'fulfilled',
+        confirmed: 'confirmed', cancelled: 'cancelled'
+    };
+
+    private _transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }, opts?: { allowFulfill?: boolean }) {
+        const rawTarget = String(to || '').toLowerCase();
+        const target = DatabaseService.APPOINTMENT_STATUS_ALIASES[rawTarget] || rawTarget;
         if (!DatabaseService.APPOINTMENT_STATUSES.includes(target)) {
             throw new Error(`Unknown appointment status: ${to}.`);
         }
@@ -3472,7 +3505,7 @@ export class DatabaseService {
         if (!row) throw new Error('Appointment not found.');
         const from = String(row.status || '').toLowerCase();
         const allowed = DatabaseService.APPOINTMENT_TRANSITIONS[from] || [];
-        if (!allowed.includes(target)) {
+        if (!allowed.includes(target) && !(target === 'fulfilled' && opts?.allowFulfill)) {
             throw new Error(`Cannot move appointment from ${from || 'unknown'} to ${target}.`);
         }
         const reason = String(input?.reason || '').trim();
@@ -3605,7 +3638,7 @@ export class DatabaseService {
             if (Number(visit.patient_id) !== Number(row.patient_id)) {
                 throw new Error('Visit belongs to another patient.');
             }
-            const moved = this._transitionAppointment(Number(id), 'fulfilled', { actorId: actingUserId ?? undefined });
+            const moved = this._transitionAppointment(Number(id), 'fulfilled', { actorId: actingUserId ?? undefined }, { allowFulfill: true });
             this.db.prepare('UPDATE appointments SET visit_id = ? WHERE id = ?').run(Number(visitId), Number(id));
             return { ...moved, visitId: Number(visitId) };
         });

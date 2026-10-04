@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // Hoist the mock object so it's accessible in both factory and tests
-const { mockDoc, mockAutoTable } = vi.hoisted(() => {
+const { mockDoc, mockAutoTable, mockQrCode } = vi.hoisted(() => {
     const doc = {
         setFontSize: vi.fn(),
         setTextColor: vi.fn(),
@@ -12,11 +12,14 @@ const { mockDoc, mockAutoTable } = vi.hoisted(() => {
         setDrawColor: vi.fn(),
         line: vi.fn(),
         save: vi.fn(),
+        addImage: vi.fn(),
+        addPage: vi.fn(),
         lastAutoTable: { finalY: 100 }
     };
     return {
         mockDoc: doc,
-        mockAutoTable: vi.fn()
+        mockAutoTable: vi.fn(),
+        mockQrCode: { toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,QR') }
     };
 });
 
@@ -33,6 +36,10 @@ vi.mock('jspdf', () => {
 
 vi.mock('jspdf-autotable', () => ({
     default: mockAutoTable
+}));
+
+vi.mock('qrcode', () => ({
+    default: mockQrCode
 }));
 
 import { PdfService } from './pdf.service';
@@ -135,6 +142,40 @@ describe('PdfService', () => {
             const atCall = (mockAutoTable as any).mock.calls[0];
             expect(atCall[1].body[0][0]).toBe('Paracetamol (Crocin)');
             expect(atCall[1].body[1][0]).toBe('Local mixture');
+        });
+
+        it('embeds a scannable QR with the encoded prescription', async () => {
+            await service.generatePrescription(mockVisit, mockPatient, mockDoctor);
+            expect(mockQrCode.toDataURL).toHaveBeenCalled();
+            const qrText = mockQrCode.toDataURL.mock.calls[0][0] as string;
+            expect(qrText.startsWith('ND1.')).toBe(true);
+            expect(mockDoc.addImage).toHaveBeenCalledWith(
+                'data:image/png;base64,QR', 'PNG', 14, expect.any(Number), 32, 32);
+        });
+
+        it('skips the QR when the payload exceeds the byte cap', async () => {
+            const big = {
+                ...mockVisit,
+                prescription: Array.from({ length: 400 }, (_, i) => ({
+                    medicine: `Medicine ${i} ${Buffer.from(String(i * 7919)).toString('base64')}${'x'.repeat(i % 37)}`,
+                    dosage: `${100 + i}mg-${'y'.repeat(i % 43)}`, frequency: '1-1-1', duration: '30 days',
+                    instruction: `Instruction set ${i}-${'z'.repeat(i % 29)}`
+                }))
+            };
+            mockDoc.addImage.mockClear();
+            await service.generatePrescription(big, mockPatient, mockDoctor);
+            expect(mockDoc.addImage).not.toHaveBeenCalled();
+        });
+
+        it('spills the whole footer block onto a fresh page near the bottom margin', async () => {
+            mockDoc.lastAutoTable.finalY = 270;
+            mockDoc.addPage.mockClear();
+            mockDoc.addImage.mockClear();
+            await service.generatePrescription(mockVisit, mockPatient, mockDoctor);
+            expect(mockDoc.addPage).toHaveBeenCalled();
+            expect(mockDoc.addImage).toHaveBeenCalledWith(
+                'data:image/png;base64,QR', 'PNG', 14, 22, 32, 32);
+            mockDoc.lastAutoTable.finalY = 100;
         });
 
         it('should handle empty prescription array', async () => {

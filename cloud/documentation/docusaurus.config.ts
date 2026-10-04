@@ -68,6 +68,20 @@ const config: Config = {
     ],
   ],
 
+  // Local offline search (no Algolia key needed).
+  themes: [
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        hashed: true,
+        indexDocs: true,
+        indexBlog: true,
+        docsRouteBasePath: '/docs',
+        blogRouteBasePath: '/blog',
+      },
+    ],
+  ],
+
   themeConfig: {
     // Replace with your project's social card
     image: 'img/docusaurus-social-card.jpg',

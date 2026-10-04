@@ -28,7 +28,13 @@
   --font-body: Inter, system-ui, sans-serif;
 }
 
-/* Headline emphasis: wash marker on the key word, drawn underline on the promise. */
+/* Visible keyboard focus in brand blue, everywhere. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-cobalt);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .hl-wash {
   background: linear-gradient(180deg, transparent 62%, rgba(24, 104, 219, 0.22) 62%);
   padding: 0 0.08em;

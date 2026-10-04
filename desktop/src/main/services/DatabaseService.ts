@@ -3422,30 +3422,16 @@ export class DatabaseService {
         `).all(date);
     }
 
-    saveAppointment(appt: any) {
+    saveAppointment(appt: any, actingUserId?: number) {
         if (!this.db) throw new Error('DB not initialized');
         if (appt.id) {
-            // Field edits apply directly; status NEVER writes raw -- it
-            // routes through the audited transition machine (or rejects).
-            // This closes direct-to-terminal writes from any caller.
-            const fields: string[] = [];
-            const params: unknown[] = [];
-            for (const key of ['patient_id', 'date', 'time', 'reason', 'doctor_id']) {
-                if (appt[key] !== undefined) {
-                    fields.push(`${key} = ?`);
-                    params.push(appt[key]);
-                }
-            }
-            let updated: any = { changes: 0 };
-            if (fields.length > 0) {
-                params.push(appt.id);
-                updated = this.db.prepare(
-                    `UPDATE appointments SET ${fields.join(', ')} WHERE id = ?`).run(...params);
-            }
+            // Status-led writes route through the lifecycle machine with the
+            // field edits attached, so validation runs before anything
+            // persists and everything commits atomically.
             if (appt.status != null && String(appt.status).trim() !== '') {
-                return this.transitionAppointment(Number(appt.id), String(appt.status));
+                return this.saveAppointmentWithStatus(appt, actingUserId);
             }
-            return updated;
+            return this.saveAppointmentFields(appt, actingUserId);
         } else {
             // Registration always books; status arrives via transitions.
             return this.db.prepare(`
@@ -3453,6 +3439,97 @@ export class DatabaseService {
                 VALUES (?, ?, ?, ?, ?, 'booked')
             `).run(appt.patient_id, appt.date, appt.time, appt.reason, appt.doctor_id ?? null);
         }
+    }
+
+    /**
+     * Status-bearing update: transition first (validates), field edits and
+     * originals-stamping inside the same transaction. arrived is reachable
+     * only via check-in (queue entry guaranteed); everything else travels
+     * the generic transition with date/time carried along.
+     */
+    private saveAppointmentWithStatus(appt: any, actingUserId?: number) {
+        const raw = String(appt.status || '').toLowerCase();
+        const target = DatabaseService.APPOINTMENT_STATUS_ALIASES[raw] || raw;
+        const save = this.db.transaction(() => {
+            if (target === 'arrived') {
+                const checked = this.checkInCore(Number(appt.id), actingUserId);
+                this.applyAppointmentFields(appt, false);
+                return checked;
+            }
+            return this._transitionAppointment(Number(appt.id), target, {
+                reason: appt.status_reason, actorId: actingUserId ?? undefined,
+                date: appt.date, time: appt.time
+            });
+        });
+        return save();
+    }
+
+    /**
+     * Field-only edit (no status move): reschedules stamp originals and
+     * write history, so provenance survives without a state change.
+     */
+    private saveAppointmentFields(appt: any, actingUserId?: number) {
+        const save = this.db.transaction(() => {
+            const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?')
+                .get(Number(appt.id)) as any;
+            if (!row) throw new Error('Appointment not found.');
+            const dateMoved = appt.date !== undefined && String(appt.date) !== String(row.date);
+            const timeMoved = appt.time !== undefined && String(appt.time) !== String(row.time);
+            this.applyAppointmentFields(appt, true);
+            if (dateMoved || timeMoved) {
+                const from = String(row.status || '').toLowerCase();
+                this.db.prepare(`INSERT INTO appointment_history
+                    (appointment_id, from_status, to_status, reason, actor_id)
+                    VALUES (?, ?, ?, ?, ?)`)
+                    .run(Number(appt.id), from, from,
+                        `Rescheduled ${dateMoved ? `to ${appt.date}` : ''}${dateMoved && timeMoved ? ' ' : ''}${timeMoved ? `${appt.time}` : ''}`.trim() || 'Rescheduled',
+                        actingUserId ?? null);
+                this.logAudit('APPOINTMENT_RESCHEDULE', 'appointments', Number(appt.id),
+                    actingUserId ?? null, `Appointment rescheduled (still ${from})`);
+            }
+            return { id: Number(appt.id) };
+        });
+        return save();
+    }
+
+    /** Shared field writer: whitelisted columns plus originals-stamping. */
+    private applyAppointmentFields(appt: any, stampOriginals: boolean) {
+        const fields: string[] = [];
+        const params: unknown[] = [];
+        for (const key of ['patient_id', 'reason', 'doctor_id']) {
+            if (appt[key] !== undefined) {
+                fields.push(`${key} = ?`);
+                params.push(appt[key]);
+            }
+        }
+        const row = this.db.prepare('SELECT date, time, original_date, original_time FROM appointments WHERE id = ?')
+            .get(Number(appt.id)) as any;
+        const dateMoved = appt.date !== undefined && row && String(appt.date) !== String(row.date);
+        const timeMoved = appt.time !== undefined && row && String(appt.time) !== String(row.time);
+        // Any move stamps BOTH originals when empty: a date-only move
+        // must still freeze the original time, or a later time change
+        // would record the wrong provenance.
+        if (dateMoved) {
+            fields.push('date = ?');
+            params.push(appt.date);
+        }
+        if (timeMoved) {
+            fields.push('time = ?');
+            params.push(appt.time);
+        }
+        if ((dateMoved || timeMoved) && row) {
+            if (!row.original_date) {
+                fields.push('original_date = ?');
+                params.push(row.date);
+            }
+            if (!row.original_time) {
+                fields.push('original_time = ?');
+                params.push(row.time);
+            }
+        }
+        if (fields.length === 0) return { changes: 0 };
+        params.push(Number(appt.id));
+        return this.db.prepare(`UPDATE appointments SET ${fields.join(', ')} WHERE id = ?`).run(...params);
     }
 
     /**
@@ -3467,7 +3544,10 @@ export class DatabaseService {
     private static readonly APPOINTMENT_TRANSITIONS: Record<string, string[]> = {
         proposed: ['booked', 'cancelled'],
         booked: ['confirmed', 'cancelled'],
-        confirmed: ['arrived', 'cancelled', 'no-show'],
+        // confirmed -> arrived is NOT listed: arrival runs only through
+        // check-in (queue entry guaranteed), never through the generic
+        // transition desk roles hold.
+        confirmed: ['cancelled', 'no-show'],
         // arrived -> fulfilled is NOT listed: fulfillment runs only through
         // fulfillAppointment (visit-linked, doctor/admin), never through the
         // generic transition both desk roles hold.
@@ -3495,7 +3575,7 @@ export class DatabaseService {
         confirmed: 'confirmed', cancelled: 'cancelled'
     };
 
-    private _transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }, opts?: { allowFulfill?: boolean }) {
+    private _transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number; date?: string; time?: string }, opts?: { allowFulfill?: boolean; allowArrive?: boolean }) {
         const rawTarget = String(to || '').toLowerCase();
         const target = DatabaseService.APPOINTMENT_STATUS_ALIASES[rawTarget] || rawTarget;
         if (!DatabaseService.APPOINTMENT_STATUSES.includes(target)) {
@@ -3505,7 +3585,10 @@ export class DatabaseService {
         if (!row) throw new Error('Appointment not found.');
         const from = String(row.status || '').toLowerCase();
         const allowed = DatabaseService.APPOINTMENT_TRANSITIONS[from] || [];
-        if (!allowed.includes(target) && !(target === 'fulfilled' && opts?.allowFulfill)) {
+        const privileged =
+            (target === 'fulfilled' && from === 'arrived' && opts?.allowFulfill) ||
+            (target === 'arrived' && from === 'confirmed' && opts?.allowArrive);
+        if (!allowed.includes(target) && !privileged) {
             throw new Error(`Cannot move appointment from ${from || 'unknown'} to ${target}.`);
         }
         const reason = String(input?.reason || '').trim();
@@ -3604,24 +3687,26 @@ export class DatabaseService {
      * mid-transaction; the re-read inside covers sequential retries.
      */
     checkInAppointment(id: number, actingUserId?: number) {
-        const checkIn = this.db.transaction(() => {
-            const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
-            if (!row) throw new Error('Appointment not found.');
-            if (row.queue_entry_id) {
-                const live = this.db.prepare(
-                    `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
-                    .get(Number(row.queue_entry_id)) as any;
-                if (live) return { appointmentId: Number(id), queueEntryId: Number(row.queue_entry_id), reused: true };
-            }
-            if (String(row.status || '').toLowerCase() !== 'arrived') {
-                this._transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined });
-            }
-            const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
-            const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
-            this.db.prepare('UPDATE appointments SET queue_entry_id = ? WHERE id = ?').run(queueEntryId, Number(id));
-            return { appointmentId: Number(id), queueEntryId, reused: false };
-        });
-        return checkIn();
+        return this.db.transaction(() => this.checkInCore(Number(id), actingUserId))();
+    }
+
+    /** Transaction body shared by checkInAppointment and saveAppointment. */
+    private checkInCore(id: number, actingUserId?: number) {
+        const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
+        if (!row) throw new Error('Appointment not found.');
+        if (row.queue_entry_id) {
+            const live = this.db.prepare(
+                `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
+                .get(Number(row.queue_entry_id)) as any;
+            if (live) return { appointmentId: Number(id), queueEntryId: Number(row.queue_entry_id), reused: true };
+        }
+        if (String(row.status || '').toLowerCase() !== 'arrived') {
+            this._transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined }, { allowArrive: true });
+        }
+        const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
+        const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
+        this.db.prepare('UPDATE appointments SET queue_entry_id = ? WHERE id = ?').run(queueEntryId, Number(id));
+        return { appointmentId: Number(id), queueEntryId, reused: false };
     }
 
     /**

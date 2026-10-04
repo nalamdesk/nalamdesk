@@ -1589,7 +1589,7 @@ handleGuardedDb('db:getAppointments', (_, date) => {
 handleGuardedDb('db:saveAppointment', (_, appt) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
-    return databaseService.saveAppointment(appt);
+    return databaseService.saveAppointment(appt, user.id);
 });
 // Appointment lifecycle (issue #19): desk roles move bookings through
 // reasoned states; nurses hold no appointment grants.

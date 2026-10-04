@@ -322,14 +322,16 @@ describe('DatabaseService', () => {
             expect(() => service.transitionAppointment(1, 'fulfilled')).toThrow('Cannot move');
         });
 
-        it('folds legacy uppercase statuses into the audited path', () => {
+        it('blocks arrived outside check-in, even for legacy callers', () => {
             keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'CONFIRMED', date: '2026-10-05', time: '10:00' } });
-            expect(service.transitionAppointment(1, 'CHECKED_IN')).toMatchObject({ from: 'confirmed', to: 'arrived' });
+            expect(() => service.transitionAppointment(1, 'CHECKED_IN')).toThrow('Cannot move');
+            expect(() => service.transitionAppointment(1, 'arrived')).toThrow('Cannot move');
         });
 
         it('routes saveAppointment status through transitions, never raw writes', () => {
             keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'confirmed', date: '2026-10-05', time: '10:00' } });
-            expect(service.saveAppointment({ id: 1, status: 'CHECKED_IN' })).toMatchObject({ to: 'arrived' });
+            expect(service.saveAppointment({ id: 1, status: 'cancelled', status_reason: 'patient called' }, 9))
+                .toMatchObject({ to: 'cancelled' });
             const sql = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
             // Status traveled the audited path: history plus audit, not a bare write.
             expect(sql).toContain('INSERT INTO appointment_history');
@@ -337,6 +339,26 @@ describe('DatabaseService', () => {
             expect(service.saveAppointment({ patient_id: 3, date: '2026-10-05', time: '09:00' })).toBeTruthy();
             const after = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
             expect(after).toContain("'booked'");
+        });
+
+        it('routes legacy check-in through the queue-guaranteed path', () => {
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'confirmed', patient_id: 3, date: '2026-10-05', time: '10:00' },
+                'FROM patient_queue WHERE patient_id': null
+            });
+            expect(service.saveAppointment({ id: 1, status: 'CHECKED_IN' }, 9)).toMatchObject({ queueEntryId: 7 });
+        });
+
+        it('records reschedules in history with originals intact', () => {
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', date: '2026-10-05', time: '10:00', original_date: null, original_time: null } });
+            expect(service.saveAppointment({ id: 1, date: '2026-10-06' }, 9)).toMatchObject({ id: 1 });
+            const sql = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
+            expect(sql).toContain('original_date = ?');
+            expect(sql).toContain('original_time = ?');
+            // Reschedule provenance lands in history (action travels as a
+            // bound audit param, asserted via the history row instead).
+            expect(sql).toContain('INSERT INTO appointment_history');
+            expect(sql).toContain('INSERT INTO audit_logs');
         });
 
         it('stamps originals on first reschedule only', () => {

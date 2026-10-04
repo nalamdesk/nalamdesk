@@ -11,21 +11,22 @@ defaults:
   max_diff_chars: 80000
 
 providers:
-  # Both models served through the single OpenCode Go subscription key.
-  # IDs from the official OpenCode Zen model table (opencode.ai/docs/zen).
-  glm:
-    protocol: openai-chat
-    model: glm-5.3-flash
-    base_url: https://opencode.ai/zen/go/v1
-    key_from: secrets.OPENCODE_API_KEY
-  # Anonymous free reasoning model (1M ctx, multimodal, zero retention).
-  # Free window is explicitly temporary — if agents start skipping, check
-  # availability and fall back to deepseek-v4.1-flash (same endpoint).
-  spacebunny:
+  # Single reviewer: space-bunny-free on the OpenCode Go subscription key.
+  # Proven on openreview's own repo: reasoning models spend thinking from the
+  # 2000-token output budget, and on an uncapped run both agents burned the
+  # whole budget and bailed to {"findings":[]} on every PR. Capping the think
+  # fixes it (same 80k-char diff: 0/5 parseable uncapped, 2/2 with real
+  # findings capped). glm-5.3-flash removed outright — heavier thinker, same
+  # failure, no reason to pay for it here.
+  opencode:
     protocol: openai-chat
     model: space-bunny-free
     base_url: https://opencode.ai/zen/go/v1
     key_from: secrets.OPENCODE_API_KEY
+    # Stays active (measured, do not remove): without it the think eats the
+    # answer (empty content, finish_reason=length). json_mode stays at its
+    # default true for the same reason — the JSON contract needs both.
+    extra_body: { reasoning_effort: "low" }
 
 reviews:
   - id: correctness
@@ -34,7 +35,7 @@ reviews:
     profile: balanced # noise preset (v0.11); explicit max_findings below wins
     max_findings: 5 # mechanical cap matching the "at most 5" prompt instruction
     main:
-      provider: glm
+      provider: opencode
       instructions: >-
         Synthesize sub-agent findings for the NalamDesk clinic desktop app
         (Electron + Angular + SQLite). Report at most 5 findings, P1/P2 only,
@@ -50,7 +51,7 @@ reviews:
         paths — should fix). Never emit P3/P4 or untagged findings.
     subagents:
       - name: spacebunny-check
-        provider: spacebunny
+        provider: opencode
         instructions: >-
           Independent correctness pass: real bugs, race conditions, null
           handling, broken error paths. At most 5 findings, high confidence
@@ -68,7 +69,7 @@ reviews:
     profile: balanced # noise preset (v0.11); explicit max_findings below wins
     max_findings: 5 # mechanical cap matching the "at most 5" prompt instruction
     main:
-      provider: spacebunny
+      provider: opencode
       instructions: >-
         Staff security reviewer for a clinic app guarding patient data.
         Focus: Cedar/RBAC default-deny, admin-only destructive actions,
@@ -80,7 +81,7 @@ reviews:
         four characters with severity field "high".
     subagents:
       - name: secrets-scan
-        provider: glm
+        provider: opencode
         instructions: >-
           Find leaked secrets, hardcoded credentials, keys in logs or
           comments, overly broad file/IPC permissions. At most 5 findings,

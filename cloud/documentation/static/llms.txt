@@ -9,9 +9,4 @@
   - Daily Collection and Day Close (receipts, review queue, ledger): https://docs.nalamdesk.com/docs/user-guide/daily-collection
   - Merging Duplicate Charts (preview, rollback, archive): https://docs.nalamdesk.com/docs/user-guide/patient-merge
 - Data and Backups (schedule, retention, restore, Drive): https://docs.nalamdesk.com/docs/backups
-- Developer Guide: https://docs.nalamdesk.com/docs/developer-guide/local-setup
-  - Architecture (Electron, Fastify :3000, SQLCipher, RBAC): https://docs.nalamdesk.com/docs/developer-guide/architecture
-  - Database Schema (migrations, ledgers, identifiers): https://docs.nalamdesk.com/docs/developer-guide/database-schema
-  - Testing Strategy (vitest workspaces, Playwright E2E): https://docs.nalamdesk.com/docs/developer-guide/testing-strategy
 - Marketing site: https://nalamdesk.com/
-- Source: https://github.com/sankara-sabapathy/nalamdesk (AGPL-3.0)

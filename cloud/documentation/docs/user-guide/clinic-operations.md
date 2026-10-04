@@ -30,10 +30,16 @@ and triage, vitals, and consultations. Everything below works offline.
 If a duplicate slips through, merge the charts later instead of deleting
 one. See [Merging Duplicate Charts](./patient-merge.md).
 
+![Patients list with MRN and actions](/img/nalamdesk-patients.png)
+*Every chart carries an auto-assigned MRN. The list shows queue state with Edit and Archive actions.*
+
 ## Managing the Queue
 
 The **Queue** orders patients by clinical urgency first, then check-in
 time. The dashboard can start the next consultation in that order.
+
+![Patient queue with urgency triage](/img/nalamdesk-queue.png)
+*The queue orders by clinical urgency with triage badges, vitals alerts, and Start Consult actions.*
 
 ### 4-Tier Urgency Levels
 
@@ -92,6 +98,9 @@ the responsible doctor. Only a `doctor` account finalizes encounters.
 
 1. Go to **Queue** or **Dashboard** and open a Waiting or In-Consult
    patient.
+
+![Consultation workbench](/img/nalamdesk-visit.png)
+*Safety banner, SOAP notes, prescription pad with defaults, fee field, and finish actions.*
 2. **Patient Safety Context Banner**: allergy count, active problems,
    and current medications across the top. A green **No Known
    Allergies** badge when clear, a red alert with a High Risk flag for

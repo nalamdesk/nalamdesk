@@ -19,6 +19,9 @@ numbers always reconcile.
 
 Click the card to open the **Daily close** modal.
 
+![Dashboard with the Daily Collection card](/img/nalamdesk-dashboard.png)
+*The dashboard surfaces the queue, visits, and the Daily Collection card.*
+
 ## The Day Close Modal
 
 Header shows the date and the note *Derived from payment transactions, not

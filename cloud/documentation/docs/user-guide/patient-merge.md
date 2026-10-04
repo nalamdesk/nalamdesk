@@ -10,6 +10,9 @@ the full history onto one surviving chart through a **preview with a
 mandatory audited reason**, and it is **reversible**. Only **Doctors and
 Admins** can merge.
 
+![Patient chart with Merge action](/img/nalamdesk-patient-chart.png)
+*The chart header offers Merge (doctors and admins) next to Start Consultation.*
+
 ## Spotting Duplicates Early
 
 - During **New Patient Registration**, the form warns about possible

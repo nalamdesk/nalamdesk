@@ -12,6 +12,9 @@ day at the time configured under **Settings > Data & Backup > Local Backup
 Schedule** (default **1:00 PM**). The app must be open at that time for the
 backup to run.
 
+![Settings, Data and Backup tab](/img/nalamdesk-settings-backup.png)
+*Backup schedule, health, location, restore, and Drive sync live under Settings, Data and Backup.*
+
 ### Default Backup Location
 Unless you configure a custom location, backups are stored in the application data folder:
 

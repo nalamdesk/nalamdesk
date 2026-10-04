@@ -84,12 +84,17 @@ import { frequencyLatin, parseFrequency } from '../../../../shared/clinical-timi
              </select>
           </div>
 
-          <!-- 5. Frequency (1/2 Mobile) -->
+          <!-- 5. Frequency (1/2 Mobile): free text with lens-labeled suggestions.
+               Typed Latin folds to canonical on change; unknowns pass through. -->
           <div class="col-span-6 md:col-span-2">
             <span class="text-xs text-gray-500 md:hidden">Frequency</span>
-            <select [(ngModel)]="item.frequency" (ngModelChange)="emitChange()" [disabled]="disabled" aria-label="Frequency" class="select select-bordered select-sm w-full">
+            <input type="text" placeholder="1-0-1 or BID" aria-label="Frequency"
+                   [(ngModel)]="item.frequency" (ngModelChange)="onFrequencyTyped(i, item.frequency)"
+                   [disabled]="disabled" list="frequency-suggestions"
+                   class="input input-bordered input-sm w-full" />
+            <datalist id="frequency-suggestions">
               <option *ngFor="let f of frequencies" [value]="f">{{ frequencyLabel(f) }}</option>
-            </select>
+            </datalist>
           </div>
 
           <!-- 6. Duration (1/2 Mobile) -->
@@ -199,6 +204,10 @@ export class PrescriptionComponent {
 
   onMedicineTyped(index: number, name: string) {
     this.patchLine(index, { medicine: name });
+  }
+
+  onFrequencyTyped(index: number, value: string) {
+    this.patchLine(index, { frequency: value });
   }
 
   onMedicinePicked(index: number, hit: any) {

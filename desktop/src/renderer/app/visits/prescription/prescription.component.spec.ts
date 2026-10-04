@@ -79,6 +79,14 @@ describe('PrescriptionComponent', () => {
         expect(component.changed.emit).toHaveBeenCalled();
     });
 
+    it('carries generic and brand from the catalog pick onto the Rx line', () => {
+        component.onMedicinePicked(0, {
+            id: 4, name: 'Crocin 500', generic_name: 'Paracetamol', brand_name: 'Crocin', dosage: '500mg'
+        });
+        expect(component.items()[0].generic_name).toBe('Paracetamol');
+        expect(component.items()[0].brand_name).toBe('Crocin');
+    });
+
     it('searches and creates medicines through catalog IPC when available', async () => {
         // Bypass inject entirely: catalog-off behavior must not depend on
         // whichever inject double the runner provides.

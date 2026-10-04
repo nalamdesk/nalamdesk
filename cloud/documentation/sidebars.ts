@@ -52,6 +52,7 @@ const sidebars: SidebarsConfig = {
         'developer-guide/architecture',
         'developer-guide/database-schema',
         'developer-guide/testing-strategy',
+        'developer-guide/data-sources-licensing',
       ],
       collapsible: false,
     },

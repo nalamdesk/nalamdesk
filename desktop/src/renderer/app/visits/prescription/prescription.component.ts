@@ -184,6 +184,8 @@ export class PrescriptionComponent {
   onMedicinePicked(index: number, hit: any) {
     this.patchLine(index, {
       medicine: hit.name,
+      generic_name: hit.generic_name || null,
+      brand_name: hit.brand_name || null,
       form: hit.form || this.items()[index]?.form || 'Tab',
       dosage: hit.dosage ?? this.items()[index]?.dosage ?? '',
       route: hit.route || this.items()[index]?.route || 'Oral',

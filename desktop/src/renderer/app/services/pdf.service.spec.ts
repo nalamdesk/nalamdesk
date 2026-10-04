@@ -123,6 +123,20 @@ describe('PdfService', () => {
             expect(atCall[1].head[0]).toEqual(['Medicine', 'Dosage', 'Frequency', 'Duration', 'Instruction']);
         });
 
+        it('should print GENERIC (Brand) when the line carries both', async () => {
+            const visit = {
+                ...mockVisit,
+                prescription: [
+                    { medicine: 'Crocin 500', generic_name: 'Paracetamol', brand_name: 'Crocin', dosage: '500mg', frequency: '1-0-1', duration: '3 days', instruction: 'After food' },
+                    { medicine: 'Local mixture', dosage: '5ml', frequency: '2x/day', duration: '3 days', instruction: 'Before sleep' }
+                ]
+            };
+            await service.generatePrescription(visit, mockPatient, mockDoctor);
+            const atCall = (mockAutoTable as any).mock.calls[0];
+            expect(atCall[1].body[0][0]).toBe('Paracetamol (Crocin)');
+            expect(atCall[1].body[1][0]).toBe('Local mixture');
+        });
+
         it('should handle empty prescription array', async () => {
             await service.generatePrescription({ ...mockVisit, prescription: [] }, mockPatient, mockDoctor);
             expect(mockAutoTable).toHaveBeenCalled();

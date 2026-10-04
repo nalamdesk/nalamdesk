@@ -2,6 +2,7 @@
 import { Injectable } from '@angular/core';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatRxMedicineName } from '../../../shared/rx-label';
 
 @Injectable({
     providedIn: 'root'
@@ -37,9 +38,9 @@ export class PdfService {
         doc.setFontSize(10);
         doc.text(visit.diagnosis || 'Review', 14, 70);
 
-        // Rx Table
+        // Rx Table: NMC generic-first labeling, GENERIC (Brand).
         const data = (visit.prescription || []).map((p: any) => [
-            p.medicine,
+            formatRxMedicineName(p),
             p.dosage,
             p.frequency,
             p.duration,

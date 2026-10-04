@@ -106,6 +106,7 @@
     "electron-log": "^5.4.3",
     "electron-updater": "^6.7.3",
     "fastify": "^5.7.1",
+    "fflate": "^0.8.3",
     "fs-extra": "^11.3.3",
     "googleapis": "^170.1.0",
     "jsonwebtoken": "^9.0.3",

@@ -350,7 +350,7 @@ describe('DatabaseService', () => {
         });
 
         it('records reschedules in history with originals intact', () => {
-            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', date: '2026-10-05', time: '10:00', original_date: null, original_time: null } });
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', patient_id: 3, date: '2026-10-05', time: '10:00', original_date: null, original_time: null } });
             expect(service.saveAppointment({ id: 1, date: '2026-10-06' }, 9)).toMatchObject({ id: 1 });
             const sql = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
             expect(sql).toContain('original_date = ?');
@@ -359,6 +359,16 @@ describe('DatabaseService', () => {
             // bound audit param, asserted via the history row instead).
             expect(sql).toContain('INSERT INTO appointment_history');
             expect(sql).toContain('INSERT INTO audit_logs');
+        });
+
+        it('refuses field edits on terminals and logs reassignments', () => {
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'fulfilled', patient_id: 3 } });
+            expect(() => service.saveAppointment({ id: 1, date: '2026-10-07' }, 9))
+                .toThrow('Cannot edit a fulfilled appointment');
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', patient_id: 3, date: '2026-10-05', time: '10:00' } });
+            expect(service.saveAppointment({ id: 1, patient_id: 7 }, 9)).toMatchObject({ id: 1 });
+            const sql = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
+            expect(sql).toContain('INSERT INTO appointment_history');
         });
 
         it('stamps originals on first reschedule only', () => {

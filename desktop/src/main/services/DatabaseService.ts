@@ -3451,10 +3451,13 @@ export class DatabaseService {
         const raw = String(appt.status || '').toLowerCase();
         const target = DatabaseService.APPOINTMENT_STATUS_ALIASES[raw] || raw;
         const save = this.db.transaction(() => {
+            // Field edits land first in every branch, so check-in and the
+            // transition core both observe the final row (patient, slot).
+            this.applyAppointmentFields(appt, true);
             if (target === 'arrived') {
-                const checked = this.checkInCore(Number(appt.id), actingUserId);
-                this.applyAppointmentFields(appt, false);
-                return checked;
+                // ...then check-in re-reads the row: a reassigned
+                // patient_id queues the NEW patient, never the old one.
+                return this.checkInCore(Number(appt.id), actingUserId);
             }
             return this._transitionAppointment(Number(appt.id), target, {
                 reason: appt.status_reason, actorId: actingUserId ?? undefined,
@@ -3473,19 +3476,32 @@ export class DatabaseService {
             const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?')
                 .get(Number(appt.id)) as any;
             if (!row) throw new Error('Appointment not found.');
+            // Terminals never edit: rebook instead. History must stay final.
+            const state = String(row.status || '').toLowerCase();
+            if (['fulfilled', 'cancelled', 'no-show'].includes(state)) {
+                throw new Error(`Cannot edit a ${state} appointment.`);
+            }
             const dateMoved = appt.date !== undefined && String(appt.date) !== String(row.date);
             const timeMoved = appt.time !== undefined && String(appt.time) !== String(row.time);
+            const patientMoved = appt.patient_id !== undefined && Number(appt.patient_id) !== Number(row.patient_id);
+            const doctorMoved = appt.doctor_id !== undefined && Number(appt.doctor_id ?? null) !== Number(row.doctor_id ?? null);
             this.applyAppointmentFields(appt, true);
+            const notes: string[] = [];
             if (dateMoved || timeMoved) {
+                notes.push(`Rescheduled ${dateMoved ? `to ${appt.date}` : ''}${dateMoved && timeMoved ? ' ' : ''}${timeMoved ? `${appt.time}` : ''}`.trim() || 'Rescheduled');
+            }
+            // Reassignment is a silent rebook without this: who the slot
+            // belongs to changes, so it lands in history and audit too.
+            if (patientMoved) notes.push(`Reassigned to patient ${appt.patient_id}`);
+            if (doctorMoved) notes.push(`Reassigned to doctor ${appt.doctor_id ?? 'unassigned'}`);
+            if (notes.length > 0) {
                 const from = String(row.status || '').toLowerCase();
                 this.db.prepare(`INSERT INTO appointment_history
                     (appointment_id, from_status, to_status, reason, actor_id)
                     VALUES (?, ?, ?, ?, ?)`)
-                    .run(Number(appt.id), from, from,
-                        `Rescheduled ${dateMoved ? `to ${appt.date}` : ''}${dateMoved && timeMoved ? ' ' : ''}${timeMoved ? `${appt.time}` : ''}`.trim() || 'Rescheduled',
-                        actingUserId ?? null);
+                    .run(Number(appt.id), from, from, notes.join('; '), actingUserId ?? null);
                 this.logAudit('APPOINTMENT_RESCHEDULE', 'appointments', Number(appt.id),
-                    actingUserId ?? null, `Appointment rescheduled (still ${from})`);
+                    actingUserId ?? null, `Appointment edited (still ${from}): ${notes.join('; ')}`);
             }
             return { id: Number(appt.id) };
         });

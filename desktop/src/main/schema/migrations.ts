@@ -1589,7 +1589,7 @@ export const MIGRATIONS = [
                 db.exec(`UPDATE appointments SET original_time = time
                     WHERE original_time IS NULL OR original_time = ''`);
             } catch (e) { }
-            const appointmentMethods = ['getAppointments', 'saveAppointment', 'transitionAppointment', 'detectConflicts', 'checkInAppointment'];
+            const appointmentMethods = ['getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment'];
             grantRoleMethods(db, {
                 doctor: appointmentMethods,
                 receptionist: appointmentMethods,

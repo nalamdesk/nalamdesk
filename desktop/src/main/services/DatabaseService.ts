@@ -3551,26 +3551,48 @@ export class DatabaseService {
 
     /**
      * Idempotent check-in: confirmed -> arrived plus exactly one queue
-     * entry. Retries reuse the live entry instead of double-queueing.
+     * entry. The whole unit runs in one transaction, so a queue failure
+     * rolls the transition back instead of stranding an arrived booking.
+     * Retries repair: arrived-without-live-queue skips straight to
+     * queueing instead of attempting an illegal arrived -> arrived move.
+     * Concurrency: the Electron main process is single-threaded and
+     * better-sqlite3 is synchronous, so two check-ins cannot interleave
+     * mid-transaction; the re-read inside covers sequential retries.
      */
     checkInAppointment(id: number, actingUserId?: number) {
-        const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
-        if (!row) throw new Error('Appointment not found.');
-        if (row.queue_entry_id) {
-            const live = this.db.prepare(
-                `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
-                .get(Number(row.queue_entry_id)) as any;
-            if (live) return { appointmentId: Number(id), queueEntryId: Number(row.queue_entry_id), reused: true };
-        }
-        const moved = this.transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined });
-        const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
-        const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
-        this.db.prepare('UPDATE appointments SET queue_entry_id = ? WHERE id = ?').run(queueEntryId, Number(id));
-        return { appointmentId: Number(id), queueEntryId, reused: false, from: moved.from };
+        const checkIn = this.db.transaction(() => {
+            const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
+            if (!row) throw new Error('Appointment not found.');
+            if (row.queue_entry_id) {
+                const live = this.db.prepare(
+                    `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
+                    .get(Number(row.queue_entry_id)) as any;
+                if (live) return { appointmentId: Number(id), queueEntryId: Number(row.queue_entry_id), reused: true };
+            }
+            if (String(row.status || '').toLowerCase() !== 'arrived') {
+                this.transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined });
+            }
+            const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
+            const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
+            this.db.prepare('UPDATE appointments SET queue_entry_id = ? WHERE id = ?').run(queueEntryId, Number(id));
+            return { appointmentId: Number(id), queueEntryId, reused: false };
+        });
+        return checkIn();
     }
 
-    /** Link the visit an appointment produced (consult completion path). */
+    /**
+     * Link the visit an appointment produced (consult completion path).
+     * The visit must exist and belong to the appointment's patient --
+     * cross-patient linkage is rejected, not recorded.
+     */
     fulfillAppointment(id: number, visitId: number, actingUserId?: number) {
+        const row = this.db.prepare('SELECT id, patient_id, status FROM appointments WHERE id = ?').get(Number(id)) as any;
+        if (!row) throw new Error('Appointment not found.');
+        const visit = this.db.prepare('SELECT id, patient_id FROM visits WHERE id = ?').get(Number(visitId)) as any;
+        if (!visit) throw new Error('Visit not found.');
+        if (Number(visit.patient_id) !== Number(row.patient_id)) {
+            throw new Error('Visit belongs to another patient.');
+        }
         const moved = this.transitionAppointment(Number(id), 'fulfilled', { actorId: actingUserId ?? undefined });
         this.db.prepare('UPDATE appointments SET visit_id = ? WHERE id = ?').run(Number(visitId), Number(id));
         return { ...moved, visitId: Number(visitId) };

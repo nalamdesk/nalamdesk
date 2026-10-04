@@ -355,6 +355,34 @@ describe('DatabaseService', () => {
             });
             expect(service.checkInAppointment(1, 9)).toMatchObject({ queueEntryId: 9, reused: true });
         });
+
+        it('repairs arrived-without-queue instead of failing the retry', () => {
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3, date: '2026-10-05', time: '10:00' },
+                'FROM patient_queue WHERE patient_id': null
+            });
+            const repaired = service.checkInAppointment(1, 9);
+            expect(repaired.queueEntryId).toBe(7);
+            expect(repaired.reused).toBe(false);
+        });
+
+        it('links only same-patient visits on fulfill', () => {
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3 },
+                'FROM visits WHERE id': { id: 50, patient_id: 3 }
+            });
+            expect(service.fulfillAppointment(1, 50, 9)).toMatchObject({ to: 'fulfilled', visitId: 50 });
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3 },
+                'FROM visits WHERE id': { id: 51, patient_id: 4 }
+            });
+            expect(() => service.fulfillAppointment(1, 51, 9)).toThrow('another patient');
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3 },
+                'FROM visits WHERE id': null
+            });
+            expect(() => service.fulfillAppointment(1, 52, 9)).toThrow('Visit not found');
+        });
     });
 
     describe('Queue Management', () => {

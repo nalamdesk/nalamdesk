@@ -902,7 +902,7 @@ describe('Database Migrations', () => {
                 return { run: (perms: string, name: string) => { writes[name] = perms; } };
             });
             MIGRATIONS.find((m) => m.version === 42)!.up(mockDb);
-            for (const method of ['transitionAppointment', 'detectConflicts', 'checkInAppointment']) {
+            for (const method of ['transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment']) {
                 expect(JSON.parse(writes['doctor'])).toContain(method);
                 expect(JSON.parse(writes['receptionist'])).toContain(method);
             }

@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkdocumentation=self.webpackChunkdocumentation||[]).push([["1833"],{5513(e){e.exports=JSON.parse('{"title":"Recent posts","items":[{"title":"Welcome to NalamDesk Docs","permalink":"/nalamdesk/blog/welcome","unlisted":false,"date":"2019-05-28T00:00:00.000Z"}]}')}}]);

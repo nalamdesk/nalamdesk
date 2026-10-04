@@ -371,6 +371,22 @@ describe('DatabaseService', () => {
             expect(sql).toContain('INSERT INTO appointment_history');
         });
 
+        it('blocks reassignment under a live queue entry', () => {
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3, queue_entry_id: 9 },
+                'FROM patient_queue WHERE id': { id: 9 }
+            });
+            expect(() => service.saveAppointment({ id: 1, patient_id: 7 }, 9))
+                .toThrow('live queue entry');
+        });
+
+        it('rejects malformed slot inputs without matching', () => {
+            keyDb({ 'FROM appointments WHERE': [] });
+            expect(service.detectConflicts({ date: '2026-10-05', time: '99:99' })).toEqual([]);
+            expect(service.detectConflicts({ date: 'not-a-date', time: '10:00' })).toEqual([]);
+            expect(service.detectConflicts({ date: '2026-10-05', time: '10:00' })).toEqual([]);
+        });
+
         it('stamps originals on first reschedule only', () => {
             keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', date: '2026-10-05', time: '10:00', original_date: null } });
             service.transitionAppointment(1, 'confirmed', { date: '2026-10-06', time: '11:00' } as any);

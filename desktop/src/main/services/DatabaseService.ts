@@ -3485,6 +3485,18 @@ export class DatabaseService {
             const timeMoved = appt.time !== undefined && String(appt.time) !== String(row.time);
             const patientMoved = appt.patient_id !== undefined && Number(appt.patient_id) !== Number(row.patient_id);
             const doctorMoved = appt.doctor_id !== undefined && Number(appt.doctor_id ?? null) !== Number(row.doctor_id ?? null);
+            // Reassigning under a live queue entry would strand the queue row
+            // on the old patient while the booking points at the new one:
+            // cancel and rebook instead. The reuse check in check-in can
+            // otherwise hand back another patient's live entry.
+            if (patientMoved && row.queue_entry_id) {
+                const live = this.db.prepare(
+                    `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
+                    .get(Number(row.queue_entry_id)) as any;
+                if (live) {
+                    throw new Error('Cannot reassign an appointment with a live queue entry. Cancel and rebook instead.');
+                }
+            }
             this.applyAppointmentFields(appt, true);
             const notes: string[] = [];
             if (dateMoved || timeMoved) {
@@ -3664,13 +3676,14 @@ export class DatabaseService {
     detectConflicts(input: { doctorId?: number; date?: string; time?: string; excludeId?: number }) {
         const date = String(input?.date || '').slice(0, 10);
         const time = String(input?.time || '').slice(0, 5);
-        if (!date || !time) return [];
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
         const [h, m] = time.split(':').map(Number);
-        if (!Number.isInteger(h) || !Number.isInteger(m)) return [];
+        if (!Number.isInteger(h) || !Number.isInteger(m) || h < 0 || h > 23 || m < 0 || m > 59) return [];
         const startMin = h * 60 + m;
         const endMin = startMin + 30;
         const toMin = (t: string) => {
             const [th, tm] = String(t || '').slice(0, 5).split(':').map(Number);
+            if (!Number.isInteger(th) || !Number.isInteger(tm)) return NaN;
             return th * 60 + tm;
         };
         const filters = [`date = ?`, `status NOT IN ('fulfilled','cancelled','no-show')`];

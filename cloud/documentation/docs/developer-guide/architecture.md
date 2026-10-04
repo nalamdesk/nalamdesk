@@ -28,12 +28,19 @@ NalamDesk uses a secure, local-first hybrid desktop architecture designed for re
     - Authenticated desktop session (`SessionService`); `auth:logout` clears the principal.
 
 ### 2. Local API Server (Fastify)
-- **Entry Point**: `src/main/server.ts`
+- **Entry Point**: `src/server/app.ts` (bootstrapped via `src/server/bootstrap.ts`, served by `src/server/index.ts`; built with `tsconfig.server.json`)
 - **Port**: `3000` (Localhost)
 - **Role**: Validates requests and proxies them to the `DatabaseService`.
 - **Security**:
     - **JWT Authentication**: Validates tokens on protected routes.
-    - **IP Restriction**: Admin login is restricted to local IP (`127.0.0.1` or `::1`) to prevent network-based attacks.
+    - **IP Restriction**: With `STRICT_ADMIN_IP=true`, admin login is
+      restricted to local IP (`127.0.0.1` or `::1`) to prevent
+      network-based attacks. The server otherwise listens on all
+      interfaces (`0.0.0.0:3000`); the header shows the LAN URL for
+      clinic devices.
+- **Renderer access**: the Angular app reaches the main process through a
+  preload IPC bridge (`src/main/preload.ts`); the local API additionally
+  serves LAN consumers with token + RBAC checks.
 
 ### 3. Database Layer
 - **Service**: `src/main/services/DatabaseService.ts`
@@ -61,14 +68,23 @@ NalamDesk uses **Argon2**, a memory-hard password hashing algorithm, to store us
 - **Implementation**: `src/main/services/DatabaseService.ts` -> `saveUser` / `validateUser`.
 
 ### Role-Based Access Control (RBAC)
-Access control is enforced at the API level in `server.ts`.
+Access control is enforced at the API layer, with a shared permission
+model in `src/shared/access.ts` (built-in roles `admin`, `doctor`,
+`nurse`, `receptionist`; Cedar policy checks behind handler-gated
+clinical actions) and a permission-conformance spec at
+`src/server/access-conformance.spec.ts`.
 
 | Role | Permissions |
 | :--- | :--- |
-| **Admin** | **Full Access**. User management, Clinic Settings, Backup/Restore. |
-| **Doctor** | Responsible licensed practitioner. Clinical Encounters, Prescriptions, Queue Triage, Vitals. |
-| **Receptionist** | Patient Registration, Queue Management & Triage, Vitals. |
-| **Nurse** | Patient Vitals, Queue Triage & Monitoring. |
+| **Admin** | **Full Access**. User management, custom roles and per-user overrides, Clinic Settings, Backup/Restore. Acts as scribe in consults (must pick the responsible doctor). |
+| **Doctor** | Responsible licensed practitioner. Clinical Encounters, Prescriptions, Queue Triage, Vitals, Chart Merge, Billing. |
+| **Receptionist** | Patient Registration, Queue Management & Triage, Vitals, Billing & Day Close, Chart Archive. No safety-data edits, no merges. |
+| **Nurse** | Patient Vitals, Queue Triage & Monitoring. No queue removal, no billing, no merges. |
+
+Settings routes additionally require `admin` (`adminGuard` redirects
+everyone else to the dashboard). Handler-gated actions (consult
+finalization, merges) reject non-qualifying roles even when a custom
+role or override would otherwise permit them.
 
 ## Clinical Safety & Governance Architecture
 

@@ -1,81 +1,123 @@
 ---
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 # Clinic Operations
 
-This guide covers the daily workflows for Receptionists and Doctors.
+Daily workflows for receptionists, nurses, and doctors: registration, queue
+and triage, vitals, and consultations. Everything below works offline.
 
 ## Patient Registration (Receptionist)
+
 1. Navigate to **Patients**.
-2. Click **+ New Patient**.
-3. Enter details: **Name**, **Age/Gender**, **Mobile Number**.
-4. The form warns about possible existing records (matched by name, mobile,
-   or MRN) without blocking you. Open the candidate chart first if unsure.
-5. Click **Save**.
+2. Click **Add Patient**.
+3. Enter details. Required: **Name** (at least 3 characters), **Mobile**
+   (10 digits), **Age** (0–110), **Gender** (Male, Female, Other, Unknown).
+   Optional, under collapsed sections: blood group, email, street address,
+   city, state, 6-digit PIN code, emergency contact, and insurance details.
+4. **Date of birth**: pick a date and age fills in automatically, or type
+   the age directly and mark DOB as estimated.
+5. Every patient gets an **MRN** (medical record number, `ND-000001`
+   style) automatically. Use it to identify charts precisely.
+6. The form warns about **Possible existing records** (matched by MRN,
+   name + birth date, name, or phone) without blocking you. Click **Open**
+   on a candidate to check its chart before saving a duplicate.
+7. Choose how to finish:
+   - **Save only**: registers the chart and stays on the list.
+   - **Save & Add to Queue**: registers and walks the patient into
+     today's queue at Routine priority in one step.
 
 If a duplicate slips through, merge the charts later instead of deleting
 one. See [Merging Duplicate Charts](./patient-merge.md).
 
 ## Managing the Queue
-The **Queue** is the heart of the clinic's flow, supporting actionable urgency triage and abnormal vitals indicators.
+
+The **Queue** orders patients by clinical urgency first, then check-in
+time. The dashboard can start the next consultation in that order.
 
 ### 4-Tier Urgency Levels
-Patients in the queue are categorized into 4 clinical urgency levels:
-- 🔴 **Immediate** (Priority 4): Critical conditions requiring instant physician attention (e.g., severe chest pain, acute respiratory distress, severe trauma).
-- 🟠 **Urgent** (Priority 3): Serious conditions requiring prompt care (e.g., high fever, severe asthma exacerbation).
-- 🟡 **Priority** (Priority 2): Elevated concern, scheduled next before routine visits (e.g., persistent vomiting, uncontrolled hypertension).
-- ⚪ **Routine** (Priority 1): Standard consultations and general follow-ups.
 
-### Adding Patient to Queue
-1. From the **Patient List**, click the **Add to Queue** icon next to a patient.
-2. Select the Urgency tier: **Immediate**, **Urgent**, **Priority**, or **Routine**.
-3. The patient will appear in the **Waiting** list sorted strictly by clinical urgency first, then arrival time.
+| Tier | UI label | Badge |
+| :--- | :--- | :--- |
+| Immediate (priority 4) | Immediate (Red) | Red, pulsing |
+| Urgent (priority 3) | Urgent (Orange) | Amber |
+| Priority (priority 2) | Priority (Yellow) | Blue |
+| Routine (priority 1) | Routine (Green) | Gray |
+
+New registrations enter at Routine unless triaged otherwise.
+
+### Queue Actions
+
+Each row offers **Start / Resume Consult** plus a menu with **Triage
+reassessment**, **Record vitals**, and **Remove from queue**. Nurses see
+no Remove action. Removing asks for a reason (optional).
 
 ### Reassessing Urgency & Triage Audit Trail
+
 If a waiting patient's condition changes:
-1. Click the **Triage Badge** or **Reassess** button on the queue entry card.
+
+1. Open **Triage reassessment** on the queue entry.
 2. Select the revised urgency level.
-3. Enter the mandatory clinical justification (e.g., "Patient reports worsening dizziness while waiting").
-4. Click **Update Triage Urgency**. The change is recorded in the permanent triage history audit trail.
+3. Enter the mandatory **clinical reason**. The Update button stays
+   disabled until you do.
+4. Confirm. The change lands in the permanent triage history with the
+   previous tier, new tier, reason, and your name.
 
 ### Recording Vitals (Dual-Unit Vitals Engine)
-Staff (nurse, receptionist, or doctor) can record vitals for any patient waiting in the queue or during consultation:
-1. Click the **Record Vitals** (heartbeat) icon on the patient card in the Queue or consultation chart.
-2. Enter clinical observations:
-   - **Blood Pressure**: Both Systolic and Diastolic must be entered together, with Systolic strictly greater than Diastolic (e.g., 120/80 mmHg).
-   - **Pulse**: Heart rate in beats per minute (30–250 bpm).
-   - **Temperature**: Toggle between **°F** and **°C**. Input values are automatically converted and canonically standardized.
-   - **Weight**: Toggle between **kg** and **lbs**.
-   - **Height**: In cm; BMI is automatically calculated dynamically.
-   - **Oxygen Saturation (SpO2)**: In percentage (50–100%).
-   - **Respiratory Rate**: In breaths per minute.
-3. **Abnormal Vitals Alerts**: The system automatically analyzes vitals against standard ranges. Abnormal readings trigger an orange alert badge directly on the Queue card to signal urgent attention.
-4. Click **Save Vitals**.
 
-## Patient Longitudinal Clinical Profile (Receptionist & Doctor)
-From **Patients -> Patient Details**, clinicians can manage the patient's complete longitudinal clinical history across tabs:
-- **Visits**: Historical consultation notes, diagnoses, and prescriptions.
-- **Allergies / Intolerances**: Document drug, food, or environmental allergies with substance name, criticality (Low/High/Life Threatening), severity, and reaction manifestation (e.g., Anaphylaxis, Urticaria).
-- **Active Problem List (Conditions)**: Track chronic and active conditions with ICD-10 codes, onset dates, and clinical status.
-- **Current Medications**: Maintain active prescriptions and long-term regimens. Prescriptions written in consultations automatically sync to this active list.
+Record vitals for any patient from the queue row or inside the
+consultation. The form needs at least one measurement:
+
+- **Blood Pressure**: systolic and diastolic together; systolic must be
+  strictly greater than diastolic.
+- **Pulse**: 30–250 bpm. **SpO2**: 50–100 %. **Respiratory rate**:
+  8–60 per minute. **Height**: 20–300 cm.
+- **Temperature**: toggle °F (50–115) / °C (10–46.2). **Weight**:
+  toggle kg (0.5–500) / lbs (1.1–1100). Switching units converts the
+  typed value; the record keeps what you entered plus the standard unit
+  code.
+- **BMI** calculates automatically from height and weight.
+- **Effective time**: when the measurement was taken (defaults to now).
+- **Amendments**: correcting saved vitals creates a new version linked
+  to the old one with your amendment reason. History is never edited
+  in place.
+
+Readings outside clinical thresholds raise a red **Abnormal Vitals**
+badge on the queue row, with the details behind it.
 
 ## Consultation (Doctor)
-1. Go to **Queue** or **Dashboard**.
-2. Click on a patient in the **Waiting** or **In-Consult** list.
-3. **Patient Safety Context Banner**:
-   - Displays prominent safety indicators at the top of the chart: active allergy count, active problem list, and current medications.
-   - Displays a green "✓ No Known Allergies" badge if clear, or a high-visibility red alert if allergies exist.
-4. **Vitals**:
-   - Vitals recorded during queue triage automatically appear in the patient snapshot pill and can be auto-filled into Objective notes.
-   - Click **Edit Vitals** to amend measurements with audit history.
-5. **Diagnosis & SOAP Notes**: Enter subjective complaints, objective exam, and assessment diagnosis.
-6. **Prescription & Allergy Conflict Interceptor**: 
-   - Add medicines (Name, Dosage, Frequency, Duration).
-   - **Allergy Conflict Alert**: If a prescribed medication matches a patient's documented active allergy, the system intercepts the save and displays a critical warning dialog with the conflicting substance and risk level.
-   - The doctor must either modify the prescription or acknowledge the alert by entering an explicit **Clinical Override Reason** (e.g., "Graded dose, patient tolerated previously") to proceed.
-7. **Complete Consultation**:
-   - Signing the encounter stamps the responsible doctor's license snapshot and marks the visit completed.
-   - Prescriptions automatically update the patient's active medication list.
-   - Only a finished encounter can be billed. See [Daily Collection](./daily-collection.md).
 
+Doctors and admins open consults; an admin acts as scribe and must pick
+the responsible doctor. Only a `doctor` account finalizes encounters.
+
+1. Go to **Queue** or **Dashboard** and open a Waiting or In-Consult
+   patient.
+2. **Patient Safety Context Banner**: allergy count, active problems,
+   and current medications across the top. A green **No Known
+   Allergies** badge when clear, a red alert with a High Risk flag for
+   life-threatening allergies.
+3. **Vitals pill**: latest BP, pulse, temperature, SpO2, with an
+   Amended tag when corrected. Record or edit from here.
+4. **Subjective / Objective / Assessment / Plan**: symptoms, examination
+   notes, diagnosis (**required**, Provisional or Final, picked from
+   the clinic condition catalog with Add-new), then the prescription.
+5. **Prescription pad**: medicine typeahead from the clinic catalog,
+   form (Tab, Cap, Syrup, Injection, Ointment, Drop), dose, route
+   (Oral, IV, IM, SC, Topical), frequency (1-0-1, 1-1-1, SOS, STAT…),
+   duration, and instruction (After/Before Food…). Picking a diagnosis
+   with a configured preset fills suggested lines you can edit first.
+6. **Allergy Conflict Interceptor**: a prescribed drug matching an
+   active allergy stops the save with the substance, criticality, and
+   reaction on screen. Change the drug, or type an explicit **clinical
+   override reason** to proceed. The reason is stored on the visit.
+7. **Total Fee (₹)**: consultation charge for this visit.
+8. Footer actions: **Save Progress** (stay and continue later),
+   **Finish & Exit**, **Finish & Next** (close and open the next
+   waiting patient), **Postpone**, **Print**, and **Download PDF** in
+   view mode. **Copy to Current** pulls a previous visit's content
+   forward for editing.
+9. **Complete Consultation**: signing stamps the responsible doctor's
+   name, license number, and specialty onto the visit, marks it
+   finished, and syncs prescribed medicines into the active medication
+   list. Only a finished encounter can be billed (see
+   [Daily Collection](./daily-collection.md)).

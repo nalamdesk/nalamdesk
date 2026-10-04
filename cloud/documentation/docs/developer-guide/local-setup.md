@@ -8,7 +8,7 @@ This guide describes how to set up the NalamDesk development environment.
 
 ## Prerequisites
 
-- **Node.js**: Version 18 or higher.
+- **Node.js**: Version 22.5 or higher (`engines` in `desktop/package.json`).
 - **npm**: Included with Node.js.
 - **Git**: For version control.
 
@@ -29,13 +29,13 @@ This guide describes how to set up the NalamDesk development environment.
 
 3.  **Install Application Dependencies:**
     
-    The application uses Electron, Angular, and native modules (better-sqlite3, argon2).
+    The application uses Electron, Angular, and native modules (`better-sqlite3-multiple-ciphers`, `argon2`). The UI stack is Angular 17 with TailwindCSS and daisyUI.
     
     *   **Windows**: Requires [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (Desktop development with C++) and Python 3.
     *   **macOS**: Requires Xcode Command Line Tools (`xcode-select --install`) and Python 3.
     *   **Linux**: Requires `build-essential` and Python 3.
 
-    `npm install` will automatically attempt to build these. `npm run postinstall` can be run manually if automatic scripts are disabled.
+    `npm install` inside `desktop/` triggers `electron-builder install-app-deps` (`postinstall`) to recompile native modules for Electron. `npm run postinstall` can be run manually if automatic scripts are disabled.
     ```bash
     npm run postinstall
     ```

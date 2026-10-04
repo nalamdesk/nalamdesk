@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 ---
 
 # Merging Duplicate Charts
@@ -41,3 +41,11 @@ A merged-away chart shows an **Unmerge** button. Confirming moves its
 history back and clears the merge link. The merge itself stays in the
 audit trail permanently: unmerging reverses the data, never the record
 that it happened.
+
+## Archiving vs Merging
+
+Archiving is for charts that should leave the active list without
+losing history (moved away, deceased, entered in error and replaced).
+Admins, doctors, and receptionists can archive a chart with a recorded
+reason; unarchiving restores it. Archive when the chart itself is
+unwanted; merge when two charts describe the same person.

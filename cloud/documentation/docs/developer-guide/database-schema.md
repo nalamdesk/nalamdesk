@@ -4,7 +4,11 @@ sidebar_position: 2
 
 # Database Schema
 
-NalamDesk uses a relational SQLite database. Below is the schema definition for core tables.
+NalamDesk uses a relational SQLite database (SQLCipher-encrypted via
+`better-sqlite3-multiple-ciphers`). Schema evolves through ordered
+migrations in `desktop/src/main/schema/migrations.ts` (currently **v39**,
+with a spec asserting each step in `migrations.spec.ts`). Below is the
+schema definition for core tables.
 
 ## Users Table
 Stores credentials and profile information for all system users (Doctors, Staff, Admin).
@@ -19,6 +23,12 @@ Stores credentials and profile information for all system users (Doctors, Staff,
 | `specialty` | TEXT | Doctor's specialty (e.g., General Physician). |
 | `license_number` | TEXT | Medical license number. |
 | `active` | INTEGER | `1` for active, `0` for soft-delete. |
+| `mobile`, `email` | TEXT | Contact details (mobile is 10 digits in the UI). |
+| `abdm_hpr_id` | TEXT | Doctor's ABDM Health Professional Registry ID (optional). |
+
+Custom roles live in `roles`; per-user permission grants/forbids in
+`user_permission_overrides` (Migrations v32–v33 seed the grant tables;
+v31 adds the overrides table).
 
 ## Patients Table
 Core patient registry.
@@ -30,8 +40,13 @@ Core patient registry.
 | `name` | TEXT | Patient Name. |
 | `mobile` | TEXT | Contact Number. |
 | `date_of_birth` | DATE | Date of Birth (ISO format YYYY-MM-DD). Age is calculated dynamically. |
-| `gender` | TEXT | `Male`, `Female`, `Other`. |
+| `gender` | TEXT | `Male`, `Female`, `Other` (`Unknown` also accepted in the UI). |
 | `address` | TEXT | Residential address. |
+| `mrn` | TEXT UNIQUE | Auto-assigned medical record number (`ND-000001` style; prefix configurable via `settings.mrn_prefix`). Added in Migration v35. |
+| `dob_estimated` | INTEGER | `1` when age was typed directly instead of picked from a birth date. Added in Migration v35. |
+| `merged_into` | INTEGER NULL | Points at the surviving chart after a merge; cleared on unmerge. Added in Migration v35. |
+| `active` | INTEGER | `1` normally, `0` for archived charts. Added in Migration v38. |
+| `archive_reason` | TEXT | Recorded reason for archiving. Added in Migration v38. |
 
 ## Visits Table
 Records clinical encounters.
@@ -135,6 +150,59 @@ Clinic-local medicines with optional default Rx fields (`form`, `dosage`, `route
 
 ## Condition medicine presets
 Ordered default Rx lines for a condition (`condition_id`, `sort_order`, optional `medicine_id`, plus snapshot columns matching `PrescriptionItem`). Applied into the editable Rx list on diagnosis pick.
+
+## Patient Identifiers Registry (Migration v39)
+
+One chart can carry several identifiers at once: clinic MRN, ABHA
+number / address, insurance, and free-form ids. `patients.mrn` and
+`abha_address` stay as fast-path columns; `patient_identifiers` is the
+extensible registry (`system`, `type_code`, `value`, `is_primary`),
+unique per (`system`, `value`). `patients.abha_number` holds the
+nationally-unique ABHA number (unique where present). Registry reads
+and writes are granted to doctors, receptionists, and admins.
+
+## Billing Ledger (Migration v37)
+
+Immutable money trail: invoices with charge lines, payments as append-only
+rows, corrections through reversals — never edits.
+
+- **`invoices`**: unique `number`, `visit_id`, `patient_id`, `total`
+  (computed from lines), `status`, plus discount/tax. Created only for
+  finished visits; the clinic `consultation_fee` setting prepends the
+  first line when non-zero.
+- **`invoice_items`**: one row per charge line (`description`,
+  `quantity`, `rate`, `amount`).
+- **`payments`**: unique `receipt_no`, `invoice_id`, `kind`
+  (`payment` or `reversal`), `amount`, `method` (`cash`, `upi`,
+  `card`), `reference`, `reason`, idempotency key. Refunds insert
+  reversal rows; voids cancel invoices with a reason and are blocked
+  while payments are outstanding.
+
+The day-close report (`getDailyClose`) derives collected totals,
+by-method breakdowns, and the review queue purely from these rows.
+
+## Patient Merge Ledger (Migration v36)
+
+- **`patient_merges`**: one row per merge (`survivor_id`,
+  `duplicate_id`, audited `reason`), reversible via unmerge.
+- **`patient_merge_items`**: every moved row (`table`, id column, row
+  id) so unmerge restores exact placement. Hard stops: active
+  in-progress encounters on either chart, or conflicting health IDs.
+
+## Record Lifecycle (Migration v38)
+
+Charts archive instead of deleting: `patients.active` plus
+`archive_reason`, with `archivePatient` / `unarchivePatient` flows.
+Visit corrections record `correction_reason` rather than rewriting
+history.
+
+## Settings Keys
+
+Beyond clinic details, `settings` carries the backup schedule
+(`backup_schedule`, default `13:00`), the Drive upload schedule
+(`cloud_backup_schedule`), the receipt/invoice consultation fee
+(`consultation_fee`, default `0`), and the MRN prefix (`mrn_prefix`,
+default `ND`).
 
 ## Patient Queue Table
 Manages the daily patient flow with actionable triage urgency levels.

@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: sankara-sabapathy/openreview@93fa82502077389b0252176d229da6fa5e916b41 # v0.11.0: exact SHA, tags are mutable
+      - uses: sankara-sabapathy/openreview@v1 # tracks latest release (moved per release; see openreview AGENTS.md invariant 4)
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           opencode-api-key: ${{ secrets.OPENCODE_API_KEY }}

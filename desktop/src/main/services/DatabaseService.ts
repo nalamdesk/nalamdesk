@@ -3760,8 +3760,9 @@ export class DatabaseService {
      */
     fulfillAppointment(id: number, visitId: number, actingUserId?: number) {
         const fulfill = this.db.transaction(() => {
-            const row = this.db.prepare('SELECT id, patient_id, status FROM appointments WHERE id = ?').get(Number(id)) as any;
+            const row = this.db.prepare('SELECT id, patient_id, status, doctor_id FROM appointments WHERE id = ?').get(Number(id)) as any;
             if (!row) throw new Error('Appointment not found.');
+            this.assertFulfillDoctor(row, actingUserId);
             const visit = this.db.prepare('SELECT id, patient_id FROM visits WHERE id = ?').get(Number(visitId)) as any;
             if (!visit) throw new Error('Visit not found.');
             if (Number(visit.patient_id) !== Number(row.patient_id)) {
@@ -3772,6 +3773,20 @@ export class DatabaseService {
             return { ...moved, visitId: Number(visitId) };
         });
         return fulfill();
+    }
+
+    /**
+     * Practitioner binding for fulfillment: when the booking names a
+     * doctor, only that doctor (or an admin overriding) may close it.
+     * Anyone else gets a named rejection, not a silent link.
+     */
+    private assertFulfillDoctor(row: any, actingUserId?: number) {
+        if (row?.doctor_id == null || actingUserId == null) return;
+        const actor = this.db.prepare('SELECT role FROM users WHERE id = ?').get(Number(actingUserId)) as any;
+        if (!actor || actor.role === 'admin') return;
+        if (Number(row.doctor_id) !== Number(actingUserId)) {
+            throw new Error('Only the assigned doctor (or an admin) can fulfill this appointment.');
+        }
     }
 
     searchConditions(query?: string, limit?: number) {

@@ -1545,6 +1545,57 @@ export const MIGRATIONS = [
                     WHERE standards_mode IS NULL OR standards_mode = ''`);
             } catch (e) { /* partial DBs (migration-compat tests) may lack settings */ }
         }
+    },
+    {
+        version: 42,
+        up: (db: any) => {
+            console.log('Running Migration v42 (appointment lifecycle)...');
+            // Lifecycle columns on the existing bookings table: reasoned
+            // terminals, preserved originals, practitioner, and links to
+            // the queue entry and visit an appointment produces.
+            const cols = [
+                'status_reason TEXT', 'original_date TEXT', 'original_time TEXT',
+                'doctor_id INTEGER', 'queue_entry_id INTEGER', 'visit_id INTEGER'
+            ];
+            for (const col of cols) {
+                try { db.exec(`ALTER TABLE appointments ADD COLUMN ${col}`); } catch (e) { }
+            }
+            // Append-only history: every transition with actor and reason.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS appointment_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    appointment_id INTEGER NOT NULL REFERENCES appointments(id),
+                    from_status TEXT,
+                    to_status TEXT NOT NULL,
+                    reason TEXT,
+                    actor_id INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_appointment_history_appointment
+                ON appointment_history(appointment_id);`);
+            // Normalize the legacy uppercase statuses into the lifecycle set.
+            const legacy: Record<string, string> = {
+                CONFIRMED: 'confirmed', CHECKED_IN: 'arrived',
+                CANCELLED: 'cancelled', COMPLETED: 'fulfilled'
+            };
+            for (const [from, to] of Object.entries(legacy)) {
+                try { db.exec(`UPDATE appointments SET status = '${to}' WHERE status = '${from}'`); } catch (e) { }
+            }
+            // Backfill originals where the booking was never rescheduled.
+            try {
+                db.exec(`UPDATE appointments SET original_date = date
+                    WHERE original_date IS NULL OR original_date = ''`);
+                db.exec(`UPDATE appointments SET original_time = time
+                    WHERE original_time IS NULL OR original_time = ''`);
+            } catch (e) { }
+            const appointmentMethods = ['getAppointments', 'saveAppointment', 'transitionAppointment', 'detectConflicts', 'checkInAppointment'];
+            grantRoleMethods(db, {
+                doctor: appointmentMethods,
+                receptionist: appointmentMethods,
+                admin: appointmentMethods
+            });
+        }
     }
 ];
 

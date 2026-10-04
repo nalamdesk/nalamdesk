@@ -275,6 +275,88 @@ describe('DatabaseService', () => {
         });
     });
 
+    describe('Appointment Lifecycle', () => {
+        function keyDb(rows: Record<string, any>) {
+            mockDb.prepare.mockImplementation((sql: string) => ({
+                get: (...args: any[]) => {
+                    for (const [key, value] of Object.entries(rows)) {
+                        if (sql.includes(key)) return typeof value === 'function' ? value(...args) : value;
+                    }
+                    return null;
+                },
+                all: (...args: any[]) => {
+                    for (const [key, value] of Object.entries(rows)) {
+                        if (sql.includes(key)) return typeof value === 'function' ? value(...args) : value;
+                    }
+                    return [];
+                },
+                run: vi.fn().mockReturnValue({ lastInsertRowid: 7, changes: 1 })
+            }));
+        }
+
+        it('moves bookings through allowed transitions with history and audit', () => {
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', date: '2026-10-05', time: '10:00' } });
+            const moved = service.transitionAppointment(1, 'confirmed', { actorId: 9 });
+            expect(moved).toMatchObject({ id: 1, from: 'booked', to: 'confirmed' });
+            const sql = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
+            expect(sql).toContain('INSERT INTO appointment_history');
+            expect(sql).toContain('INSERT INTO audit_logs');
+        });
+
+        it('rejects illegal jumps, unknown states, and reasonless terminals', () => {
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', date: '2026-10-05', time: '10:00' } });
+            expect(() => service.transitionAppointment(1, 'fulfilled')).toThrow('Cannot move');
+            expect(() => service.transitionAppointment(1, 'teleported')).toThrow('Unknown appointment status');
+            expect(() => service.transitionAppointment(1, 'cancelled')).toThrow('reason is required');
+            keyDb({ 'FROM appointments WHERE id': null });
+            expect(() => service.transitionAppointment(99, 'confirmed')).toThrow('not found');
+        });
+
+        it('never reopens terminals', () => {
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'fulfilled', date: '2026-10-05', time: '10:00' } });
+            expect(() => service.transitionAppointment(1, 'booked')).toThrow('Cannot move');
+        });
+
+        it('stamps originals on first reschedule only', () => {
+            keyDb({ 'FROM appointments WHERE id': { id: 1, status: 'booked', date: '2026-10-05', time: '10:00', original_date: null } });
+            service.transitionAppointment(1, 'confirmed', { date: '2026-10-06', time: '11:00' } as any);
+            const update = mockDb.prepare.mock.calls.map((c: any) => c[0]).find((s: string) => s.startsWith('UPDATE appointments SET'));
+            expect(update).toContain('original_date');
+        });
+
+        it('detects same-doctor overlaps and ignores terminals', () => {
+            keyDb({
+                // As the real query would: terminals already filtered in SQL.
+                'FROM appointments WHERE': [
+                    { id: 2, time: '10:15', status: 'confirmed' },
+                    { id: 3, time: '11:30', status: 'confirmed' }
+                ]
+            });
+            const hits = service.detectConflicts({ doctorId: 5, date: '2026-10-05', time: '10:00' });
+            expect(hits.map((h: any) => h.id)).toEqual([2]);
+            expect(hits[0]).toMatchObject({ time: '10:15', status: 'confirmed' });
+            const sql = mockDb.prepare.mock.calls.map((c: any) => c[0]).join('\n');
+            expect(sql).toContain("status NOT IN ('fulfilled','cancelled','no-show')");
+        });
+
+        it('checks in once and reuses the live queue entry', () => {
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'confirmed', patient_id: 3, date: '2026-10-05', time: '10:00' },
+                'FROM patient_queue WHERE id': { id: 9 },
+                'FROM patient_queue WHERE patient_id': null
+            });
+            // Spy addToQueue through the real method with queue-entry preset
+            const first = service.checkInAppointment(1, 9);
+            expect(first.queueEntryId).toBe(7);
+            expect(first.reused).toBe(false);
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3, queue_entry_id: 9 },
+                'FROM patient_queue WHERE id': { id: 9 }
+            });
+            expect(service.checkInAppointment(1, 9)).toMatchObject({ queueEntryId: 9, reused: true });
+        });
+    });
+
     describe('Queue Management', () => {
         it('should add patient to queue', () => {
             mockStatement.get.mockReturnValue(null); // Not already in queue

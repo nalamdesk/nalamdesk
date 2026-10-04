@@ -3436,6 +3436,146 @@ export class DatabaseService {
         }
     }
 
+    /**
+     * Appointment lifecycle (issue #19): reasoned states with append-only
+     * history. Terminals (fulfilled/cancelled/no-show) never reopen --
+     * rebook instead, so history never lies.
+     */
+    static readonly APPOINTMENT_STATUSES = [
+        'proposed', 'booked', 'confirmed', 'arrived', 'fulfilled', 'cancelled', 'no-show'
+    ];
+
+    private static readonly APPOINTMENT_TRANSITIONS: Record<string, string[]> = {
+        proposed: ['booked', 'cancelled'],
+        booked: ['confirmed', 'cancelled'],
+        confirmed: ['arrived', 'cancelled', 'no-show'],
+        arrived: ['fulfilled', 'cancelled', 'no-show'],
+        fulfilled: [],
+        cancelled: [],
+        'no-show': []
+    };
+
+    transitionAppointment(id: number, to: string, input?: { reason?: string; actorId?: number }) {
+        const target = String(to || '').toLowerCase();
+        if (!DatabaseService.APPOINTMENT_STATUSES.includes(target)) {
+            throw new Error(`Unknown appointment status: ${to}.`);
+        }
+        const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
+        if (!row) throw new Error('Appointment not found.');
+        const from = String(row.status || '').toLowerCase();
+        const allowed = DatabaseService.APPOINTMENT_TRANSITIONS[from] || [];
+        if (!allowed.includes(target)) {
+            throw new Error(`Cannot move appointment from ${from || 'unknown'} to ${target}.`);
+        }
+        const reason = String(input?.reason || '').trim();
+        if ((target === 'cancelled' || target === 'no-show') && !reason) {
+            throw new Error('A reason is required to cancel or mark no-show.');
+        }
+        const actorId = input?.actorId != null ? Number(input.actorId) : null;
+        const updates: string[] = ['status = ?'];
+        const params: unknown[] = [target];
+        // First reschedule stamps the originals; later moves keep them.
+        if (input && typeof (input as any).date === 'string' && (input as any).date !== row.date) {
+            updates.push('date = ?');
+            params.push((input as any).date);
+            if (!row.original_date) {
+                updates.push('original_date = ?');
+                params.push(row.date);
+            }
+        }
+        if (input && typeof (input as any).time === 'string' && (input as any).time !== row.time) {
+            updates.push('time = ?');
+            params.push((input as any).time);
+            if (!row.original_time) {
+                updates.push('original_time = ?');
+                params.push(row.time);
+            }
+        }
+        if (target === 'cancelled' || target === 'no-show') {
+            updates.push('status_reason = ?');
+            params.push(reason);
+        }
+        params.push(Number(id));
+        this.db.prepare(`UPDATE appointments SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+        this.db.prepare(`INSERT INTO appointment_history
+            (appointment_id, from_status, to_status, reason, actor_id)
+            VALUES (?, ?, ?, ?, ?)`)
+            .run(Number(id), from, target, reason || null, actorId);
+        this.logAudit('APPOINTMENT_TRANSITION', 'appointments', Number(id), actorId,
+            `Appointment ${from} -> ${target}${reason ? `: ${reason}` : ''}`);
+        return { id: Number(id), from, to: target };
+    }
+
+    getAppointmentHistory(appointmentId: number) {
+        return this.db.prepare(`SELECT h.*, u.name as actor_name
+            FROM appointment_history h LEFT JOIN users u ON u.id = h.actor_id
+            WHERE h.appointment_id = ? ORDER BY h.created_at ASC, h.id ASC`)
+            .all(Number(appointmentId));
+    }
+
+    /**
+     * Slot conflicts: same doctor (or whole clinic when no doctor given),
+     * same day, overlapping 30-minute windows, ignoring terminals.
+     * Warns, never blocks -- the UI offers an explicit override.
+     */
+    detectConflicts(input: { doctorId?: number; date?: string; time?: string; excludeId?: number }) {
+        const date = String(input?.date || '').slice(0, 10);
+        const time = String(input?.time || '').slice(0, 5);
+        if (!date || !time) return [];
+        const [h, m] = time.split(':').map(Number);
+        if (!Number.isInteger(h) || !Number.isInteger(m)) return [];
+        const startMin = h * 60 + m;
+        const endMin = startMin + 30;
+        const toMin = (t: string) => {
+            const [th, tm] = String(t || '').slice(0, 5).split(':').map(Number);
+            return th * 60 + tm;
+        };
+        const filters = [`date = ?`, `status NOT IN ('fulfilled','cancelled','no-show')`];
+        const params: unknown[] = [date];
+        if (input?.doctorId != null) {
+            filters.push('doctor_id = ?');
+            params.push(Number(input.doctorId));
+        }
+        if (input?.excludeId != null) {
+            filters.push('id != ?');
+            params.push(Number(input.excludeId));
+        }
+        const rows = this.db.prepare(`SELECT id, patient_id, date, time, status, doctor_id
+            FROM appointments WHERE ${filters.join(' AND ')}`).all(...params) as any[];
+        return rows.filter((r) => {
+            const rStart = toMin(r.time);
+            if (!Number.isFinite(rStart)) return false;
+            return rStart < endMin && startMin < rStart + 30;
+        });
+    }
+
+    /**
+     * Idempotent check-in: confirmed -> arrived plus exactly one queue
+     * entry. Retries reuse the live entry instead of double-queueing.
+     */
+    checkInAppointment(id: number, actingUserId?: number) {
+        const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
+        if (!row) throw new Error('Appointment not found.');
+        if (row.queue_entry_id) {
+            const live = this.db.prepare(
+                `SELECT id FROM patient_queue WHERE id = ? AND status NOT IN ('completed','removed')`)
+                .get(Number(row.queue_entry_id)) as any;
+            if (live) return { appointmentId: Number(id), queueEntryId: Number(row.queue_entry_id), reused: true };
+        }
+        const moved = this.transitionAppointment(Number(id), 'arrived', { actorId: actingUserId ?? undefined });
+        const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
+        const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
+        this.db.prepare('UPDATE appointments SET queue_entry_id = ? WHERE id = ?').run(queueEntryId, Number(id));
+        return { appointmentId: Number(id), queueEntryId, reused: false, from: moved.from };
+    }
+
+    /** Link the visit an appointment produced (consult completion path). */
+    fulfillAppointment(id: number, visitId: number, actingUserId?: number) {
+        const moved = this.transitionAppointment(Number(id), 'fulfilled', { actorId: actingUserId ?? undefined });
+        this.db.prepare('UPDATE appointments SET visit_id = ? WHERE id = ?').run(Number(visitId), Number(id));
+        return { ...moved, visitId: Number(visitId) };
+    }
+
     searchConditions(query?: string, limit?: number) {
         return catalog.searchConditions(this.db, query, limit);
     }

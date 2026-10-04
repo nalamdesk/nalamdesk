@@ -1591,6 +1591,38 @@ handleGuardedDb('db:saveAppointment', (_, appt) => {
     if (!user) throw new Error('Unauthorized');
     return databaseService.saveAppointment(appt);
 });
+// Appointment lifecycle (issue #19): desk roles move bookings through
+// reasoned states; nurses hold no appointment grants.
+handleGuardedDb('db:transitionAppointment', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'transitionAppointment', [input], user.id);
+});
+handleGuardedDb('db:getAppointmentHistory', (_, id) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'getAppointmentHistory', [id], user.id);
+});
+handleGuardedDb('db:detectConflicts', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'detectConflicts', [input], user.id);
+});
+handleGuardedDb('db:checkInAppointment', (_, id) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'checkInAppointment', [id], user.id);
+});
+handleGuardedDb('db:fulfillAppointment', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'fulfillAppointment', [input], user.id);
+});
 
 function requireCatalogSession(roles: string[]) {
     const user = sessionService.getUser();

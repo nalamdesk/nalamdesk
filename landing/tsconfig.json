@@ -1,6 +1,11 @@
 {
   "extends": "astro/tsconfigs/strict",
   "compilerOptions": {
-    "types": ["astro/client"]
-  }
+    "types": [
+      "astro/client"
+    ]
+  },
+  "include": [
+    "./worker-configuration.d.ts"
+  ]
 }

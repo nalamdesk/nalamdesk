@@ -1,0 +1,15 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["global_fetch_strictly_public"],
+	"name": "nalamdesk-landing",
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"routes": [{ "pattern": "nalamdesk.com", "custom_domain": true }],
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	}
+}

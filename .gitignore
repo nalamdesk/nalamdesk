@@ -74,3 +74,6 @@ skills-lock.json
 # answer-me-with-html rendered pages (local explainers, never committed)
 skill-output/
 */skill-output/
+
+# Wrangler local state
+.wrangler/

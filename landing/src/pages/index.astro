@@ -1,7 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 
-const title = 'NalamDesk, the clinic desk that works without internet';
+const title = 'NalamDesk, the offline clinic desk that works without internet';
 const description =
   'Practice desk for small clinics. Registration to printed prescription on one computer. Records stay encrypted on your disk.';
 const github = 'https://github.com/sankara-sabapathy/nalamdesk';
@@ -9,127 +9,230 @@ const download = `${github}/releases`;
 const docs = 'https://sankara-sabapathy.github.io/nalamdesk/';
 ---
 <Base title={title} description={description}>
-  
-
+  <div class="bg-ink text-center text-[13px] font-medium text-white">
+    <p class="mx-auto max-w-4xl px-5 py-2">Beta: NalamDesk is not ready for production use. Evaluate with test data only.</p>
+  </div>
   <header class="border-b border-line bg-white">
-    <div class="page flex min-h-[72px] flex-wrap items-center gap-x-6 gap-y-3 py-3">
-      <a href="/" class="flex items-center gap-2.5 text-lg font-bold text-ink">
-        <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="4" fill="#0f172a" /><rect x="6" y="7" width="14" height="8" rx="1.5" fill="#e8eef4" /><rect x="6" y="18" width="14" height="2" rx="1" fill="#1868db" /></svg>
+    <div class="mx-auto flex min-h-[64px] max-w-4xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-2">
+      <a href="/" class="flex items-center gap-2 text-[17px] font-bold text-ink">
+        <img src="/logo-192.png" width="26" height="26" alt="NalamDesk logo" class="rounded-[6px]" />
         NalamDesk
       </a>
-      <nav class="hidden gap-[22px] lg:flex" aria-label="Primary">
-        <a class="text-sm font-medium text-slate2" href="#product">Product</a>
-        <a class="text-sm font-medium text-slate2" href="#platform">Platform</a>
-        <a class="text-sm font-medium text-slate2" href="#security">Security</a>
-        <a class="text-sm font-medium text-slate2" href={docs} target="_blank" rel="noopener">Docs</a>
+      <nav class="hidden gap-5 md:flex" aria-label="Primary">
+        <a class="text-sm text-slate2 hover:text-ink" href="#platform">Platform</a>
+        <a class="text-sm text-slate2 hover:text-ink" href="#security">Security</a>
+        <a class="text-sm text-slate2 hover:text-ink" href={docs} target="_blank" rel="noopener">Docs</a>
       </nav>
-      <div class="ml-auto flex items-center gap-3">
-        <a href={github} target="_blank" rel="noopener" aria-label="NalamDesk on GitHub" class="flex h-10 w-10 items-center justify-center rounded-md border border-line text-ink hover:bg-wash">
-          <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" /></svg>
+      <div class="ml-auto flex items-center gap-2.5">
+        <a href={github} target="_blank" rel="noopener" aria-label="NalamDesk on GitHub" class="flex h-9 w-9 items-center justify-center rounded-md text-ink hover:bg-wash">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" /></svg>
         </a>
-        <a href={download} class="rounded-md bg-cobalt px-5 py-2.5 text-sm font-semibold text-white">Download</a>
+        <a href={download} class="rounded-md bg-cobalt px-4 py-2 text-sm font-semibold text-white">Download</a>
       </div>
     </div>
   </header>
 
-  <main>
-    <section class="bg-wash" id="product">
-      <div class="page grid items-center gap-10 py-12 md:grid-cols-2 md:py-16">
-        <div class="min-w-0">
-          <h1 class="hero font-display font-bold">The clinic desk that works without internet.</h1>
-          <p class="mt-4 max-w-[34rem] text-[17px] leading-relaxed text-slate2">
-            Practice desk for small clinics. Registration to printed prescription on one computer. Records stay encrypted on your disk.
-          </p>
-          <div class="mt-6 flex flex-wrap gap-3">
-            <a href={download} class="rounded-md bg-cobalt px-5 py-2.5 text-sm font-semibold text-white">Download</a>
-            <a href="#platform" class="rounded-md border border-line bg-white px-5 py-2.5 text-sm font-semibold text-ink">Explore the platform</a>
-          </div>
-          <p class="mt-3 text-[13px] text-slate2">Free software, AGPL-3.0. Windows, macOS and Linux installers on GitHub.</p>
+  <main class="bg-white">
+    <section class="mx-auto max-w-4xl px-5 pb-12 pt-14 md:pt-20" id="product">
+      <h1 class="max-w-2xl font-display text-4xl font-bold leading-[1.1] tracking-[-0.02em] md:text-[44px]">The <span class="hl-wash">offline</span> clinic desk that works <span class="hl-line">without internet</span>.</h1>
+      <p class="mt-4 max-w-xl text-[16px] leading-relaxed text-slate2">
+        Practice desk for small clinics. Registration to printed prescription on one computer. Records stay encrypted on your disk.
+      </p>
+      <div class="mt-7 flex flex-wrap items-center gap-3">
+        <a href={download} class="rounded-md bg-cobalt px-5 py-2.5 text-sm font-semibold text-white">Download</a>
+        <a href="#platform" class="text-sm font-semibold text-cobalt hover:underline">Explore the platform</a>
+      </div>
+      <div class="mt-8 max-w-xl rounded-lg border border-line text-[13px]">
+        <div class="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
+          <span class="font-mono text-slate2">Windows · setup .exe</span>
+          <a href={download} class="flex-none font-semibold text-cobalt hover:underline">Download</a>
         </div>
+        <div class="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
+          <span class="font-mono text-slate2">macOS · .dmg</span>
+          <a href={download} class="flex-none font-semibold text-cobalt hover:underline">Download</a>
+        </div>
+        <div class="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5 last:border-b-0">
+          <span class="font-mono text-slate2">Linux · .deb</span>
+          <a href={download} class="flex-none font-semibold text-cobalt hover:underline">Download</a>
+        </div>
+      </div>
+      <p class="mt-3 text-[13px] text-slate2">Beta release, not for production use. Free software, AGPL-3.0.</p>
+    </section>
+
+    <section class="bg-film py-12 text-[#e8eef4] md:py-16" aria-label="Preview of the desk">
+      <div class="mx-auto grid max-w-4xl gap-5 px-5 md:grid-cols-2">
         <div class="min-w-0">
-          <div class="lightbox">
-            <div class="film">
-              <div class="sprockets"></div>
-              <div class="frame">
-                <h2>Today queue</h2>
-                <div class="qrow"><span>Token 14, fever, reassessed Urgent</span><span class="pill wait">Waiting</span></div>
-                <div class="qrow"><span>Token 15, red allergy flag checked</span><span class="pill cons">In consult</span></div>
-                <div class="qrow"><span>Token 16, BP review, vitals flagged</span><span class="pill wait">Waiting</span></div>
-              </div>
-              <div class="sprockets bottom"></div>
+          <div class="rounded-lg bg-[#0e1626] pb-3 pt-1.5">
+            <div class="mx-3 mb-2.5 mt-1 h-3.5 bg-[radial-gradient(circle,#5b6b82_2.5px,transparent_3px)] bg-[size:20px_14px] bg-repeat-x opacity-90"></div>
+            <div class="px-5 pb-1.5">
+              <h2 class="mb-2.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#9fb2c8]">Today queue</h2>
+              <div class="flex items-center justify-between gap-3 border-b border-white/10 py-2 text-sm"><span class="min-w-0 flex-1">Token 14, fever, reassessed Urgent</span><span class="flex-none rounded-full bg-[#eab308]/20 px-2.5 py-0.5 text-xs font-semibold text-[#f5cf4d]">Waiting</span></div>
+              <div class="flex items-center justify-between gap-3 border-b border-white/10 py-2 text-sm"><span class="min-w-0 flex-1">Token 15, red allergy flag checked</span><span class="flex-none rounded-full bg-cobalt/30 px-2.5 py-0.5 text-xs font-semibold text-[#9ec2f5]">In consult</span></div>
+              <div class="flex items-center justify-between gap-3 py-2 text-sm"><span class="min-w-0 flex-1">Token 16, BP review, vitals flagged</span><span class="flex-none rounded-full bg-[#eab308]/20 px-2.5 py-0.5 text-xs font-semibold text-[#f5cf4d]">Waiting</span></div>
             </div>
-            <div class="film">
-              <div class="sprockets"></div>
-              <div class="frame">
-                <h2>Prescription</h2>
-                <p class="rx">Paracetamol 500mg, 1 tab twice daily after food, 3 days.<br>Amoxicillin 250mg, 1 cap every 8 hours, 5 days.<br>Review if fever crosses 101F.</p>
-              </div>
-              <div class="sprockets bottom"></div>
-            </div>
+            <div class="mx-3 mb-1 mt-2.5 h-3.5 bg-[radial-gradient(circle,#5b6b82_2.5px,transparent_3px)] bg-[size:20px_14px] bg-repeat-x opacity-90"></div>
           </div>
-          <p class="mt-2.5 text-[12.5px] text-slate2">Illustrative preview drawn from the real workflow: the live queue and a printed prescription.</p>
+        </div>
+        <div class="min-w-0">
+          <div class="rounded-lg bg-[#0e1626] pb-3 pt-1.5">
+            <div class="mx-3 mb-2.5 mt-1 h-3.5 bg-[radial-gradient(circle,#5b6b82_2.5px,transparent_3px)] bg-[size:20px_14px] bg-repeat-x opacity-90"></div>
+            <div class="px-5 pb-1.5">
+              <h2 class="mb-2.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#9fb2c8]">Prescription</h2>
+              <p class="text-sm leading-[1.7] text-[#dbe4f0]">Paracetamol 500mg, 1 tab twice daily after food, 3 days.<br />Amoxicillin 250mg, 1 cap every 8 hours, 5 days.<br />Review if fever crosses 101F.</p>
+            </div>
+            <div class="mx-3 mb-1 mt-2.5 h-3.5 bg-[radial-gradient(circle,#5b6b82_2.5px,transparent_3px)] bg-[size:20px_14px] bg-repeat-x opacity-90"></div>
+          </div>
+        </div>
+      </div>
+      <p class="mx-auto mt-4 max-w-4xl px-5 text-[12.5px] text-[#9fb2c8]">Illustrative preview drawn from the real workflow: the live queue and a printed prescription.</p>
+    </section>
+
+    <section class="mx-auto max-w-4xl px-5 py-12 md:py-16" id="platform">
+      <div class="reveal grid gap-6 border-t-2 border-ink py-10 md:grid-cols-[160px_1fr] md:gap-10">
+        <div class="min-w-0">
+          <p class="font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-cobalt">Morning</p>
+          <div class="mt-3 hidden h-full w-px bg-line md:block" aria-hidden="true"></div>
+        </div>
+        <div class="min-w-0">
+          <div class="grid gap-8 md:grid-cols-2">
+            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Register once, queue by urgency</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">Find patients by name or mobile, register walk ins in seconds. The queue orders itself by clinical urgency, not arrival time.</p></div>
+            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Triage stays honest</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">Reassess urgency any time with a mandatory reason. Every change lands in an audit trail. Abnormal vitals flag right on the queue.</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="reveal grid gap-6 border-t border-line bg-wash/60 py-10 md:grid-cols-[160px_1fr] md:gap-10 md:px-6 md:rounded-xl md:border md:border-line">
+        <div class="min-w-0">
+          <p class="font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-cobalt">Clinic hours</p>
+          <div class="mt-3 hidden h-full w-px bg-cobalt/40 md:block" aria-hidden="true"></div>
+        </div>
+        <div class="min-w-0">
+          <div class="grid gap-8 md:grid-cols-2">
+            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Consult with guardrails</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">Allergies, active problems and current medicines stay visible. Conflicts stop the prescription until a reason is recorded.</p></div>
+            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Only doctors finalize</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">Encounters bind to a licensed practitioner whose credentials print on the prescription. Scribes and doctors are recorded separately.</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="reveal grid gap-6 border-t border-line py-10 md:grid-cols-[160px_1fr] md:gap-10">
+        <div class="min-w-0">
+          <p class="font-mono text-[13px] font-semibold uppercase tracking-[0.08em] text-cobalt">Evening</p>
+          <div class="mt-3 hidden h-full w-px bg-line md:block" aria-hidden="true"></div>
+        </div>
+        <div class="min-w-0">
+          <div class="grid gap-8 md:grid-cols-2">
+            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Print, collect and close</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">Prescriptions print with clinic details. Receipts record every payment. Day close reconciles the collection by method and flags what needs review.</p></div>
+            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Backup runs itself</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">A local backup every day, 30 days kept. Restore needs the recovery code plus the admin password. No reset path exists.</p></div>
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="platform" class="bg-white">
-      <div class="page">
-        <div class="step-grid border-b border-line">
-          <p class="text-[15px] font-bold">Morning</p>
-          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Register once, queue by urgency</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Find patients by name or mobile, register walk ins in seconds. The queue orders itself by clinical urgency, not arrival time.</p></div>
-          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Triage stays honest</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Reassess urgency any time with a mandatory reason. Every change lands in an audit trail. Abnormal vitals flag right on the queue.</p></div>
-        </div>
-        <div class="step-grid border-b border-line">
-          <p class="text-[15px] font-bold">Clinic hours</p>
-          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Consult with guardrails</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Allergies, active problems and current medicines stay visible. Conflicts stop the prescription until a reason is recorded.</p></div>
-          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Only doctors finalize</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Encounters bind to a licensed practitioner whose credentials print on the prescription. Scribes and doctors are recorded separately.</p></div>
-        </div>
-        <div class="step-grid">
-          <p class="text-[15px] font-bold">Evening</p>
-          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Print, collect and close</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Prescriptions print with clinic details. Receipts record every payment. Day close reconciles the collection by method and flags what needs review.</p></div>
-          <div class="min-w-0"><h2 class="font-display text-xl font-bold">Backup runs itself</h2><p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">A local backup every day, 30 days kept. Restore needs the recovery code plus the admin password. No reset path exists.</p></div>
+    <section class="mx-auto max-w-4xl px-5 pb-12 md:pb-16" id="security">
+      <div class="reveal border-t-2 border-ink py-9 transition-colors hover:bg-wash/60 md:px-2">
+        <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">Safety you cannot bypass.</h2>
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Provenance, allergy checks and triage history stay mandatory. Duplicate records merge through a permissioned preview with rollback, never silently.</p>
+      </div>
+      <div class="reveal border-t border-line py-9 transition-colors hover:bg-wash/60 md:px-2">
+        <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">The vault lives on your computer.</h2>
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Full database encryption with the key in the system keyring. History, encounters and prescriptions never leave this device. No password reset, by design.</p>
+      </div>
+      <div class="reveal border-t border-line py-9 transition-colors hover:bg-wash/60 md:px-2">
+        <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">Roles keep the floor calm.</h2>
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Doctors own the clinical work. Reception registers and manages the queue. Nurses record vitals. Admins own users, catalogs and backups.</p>
+      </div>
+      <div class="reveal border-y border-line py-9 transition-colors hover:bg-wash/60 md:px-2">
+        <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">Built for long shifts.</h2>
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Light, dark and high contrast themes. Dual unit vitals. Automatic updates from an approved feed that never touch the vault on failure.</p>
+      </div>
+    </section>
+
+    <section class="border-t border-line bg-wash" aria-label="Compliance roadmap">
+      <div class="mx-auto max-w-4xl px-5 py-12 md:py-14">
+        <h2 class="font-display text-xl font-bold">Compliance, in progress.</h2>
+        <p class="mt-2 max-w-2xl text-[14.5px] leading-relaxed text-slate2">Two interoperability tracks are underway and ship behind the beta flag. Neither is certified yet.</p>
+        <div class="mt-6 grid gap-6 md:grid-cols-2">
+          <div class="min-w-0 rounded-lg border border-line bg-white p-6">
+            <p class="text-[12px] font-semibold uppercase tracking-[0.08em] text-cobalt">In progress</p>
+            <h3 class="mt-2 font-display text-lg font-bold">FHIR-aligned records</h3>
+            <p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Vitals are stored as FHIR-style observations with LOINC codes and UCUM units, and every amendment keeps its chain. Full FHIR conformance is still being worked on.</p>
+          </div>
+          <div class="min-w-0 rounded-lg border border-line bg-white p-6">
+            <p class="text-[12px] font-semibold uppercase tracking-[0.08em] text-cobalt">In progress</p>
+            <h3 class="mt-2 font-display text-lg font-bold">ABHA and ABDM (India)</h3>
+            <p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Health ID linking, scan-and-share counter check-in, and consent-based outside records. The gateway runs in mock mode until the clinic configures its facility credentials.</p>
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="safety" class="bg-wash">
-      <div class="page grid gap-8 py-12 md:grid-cols-2">
-        <div class="min-w-0">
-          <h2 class="font-display text-2xl font-bold">Safety you cannot bypass.</h2>
-          <p class="mt-2.5 text-[15px] leading-relaxed text-slate2">Provenance, allergy checks and triage history stay mandatory. Duplicate records merge through a permissioned preview with rollback, never silently.</p>
-        </div>
-        <div class="min-w-0">
-          <h2 class="font-display text-2xl font-bold">Roles keep the floor calm.</h2>
-          <p class="mt-2.5 text-[15px] leading-relaxed text-slate2">Doctors own the clinical work. Reception registers and manages the queue. Nurses record vitals. Admins own users, catalogs and backups.</p>
-        </div>
+    <section class="mx-auto max-w-4xl px-5 py-12 md:py-16" aria-label="Questions">
+      <h2 class="font-display text-xl font-bold">Questions</h2>
+      <div class="mt-2 divide-y divide-line border-y border-line">
+        <details class="group py-4">
+          <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">Is my data safe?</summary>
+          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">Records live encrypted on your own computer. Nothing clinical ever leaves the device.</p>
+        </details>
+        <details class="group py-4">
+          <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">Can I work without internet?</summary>
+          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">Yes. Queue, consult, print, billing and backup all run offline.</p>
+        </details>
+        <details class="group py-4">
+          <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">What if I forget the password?</summary>
+          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">There is no reset path. The recovery code from setup plus the admin password restores a backup. Keep both somewhere safe.</p>
+        </details>
+        <details class="group py-4">
+          <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">Is NalamDesk production ready?</summary>
+          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">No. This is a beta for evaluation with test data. Do not run real clinics on it yet.</p>
+        </details>
+        <details class="group py-4">
+          <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">What does it cost?</summary>
+          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">NalamDesk is free software under AGPL-3.0. Download it from GitHub Releases.</p>
+        </details>
       </div>
     </section>
 
-    <section id="security" class="bg-film text-[#e8eef4]">
-      <div class="page grid gap-8 py-12 md:grid-cols-2">
-        <div class="min-w-0">
-          <h2 class="font-display text-[26px] font-bold leading-snug">The vault lives on your computer.</h2>
-          <p class="mt-2.5 text-[15px] leading-relaxed text-[#9fb2c8]">Full database encryption with the key in the system keyring. History, encounters and prescriptions never leave this device. There is no password reset, by design.</p>
-        </div>
-        <div class="min-w-0">
-          <h2 class="font-display text-[26px] font-bold leading-snug">Built for long shifts.</h2>
-          <p class="mt-2.5 text-[15px] leading-relaxed text-[#9fb2c8]">Light, dark and high contrast themes. Dual unit vitals. Automatic updates from an approved feed that never touch the vault on failure.</p>
-        </div>
-      </div>
-    </section>
-
-    <section id="get" class="bg-cobalt text-white">
-      <div class="page flex flex-col items-start justify-between gap-6 py-10 md:flex-row md:items-center">
-        <h2 class="font-display text-[26px] font-bold md:text-[28px]">Bring your clinic onto its own desk.</h2>
+    <section class="bg-cobalt text-white" id="get">
+      <div class="mx-auto flex max-w-4xl flex-col items-start justify-between gap-5 px-5 py-10 md:flex-row md:items-center">
+        <h2 class="font-display text-2xl font-bold">Bring your clinic onto its own desk.</h2>
         <a href={download} class="flex-none rounded-md bg-white px-6 py-3 text-[15px] font-bold text-cobalt">Download</a>
       </div>
     </section>
   </main>
 
+  <script>
+    document.documentElement.classList.add('js');
+    const rows = document.querySelectorAll('.reveal');
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('in');
+              io.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.12 }
+      );
+      rows.forEach((row) => io.observe(row));
+      // Failsafe: never leave content hidden (headless captures, crawlers).
+      setTimeout(() => rows.forEach((row) => row.classList.add('in')), 2000);
+    } else {
+      rows.forEach((row) => row.classList.add('in'));
+    }
+  </script>
+
   <footer class="border-t border-line bg-white">
-    <div class="page flex flex-col gap-2 py-4 text-[13px] text-slate2 md:flex-row md:justify-between">
-      <span>© 2026 NalamDesk</span>
-      <span>AGPL-3.0, privacy first, offline first</span>
+    <div class="mx-auto grid max-w-4xl grid-cols-2 px-5 text-sm md:grid-cols-4">
+      <a href={github} target="_blank" rel="noopener" class="border-r border-line py-4 pr-4 font-medium text-ink hover:underline">GitHub</a>
+      <a href={docs} target="_blank" rel="noopener" class="py-4 pl-4 font-medium text-ink hover:underline md:border-r md:border-line md:pr-4">Docs</a>
+      <a href={download} class="border-r border-line py-4 pl-4 pr-4 font-medium text-ink hover:underline md:pl-4 max-md:border-t max-md:border-line">Releases</a>
+      <span class="py-4 pl-4 text-slate2 max-md:border-t max-md:border-line">AGPL-3.0</span>
+    </div>
+    <div class="border-t border-line">
+      <div class="mx-auto flex max-w-4xl flex-col gap-1 px-5 py-4 text-[13px] text-slate2 md:flex-row md:justify-between">
+        <span>© 2026 NalamDesk</span>
+        <span>Privacy first, offline first</span>
+      </div>
     </div>
   </footer>
 </Base>

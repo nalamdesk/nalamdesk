@@ -3779,11 +3779,17 @@ export class DatabaseService {
      * Practitioner binding for fulfillment: when the booking names a
      * doctor, only that doctor (or an admin overriding) may close it.
      * Anyone else gets a named rejection, not a silent link.
+     * Fail-closed on unknown actors: a fulfillment without a resolvable
+     * user never proceeds, even if the row is unassigned.
      */
     private assertFulfillDoctor(row: any, actingUserId?: number) {
-        if (row?.doctor_id == null || actingUserId == null) return;
+        if (actingUserId == null) {
+            throw new Error('An authenticated user is required to fulfill.');
+        }
         const actor = this.db.prepare('SELECT role FROM users WHERE id = ?').get(Number(actingUserId)) as any;
-        if (!actor || actor.role === 'admin') return;
+        if (!actor) throw new Error('Acting user not found.');
+        if (actor.role === 'admin') return;
+        if (row?.doctor_id == null) return;
         if (Number(row.doctor_id) !== Number(actingUserId)) {
             throw new Error('Only the assigned doctor (or an admin) can fulfill this appointment.');
         }

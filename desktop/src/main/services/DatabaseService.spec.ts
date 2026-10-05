@@ -466,12 +466,21 @@ describe('DatabaseService', () => {
             expect(service.fulfillAppointment(1, 50, 9)).toMatchObject({ to: 'fulfilled' });
             keyDb({
                 'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3 },
-                'FROM visits WHERE id': { id: 51, patient_id: 4 }
+                'FROM visits WHERE id': { id: 50, patient_id: 3 },
+                'FROM users WHERE id': null
+            });
+            expect(() => service.fulfillAppointment(1, 50, 9)).toThrow('Acting user not found');
+            expect(() => service.fulfillAppointment(1, 50)).toThrow('authenticated user is required');
+            keyDb({
+                'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3 },
+                'FROM visits WHERE id': { id: 51, patient_id: 4 },
+                'FROM users WHERE id': { role: 'doctor' }
             });
             expect(() => service.fulfillAppointment(1, 51, 9)).toThrow('another patient');
             keyDb({
                 'FROM appointments WHERE id': { id: 1, status: 'arrived', patient_id: 3 },
-                'FROM visits WHERE id': null
+                'FROM visits WHERE id': null,
+                'FROM users WHERE id': { role: 'doctor' }
             });
             expect(() => service.fulfillAppointment(1, 52, 9)).toThrow('Visit not found');
         });

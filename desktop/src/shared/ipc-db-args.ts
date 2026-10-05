@@ -68,6 +68,24 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
                 ? [payload['id'] ?? args[0], actingUserId, String(payload['reason'] || '')]
                 : [args[0], actingUserId, ''];
         }
+        case 'transitionAppointment': {
+            const payload = payloadObject(args[0]);
+            // actorId travels positionally from the session, never from the
+            // payload: there is no input field to forge.
+            return [Number(payload['id'] ?? args[0]), String(payload['to'] || ''),
+                { reason: payload['reason'], date: payload['date'], time: payload['time'] }, actingUserId];
+        }
+        case 'getAppointmentHistory':
+        case 'checkInAppointment': {
+            return [Number(payloadObject(args[0])['id'] ?? args[0]), actingUserId];
+        }
+        case 'detectConflicts': {
+            return [payloadObject(args[0])];
+        }
+        case 'fulfillAppointment': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['id'] ?? args[0]), Number(payload['visitId']), actingUserId];
+        }
         case 'abdmAcceptShareToken': {
             const payload = payloadObject(args[0]);
             return [payload, actingUserId];

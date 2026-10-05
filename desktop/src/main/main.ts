@@ -1589,8 +1589,27 @@ handleGuardedDb('db:getAppointments', (_, date) => {
 handleGuardedDb('db:saveAppointment', (_, appt) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
-    return databaseService.saveAppointment(appt);
+    if (!['doctor', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return databaseService.saveAppointment(appt, user.id);
 });
+// Appointment lifecycle (issue #19): desk roles move bookings through
+// reasoned states; nurses hold no appointment grants.
+const requireDesk = (roles: string[] = ['doctor', 'receptionist', 'admin']) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!roles.includes(user.role)) throw new Error('Forbidden');
+    return user;
+};
+handleGuardedDb('db:transitionAppointment', (_, input) =>
+    invokeDbMethod(databaseService, 'transitionAppointment', [input], requireDesk().id));
+handleGuardedDb('db:getAppointmentHistory', (_, id) =>
+    invokeDbMethod(databaseService, 'getAppointmentHistory', [id], requireDesk().id));
+handleGuardedDb('db:detectConflicts', (_, input) =>
+    invokeDbMethod(databaseService, 'detectConflicts', [input], requireDesk().id));
+handleGuardedDb('db:checkInAppointment', (_, id) =>
+    invokeDbMethod(databaseService, 'checkInAppointment', [id], requireDesk().id));
+handleGuardedDb('db:fulfillAppointment', (_, input) =>
+    invokeDbMethod(databaseService, 'fulfillAppointment', [input], requireDesk(['doctor', 'admin']).id));
 
 function requireCatalogSession(roles: string[]) {
     const user = sessionService.getUser();

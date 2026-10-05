@@ -34,7 +34,7 @@ describe('Database Migrations', () => {
         });
 
         it('should have 40 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(41);
+            expect(MIGRATIONS).toHaveLength(42);
         });
     });
 
@@ -873,6 +873,44 @@ describe('Database Migrations', () => {
             const sql = executedSql.join('\n');
             expect(sql).toContain('ADD COLUMN standards_mode');
             expect(sql).toContain('india_abdm');
+        });
+    });
+
+    describe('Migration v42 (appointment lifecycle)', () => {
+        it('adds lifecycle columns, history, and normalizes legacy statuses', () => {
+            MIGRATIONS.find((m) => m.version === 42)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('ADD COLUMN status_reason');
+            expect(sql).toContain('ADD COLUMN original_date');
+            expect(sql).toContain('ADD COLUMN queue_entry_id');
+            expect(sql).toContain('ADD COLUMN visit_id');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS appointment_history');
+            expect(sql).toContain("SET status = 'arrived' WHERE status = 'CHECKED_IN'");
+        });
+
+        it('grants appointment methods to desk roles, not nurses', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 42)!.up(mockDb);
+            for (const method of ['transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment']) {
+                expect(JSON.parse(writes['doctor'])).toContain(method);
+                expect(JSON.parse(writes['receptionist'])).toContain(method);
+            }
+            // Fulfill is clinical: doctor/admin only, never receptionist.
+            expect(JSON.parse(writes['doctor'])).toContain('fulfillAppointment');
+            expect(JSON.parse(writes['admin'] || '[]')).toContain('fulfillAppointment');
+            expect(JSON.parse(writes['receptionist'] || '[]')).not.toContain('fulfillAppointment');
+            expect(writes['nurse']).toBeUndefined();
         });
     });
 });

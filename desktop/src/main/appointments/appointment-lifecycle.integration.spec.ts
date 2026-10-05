@@ -63,7 +63,7 @@ describe('appointment lifecycle integration', () => {
         const id = Number(created.lastInsertRowid);
         expect(db.prepare('SELECT status FROM appointments WHERE id = ?').get(id).status).toBe('booked');
 
-        service.transitionAppointment(id, 'confirmed', { actorId: 10 });
+        service.transitionAppointment(id, 'confirmed', {}, 10);
         const checked = service.checkInAppointment(id, 10);
         expect(checked.reused).toBe(false);
         const arrived = db.prepare('SELECT status, queue_entry_id FROM appointments WHERE id = ?').get(id) as any;
@@ -83,7 +83,7 @@ describe('appointment lifecycle integration', () => {
     it('rolls the transition back when queueing fails', () => {
         const created: any = service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '10:00', reason: 'Review' });
         const id = Number(created.lastInsertRowid);
-        service.transitionAppointment(id, 'confirmed', { actorId: 10 });
+        service.transitionAppointment(id, 'confirmed', {}, 10);
         // Patient already queued elsewhere: check-in must fail atomically.
         db.prepare(`INSERT INTO patient_queue (patient_id, status) VALUES (1, 'waiting')`).run();
         expect(() => service.checkInAppointment(id, 10)).toThrow('already in queue');

@@ -962,5 +962,366 @@ describe('PatientDetailsComponent', () => {
         component.ngOnInit();
         expect(component.canCurateIdentifiers).toBe(true);
     });
+
+    describe('extended chart coverage', () => {
+        const seedVisit = () => {
+            component.selectedVisit = {
+                id: 9,
+                date: '2026-02-02',
+                diagnosis: 'Flu',
+                diagnosis_type: 'Final',
+                prescription: [{ medicine: 'Paracetamol', dosage: '500mg' }]
+            };
+            component.patient = { id: 123, name: 'Test Patient', age: 30, gender: 'Male' } as any;
+            component.allergies = [];
+            component.conditions = [];
+        };
+
+        it('renders visit, allergy, and medication grid cells', () => {
+            const visitCols = (component as any).visitColumnDefs as any[];
+            const diagnosis = visitCols.find((c: any) => c.headerName === 'Diagnosis');
+            expect(diagnosis.cellRenderer({ data: null })).toBe('');
+            const html = diagnosis.cellRenderer({ data: { diagnosis: 'Flu <b>', diagnosis_type: 'Final' } });
+            expect(html).toContain('Flu &lt;b&gt;');
+            expect(html).toContain('Final');
+            expect(diagnosis.cellRenderer({ data: { diagnosis: '' } })).toContain('No Diagnosis');
+            const rx = visitCols.find((c: any) => c.headerName === 'Rx Items');
+            expect(rx.valueGetter({ data: { prescription: [1, 2] } })).toBe(2);
+            expect(rx.valueGetter({ data: {} })).toBe(0);
+            expect(rx.cellRenderer({ value: 3 })).toContain('3 items');
+        });
+
+        it('renders allergy severity and status chips', () => {
+            const cols = (component as any).allergyColumnDefs as any[];
+            const sev = cols.find((c: any) => c.headerName === 'Severity & Reaction');
+            expect(sev.valueGetter({ data: { severity: 'high', reaction: 'rash' } })).toBe('high rash');
+            expect(sev.valueGetter({ data: {} })).toBe('-');
+            expect(sev.cellRenderer({ data: null })).toBe('');
+            expect(sev.cellRenderer({ data: { severity: 'high', reaction: 'rash' } })).toContain('rash');
+            const status = cols.find((c: any) => c.headerName === 'Status');
+            expect(status.cellRenderer({ value: 'active' })).toContain('ACTIVE');
+            expect(status.cellRenderer({ value: 'resolved' })).toContain('RESOLVED');
+        });
+
+        it('renders medication cells and the duration column', () => {
+            const cols = (component as any).medicationColumnDefs as any[];
+            const med = cols.find((c: any) => c.headerName === 'Medication');
+            expect(med.cellRenderer({ data: null })).toBe('');
+            expect(med.cellRenderer({ data: { medicine_name: 'A <b>', notes: 'night' } })).toContain('A &lt;b&gt;');
+            const dose = cols.find((c: any) => c.headerName === 'Dosage & Frequency');
+            expect(dose.valueGetter({ data: { dosage: '10mg', frequency: 'OD' } })).toBe('10mg (OD)');
+            expect(dose.valueGetter({ data: {} })).toBe('- ');
+            expect(dose.cellRenderer({ data: null })).toBe('');
+            const duration = cols.find((c: any) => c.headerName === 'Duration');
+            expect(duration.valueGetter({ data: { start_date: '2026-01-01', end_date: '2026-01-05' } }))
+                .toBe('2026-01-01 to 2026-01-05');
+            expect(duration.cellRenderer({ value: 'x' })).toContain('x');
+        });
+
+        it('escapes html, formats dates, and gates safety mutations', () => {
+            expect((component as any).escHtml('<a>&"\'')).toBe('&lt;a&gt;&amp;&quot;&#39;');
+            expect((component as any).escHtml(null)).toBe('');
+            expect((component as any).fmtDate(null)).toBe('-');
+            expect((component as any).fmtDate('2026-01-02T00:00:00.000Z')).toMatch(/\d{4}|\d+\/\d+/);
+            expect((component as any).statusChip('active', true, 'bg-x')).toContain('ACTIVE');
+
+            mockAuthService.getUser.mockReturnValue({ role: 'nurse' });
+            component.currentUser = { role: 'nurse' };
+            expect((component as any).denySafetyMutation()).toBe(true);
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Not permitted' }));
+            component.currentUser = { role: 'admin' };
+            expect((component as any).denySafetyMutation()).toBe(false);
+            expect((component as any).deleteActionHtml()).toContain('data-action="delete"');
+        });
+
+        it('toggles consent types and validates consent requests', async () => {
+            component.toggleHiType('XRay');
+            expect(component.consentForm.hiTypes).toContain('XRay');
+            component.toggleHiType('XRay');
+            expect(component.consentForm.hiTypes).not.toContain('XRay');
+
+            component.patient = null;
+            component.consentForm = { abhaAddress: '', hiTypes: ['Prescription'], dateFrom: '', dateTo: '' } as any;
+            await component.requestExternalConsent();
+            expect(component.consentError).toContain('health ID');
+
+            component.patient = { abha_address: 'x@sbx' } as any;
+            component.consentForm.hiTypes = [];
+            await component.requestExternalConsent();
+            expect(component.consentError).toContain('at least one');
+        });
+
+        it('sends consent requests and reports failures', async () => {
+            component.patient = { id: 123, abha_address: 'x@sbx' } as any;
+            component.consentForm = { abhaAddress: '', hiTypes: ['Prescription'], dateFrom: '', dateTo: '' } as any;
+            mockDataService.invoke.mockImplementation((endpoint: string) => {
+                if (endpoint === 'abdmHiuGetConsents') return Promise.resolve([]);
+                if (endpoint === 'abdmHiuGetExternalRecords') return Promise.resolve([]);
+                return Promise.resolve(null);
+            });
+            await component.requestExternalConsent();
+            expect(component.showConsentForm).toBe(false);
+
+            mockDataService.invoke.mockRejectedValueOnce(new Error('gateway down'));
+            await component.requestExternalConsent();
+            expect(component.consentError).toBe('gateway down');
+        });
+
+        it('classifies consent chips and parses consent types', () => {
+            expect(component.consentChipClass('GRANTED')).toContain('green');
+            expect(component.consentChipClass('denied')).toContain('red');
+            expect(component.consentChipClass('expired')).toContain('gray');
+            expect(component.consentChipClass('pending')).toContain('amber');
+            expect(component.consentTypesText({ hi_types: '["A","B"]' })).toBe('A, B');
+            expect(component.consentTypesText({ hi_types: ['A'] })).toBe('A');
+            expect(component.consentTypesText({ hi_types: '[broken' })).toBe('');
+            expect(component.consentTypesText(null)).toBe('');
+        });
+
+        it('imports outside meds with override confirm and cancel', async () => {
+            const attempt = (reason?: string) => {
+                if (reason) return Promise.resolve({ id: 1 });
+                return Promise.reject(new Error('conflicting allergy: penicillin'));
+            };
+            mockDataService.invoke.mockImplementation((endpoint: string, input: any) =>
+                endpoint === 'abdmHiuImportMedication'
+                    ? attempt(input?.overrideReason)
+                    : Promise.resolve(null));
+            await component.importExternalMed(11, { name: 'Amoxicillin' });
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Allergy conflict' }));
+
+            mockDialogService.open.mockResolvedValueOnce(false);
+            await component.importExternalMed(11, { name: '  ' });
+            await component.importExternalMed(12, { name: 'Cetirizine' });
+        });
+
+        it('exports with warnings and downloads the bundle', async () => {
+            component.selectedVisit = {
+                id: 9,
+                date: '2026-02-02',
+                diagnosis: 'Flu',
+                prescription: [{ medicine: 'X', frequency: 'every full moon' }]
+            };
+            component.patient = { id: 123, name: 'Test Patient' } as any;
+            component.allergies = [];
+            component.conditions = [];
+            const createObjectURL = vi.fn(() => 'blob:mock');
+            const revokeObjectURL = vi.fn();
+            const originalCreate = (URL as any).createObjectURL;
+            const originalRevoke = (URL as any).revokeObjectURL;
+            (URL as any).createObjectURL = createObjectURL;
+            (URL as any).revokeObjectURL = revokeObjectURL;
+            const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+            try {
+                await component.exportHealthRecord();
+                expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Exported with notes' }));
+                expect(createObjectURL).toHaveBeenCalled();
+            } finally {
+                click.mockRestore();
+                (URL as any).createObjectURL = originalCreate;
+                (URL as any).revokeObjectURL = originalRevoke;
+            }
+            component.selectedVisit = null;
+            await component.exportHealthRecord();
+        });
+
+        it('transfers with recipient checks, receipts, and failures', async () => {
+            component.selectedVisit = { id: 9, date: '2026-02-02', prescription: [] };
+            component.patient = { id: 123, name: 'Test Patient' } as any;
+            component.allergies = [];
+            component.conditions = [];
+            mockDataService.invoke.mockImplementation((endpoint: string) => {
+                if (endpoint === 'abdmGetConfig') return Promise.resolve({ has_recipient_key: false });
+                return Promise.resolve(null);
+            });
+            await component.transferHealthRecord();
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'No recipient key' }));
+
+            component.selectedVisit.prescription = [{ medicine: 'X', frequency: 'every full moon' }];
+            mockDataService.invoke.mockImplementation((endpoint: string) => {
+                if (endpoint === 'abdmGetConfig') return Promise.resolve({ has_recipient_key: true });
+                if (endpoint === 'getDoctors') return Promise.resolve([]);
+                if (endpoint === 'abdmTransferBundle') return Promise.resolve({ status: 'delivered', bytes: 10 });
+                return Promise.resolve(null);
+            });
+            await component.transferHealthRecord();
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Record sent' }));
+            expect(component.transferBusy).toBe(false);
+
+            mockDataService.invoke.mockImplementation((endpoint: string) => {
+                if (endpoint === 'abdmTransferBundle') return Promise.reject(new Error('nope'));
+                if (endpoint === 'abdmGetConfig') return Promise.resolve({ has_recipient_key: true });
+                if (endpoint === 'getDoctors') return Promise.resolve([]);
+                return Promise.resolve(null);
+            });
+            component.transferBusy = false;
+            await component.transferHealthRecord();
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Transfer failed' }));
+
+            component.selectedVisit = null;
+            await component.transferHealthRecord();
+            component.transferBusy = true;
+            component.selectedVisit = { id: 1 };
+            await component.transferHealthRecord();
+            component.transferBusy = false;
+        });
+
+        it('routes reason-dialog decisions to every mutation kind', async () => {
+            mockDataService.invoke.mockImplementation(() => Promise.resolve(null));
+            for (const kind of ['archive-patient', 'visit', 'allergy', 'condition', 'medication']) {
+                (component as any).pendingReasonAction = { kind, id: 5 };
+                component.showReasonDialog = true;
+                await component.onReasonDecided('duplicate entry');
+                expect(component.showReasonDialog).toBe(false);
+            }
+            expect(mockDataService.invoke).toHaveBeenCalledWith('archivePatient', { id: 5, reason: 'duplicate entry' });
+            expect(mockDataService.invoke).toHaveBeenCalledWith('markVisitEnteredInError', { id: 5, reason: 'duplicate entry' });
+            expect(mockDataService.invoke).toHaveBeenCalledWith('deleteAllergy', { id: 5, reason: 'duplicate entry' });
+            expect(mockDataService.invoke).toHaveBeenCalledWith('deleteCondition', { id: 5, reason: 'duplicate entry' });
+            expect(mockDataService.invoke).toHaveBeenCalledWith('deleteMedication', { id: 5, reason: 'duplicate entry' });
+
+            await component.onReasonDecided(null);
+            (component as any).pendingReasonAction = { kind: 'visit', id: 6 };
+            mockDataService.invoke.mockRejectedValueOnce(new Error('locked'));
+            await component.onReasonDecided('x');
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Error' }));
+        });
+
+        it('restores archived charts and reports failures', async () => {
+            mockDataService.invoke.mockImplementation(() => Promise.resolve(null));
+            await component.unarchivePatient();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('unarchivePatient', component.patientId);
+
+            mockDataService.invoke.mockRejectedValueOnce(new Error('gone'));
+            await component.unarchivePatient();
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Restore failed' }));
+        });
+
+        it('navigates to patients and shows derived age', () => {
+            component.goBack();
+            expect(mockRouter.navigate).toHaveBeenCalledWith(['/patients']);
+            component.goToPatient(42);
+            expect(mockRouter.navigate).toHaveBeenCalledWith(['/patients', 42]);
+            component.patient = null;
+            expect(component.displayAge).toBe('—');
+            component.patient = { dob: null, dob_estimated: 0, age: 41 } as any;
+            expect(component.displayAge).toContain('41');
+        });
+
+        it('starts consults as admin with the first doctor on file', async () => {
+            component.currentUser = { role: 'admin' };
+            component.patientId = 123;
+            await component.startConsult();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('beginConsultation', expect.objectContaining({ doctorId: 10 }));
+            expect(mockRouter.navigate).toHaveBeenCalledWith(['/visit', 123], expect.objectContaining({ state: expect.objectContaining({ encounterId: 70 }) }));
+        });
+
+        it('renders substance, criticality, condition, and ICD cells', () => {
+            const allergy = (component as any).allergyColumnDefs as any[];
+            const substance = allergy.find((c: any) => c.headerName === 'Substance');
+            expect(substance.cellRenderer({ data: null })).toBe('');
+            expect(substance.cellRenderer({ data: { substance: 'Pen <b>' } })).toContain('Pen &lt;b&gt;');
+            const crit = allergy.find((c: any) => c.headerName === 'Criticality');
+            expect(crit.cellRenderer({ value: 'high' })).toContain('bg-red-100');
+            expect(crit.cellRenderer({ value: 'low' })).toContain('bg-amber-100');
+            expect(crit.cellRenderer({ value: 'medium' })).toContain('bg-gray-100');
+
+            const cond = (component as any).conditionColumnDefs as any[];
+            const problem = cond.find((c: any) => c.headerName === 'Problem / Condition');
+            expect(problem.cellRenderer({ data: null })).toBe('');
+            expect(problem.cellRenderer({ data: { condition_name: 'Asthma', notes: 'mild' } })).toContain('mild');
+            const icd = cond.find((c: any) => c.headerName === 'ICD-10 Code');
+            expect(icd.cellRenderer({ value: 'J45' })).toContain('J45');
+            expect(icd.cellRenderer({ value: '' })).toContain('-');
+            const onset = cond.find((c: any) => c.headerName === 'Onset Date');
+            expect(onset.valueFormatter({ value: null })).toBe('-');
+            expect(onset.cellRenderer({ value: null })).toContain('-');
+        });
+
+        it('routes grid action clicks with the safety gate', async () => {
+            const visitActions = (component as any).visitColumnDefs.find((c: any) => c.headerName === 'Actions');
+            expect(visitActions.cellRenderer()).toContain('data-action="view"');
+            const view = { id: 5 };
+            visitActions.onCellClicked({ event: { target: { closest: () => ({ getAttribute: () => 'view' }) } }, data: view });
+            expect(component.selectedVisit).toEqual(view);
+
+            component.currentUser = { role: 'nurse' };
+            const del = { event: { target: { closest: () => ({ getAttribute: () => 'delete' }) } }, data: { id: 9 } };
+            const medActions = (component as any).medicationColumnDefs.find((c: any) => c.headerName === 'Actions');
+            medActions.onCellClicked(del);
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Not permitted' }));
+
+            component.currentUser = { role: 'doctor' };
+            mockDataService.invoke.mockImplementation(() => Promise.resolve(null));
+            (component as any).pendingReasonAction = null;
+            const condActions = (component as any).conditionColumnDefs.find((c: any) => c.headerName === 'Actions');
+            condActions.onCellClicked({ event: del.event, data: { id: 8 } });
+            expect((component as any).pendingReasonAction).toEqual({ kind: 'condition', id: 8 });
+        });
+
+        it('links ABDM identities and guards survivor picks', async () => {
+            component.patient = { id: 1 } as any;
+            component.onAbhaLinked({ abhaAddress: 'x@sbx', abhaName: 'X' });
+            expect(component.patient.abha_address).toBe('x@sbx');
+            component.patient = null;
+            component.onAbhaLinked({ abhaAddress: 'x@sbx', abhaName: 'X' });
+
+            component.mergePreview = null;
+            await component.pickSurvivor(null);
+            await component.pickSurvivor(2);
+            expect(component.mergeSurvivorId).toBeNull();
+        });
+
+        it('clears the external cache with confirm and cancel', async () => {
+            mockDataService.invoke.mockImplementation((endpoint: string) => {
+                if (endpoint === 'abdmHiuGetConsents') return Promise.resolve([]);
+                if (endpoint === 'abdmHiuGetExternalRecords') return Promise.resolve([]);
+                return Promise.resolve(null);
+            });
+            await component.clearExternalCache();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('abdmHiuClearExternalRecords', { patientId: component.patientId });
+
+            mockDialogService.open.mockResolvedValueOnce(false);
+            await component.clearExternalCache();
+        });
+
+        it('fails external loads and fetches loudly', async () => {
+            component.patientId = 0 as any;
+            await component.loadExternal();
+            component.patientId = 123;
+            mockDataService.invoke.mockImplementation(() => { throw new Error('gateway down'); });
+            await component.loadExternal();
+            expect(component.externalError).toBe('gateway down');
+
+            mockDataService.invoke.mockImplementation(() => Promise.reject(new Error('fetch down')));
+            await component.fetchExternal(9);
+            expect(component.externalError).toBe('fetch down');
+        });
+
+        it('reports non-conflicting import failures', async () => {
+            mockDataService.invoke.mockImplementation((endpoint: string) =>
+                endpoint === 'abdmHiuImportMedication'
+                    ? Promise.reject(new Error('store full'))
+                    : Promise.resolve(null));
+            await component.importExternalMed(11, { name: 'Aspirin' });
+            expect(mockDialogService.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Import failed' }));
+        });
+
+        it('skips the download block without object URLs', async () => {
+            component.selectedVisit = { id: 9, date: '2026-02-02', prescription: [] };
+            component.patient = { id: 123, name: 'Test Patient' } as any;
+            component.allergies = [];
+            component.conditions = [];
+            const original = (URL as any).createObjectURL;
+            (URL as any).createObjectURL = undefined;
+            try {
+                await component.exportHealthRecord();
+                expect(mockDialogService.open).not.toHaveBeenCalledWith(
+                    expect.objectContaining({ title: 'Exported with notes' }));
+            } finally {
+                (URL as any).createObjectURL = original;
+            }
+        });
+    });
 });
 

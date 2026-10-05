@@ -548,27 +548,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
 
     try {
-      // Add to Queue
-      await this.dataService.invoke('addToQueue', { patientId: appt.patient_id, priority: 1 });
-      // Update Appointment Status
-      await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
+      // Single atomic call: arrived plus exactly one queue entry, with
+      // repair when a previous attempt stranded the booking.
+      await this.dataService.invoke('checkInAppointment', appt.id);
 
       this.toastService?.success(`${appt.patient_name} is now in the live queue.`, 'Checked in');
       void this.queueCountService?.refresh();
       void this.loadData(); // Refresh list
     } catch (e: any) {
       console.error(e);
-      if (e.message && e.message.includes('already in queue')) {
-        // Just update status if already keyed
-        await this.cloudService.saveAppointment({ id: appt.id, status: 'CHECKED_IN' });
-        void this.loadData();
-      } else {
-        await this.dialogService?.open({
-          title: 'Check-in failed',
-          message: e.message ? `Could not check in: ${e.message}` : 'Could not check in.',
-          type: 'error'
-        });
-      }
+      await this.dialogService?.open({
+        title: 'Check-in failed',
+        message: e.message ? `Could not check in: ${e.message}` : 'Could not check in.',
+        type: 'error'
+      });
     }
   }
 

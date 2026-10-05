@@ -1604,6 +1604,8 @@ handleGuardedDb('db:transitionAppointment', (_, input) =>
     invokeDbMethod(databaseService, 'transitionAppointment', [input], requireDesk().id));
 handleGuardedDb('db:getAppointmentHistory', (_, id) =>
     invokeDbMethod(databaseService, 'getAppointmentHistory', [id], requireDesk().id));
+handleGuardedDb('db:getAppointmentByVisit', (_, visitId) =>
+    invokeDbMethod(databaseService, 'getAppointmentByVisit', [visitId], requireDesk().id));
 handleGuardedDb('db:detectConflicts', (_, input) =>
     invokeDbMethod(databaseService, 'detectConflicts', [input], requireDesk().id));
 handleGuardedDb('db:checkInAppointment', (_, id) =>

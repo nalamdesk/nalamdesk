@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('electron', {
         saveAppointment: (appt: any) => ipcRenderer.invoke('db:saveAppointment', appt),
         transitionAppointment: (input: { id: number; to: string; reason?: string; date?: string; time?: string }) => ipcRenderer.invoke('db:transitionAppointment', input),
         getAppointmentHistory: (id: number) => ipcRenderer.invoke('db:getAppointmentHistory', id),
+        getAppointmentByVisit: (visitId: number) => ipcRenderer.invoke('db:getAppointmentByVisit', visitId),
         detectConflicts: (input: { doctorId?: number; date?: string; time?: string; excludeId?: number }) => ipcRenderer.invoke('db:detectConflicts', input),
         checkInAppointment: (id: number) => ipcRenderer.invoke('db:checkInAppointment', id),
         fulfillAppointment: (input: { id: number; visitId: number }) => ipcRenderer.invoke('db:fulfillAppointment', input),

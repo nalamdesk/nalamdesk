@@ -3676,6 +3676,13 @@ export class DatabaseService {
             .all(Number(appointmentId));
     }
 
+    /** Source booking for a visit (chart display of the encounter link). */
+    getAppointmentByVisit(visitId: number) {
+        return this.db.prepare(`SELECT a.*, p.name as patient_name
+            FROM appointments a LEFT JOIN patients p ON p.id = a.patient_id
+            WHERE a.visit_id = ? LIMIT 1`).get(Number(visitId));
+    }
+
     /**
      * Slot conflicts: same doctor (or whole clinic when no doctor given),
      * same day, overlapping 30-minute windows, ignoring terminals.
@@ -3763,10 +3770,21 @@ export class DatabaseService {
             const row = this.db.prepare('SELECT id, patient_id, status, doctor_id FROM appointments WHERE id = ?').get(Number(id)) as any;
             if (!row) throw new Error('Appointment not found.');
             this.assertFulfillDoctor(row, actingUserId);
-            const visit = this.db.prepare('SELECT id, patient_id FROM visits WHERE id = ?').get(Number(visitId)) as any;
+            const visit = this.db.prepare('SELECT id, patient_id, status FROM visits WHERE id = ?').get(Number(visitId)) as any;
             if (!visit) throw new Error('Visit not found.');
             if (Number(visit.patient_id) !== Number(row.patient_id)) {
                 throw new Error('Visit belongs to another patient.');
+            }
+            // A completion record must be finished and unclaimed: linking
+            // an in-progress visit (or one already closing another booking)
+            // would certify care that hasn't happened yet.
+            if (String(visit.status || '') !== 'finished') {
+                throw new Error('Only finished visits can fulfill an appointment.');
+            }
+            const claimed = this.db.prepare(
+                'SELECT id FROM appointments WHERE visit_id = ? AND id != ?').get(Number(visitId), Number(id)) as any;
+            if (claimed) {
+                throw new Error('Visit is already linked to another appointment.');
             }
             const moved = this._transitionAppointment(Number(id), 'fulfilled', undefined, actingUserId ?? undefined, { allowFulfill: true });
             this.db.prepare('UPDATE appointments SET visit_id = ? WHERE id = ?').run(Number(visitId), Number(id));

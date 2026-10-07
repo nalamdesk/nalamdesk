@@ -84,4 +84,71 @@ describe('UpdatePromptComponent', () => {
         component.install();
         expect(updates.install).toHaveBeenCalled();
     });
+
+    it('titles every state and falls back on missing fields', () => {
+        updates.status = () => ({ state: 'skipped', reason: 'x' });
+        expect(component.title).toBe('Updates');
+        updates.status = () => ({ state: 'available' });
+        expect(component.title).toBe('Update available');
+        expect(component.body).toContain('unknown');
+        updates.status = () => ({ state: 'error' });
+        expect(component.body).toBe('Update failed.');
+        updates.status = () => ({ state: 'up-to-date' });
+        expect(component.body).toContain('current');
+        updates.promptOpen = () => false;
+        expect(component.showPrompt).toBe(false);
+        component.ngAfterViewChecked();
+    });
+
+    it('traps focus and restores it on dismiss', () => {
+        const anchor = document.createElement('button');
+        anchor.id = 'update-prompt-primary';
+        document.body.appendChild(anchor);
+        try {
+            updates.promptOpen = () => true;
+            const before = document.createElement('button');
+            document.body.appendChild(before);
+            before.focus();
+            component.ngAfterViewChecked();
+            expect(document.activeElement).toBe(anchor);
+            component.later();
+            expect(document.activeElement).toBe(before);
+            expect(updates.later).toHaveBeenCalled();
+            before.remove();
+        } finally {
+            anchor.remove();
+        }
+    });
+
+    it('wraps tab focus inside the dialog', () => {
+        const dialog = document.createElement('div');
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        const first = document.createElement('button');
+        const last = document.createElement('button');
+        dialog.append(first, last);
+        document.body.appendChild(dialog);
+        try {
+            first.focus();
+            const shift = { key: 'Tab', shiftKey: true, preventDefault: vi.fn() } as any;
+            component.onPromptKeydown(shift);
+            expect(document.activeElement).toBe(last);
+            expect(shift.preventDefault).toHaveBeenCalled();
+
+            last.focus();
+            const plain = { key: 'Tab', shiftKey: false, preventDefault: vi.fn() } as any;
+            component.onPromptKeydown(plain);
+            expect(document.activeElement).toBe(first);
+        } finally {
+            dialog.remove();
+        }
+    });
+
+    it('ignores tab without dialog buttons or unrelated keys', () => {
+        document.querySelectorAll('[role="dialog"]').forEach((d) => d.remove());
+        const tab = { key: 'Tab', shiftKey: false, preventDefault: vi.fn() } as any;
+        component.onPromptKeydown(tab);
+        expect(tab.preventDefault).not.toHaveBeenCalled();
+        component.onPromptKeydown({ key: 'Enter', preventDefault: vi.fn() } as any);
+    });
 });

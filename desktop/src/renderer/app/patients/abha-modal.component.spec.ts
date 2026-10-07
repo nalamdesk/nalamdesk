@@ -4,6 +4,9 @@
 import '@angular/compiler';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AbhaModalComponent } from './abha-modal.component';
+import { jsPDF } from 'jspdf';
+
+vi.mock('jspdf', () => ({ jsPDF: vi.fn() }));
 
 describe('AbhaModalComponent', () => {
     let component: AbhaModalComponent;
@@ -140,5 +143,127 @@ describe('AbhaModalComponent', () => {
         component.close.emit();
         expect(closed).toHaveLength(1);
         expect(mockDataService.invoke).not.toHaveBeenCalled();
+    });
+
+    it('guards lookup, otp, and link entries', async () => {
+        component.busy = true;
+        component.address = '  ';
+        component.identifier = ' ';
+        component.otp = '123';
+        component.patientId = null;
+        await component.lookup();
+        await component.requestOtp();
+        await component.requestLoginOtp();
+        await component.confirmOtp();
+        await component.showCard('');
+        await component.link('Nobody');
+        expect(mockDataService.invoke).not.toHaveBeenCalled();
+        component.busy = false;
+    });
+
+    it('reports lookup and otp failures', async () => {
+        mockDataService.invoke.mockRejectedValueOnce(new Error('gateway down'));
+        component.address = 'x@sbx';
+        await component.lookup();
+        expect(component.error).toBe('gateway down');
+        expect(component.busy).toBe(false);
+
+        mockDataService.invoke.mockRejectedValueOnce(new Error('sms down'));
+        component.identifier = '9999999999';
+        await component.requestOtp();
+        expect(component.error).toBe('sms down');
+
+        component.verifiedAddress = 'x@sbx';
+        mockDataService.invoke.mockRejectedValueOnce(new Error('login down'));
+        await component.requestLoginOtp();
+        expect(component.error).toBe('login down');
+    });
+
+    it('voids verification when the address is edited', () => {
+        component.verifiedAddress = 'x@sbx';
+        component.foundName = 'X';
+        component.onAddressInput('x@sbx');
+        expect(component.verifiedAddress).toBe('x@sbx');
+        component.onAddressInput('y@sbx');
+        expect(component.verifiedAddress).toBe('');
+        expect(component.foundName).toBe('');
+        expect(component.lookupMiss).toBe(false);
+    });
+
+    it('confirms enrollment otps and reports confirm failures', async () => {
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'abdmAbhaConfirmOtp') return Promise.resolve({ abhaAddress: 'n@sbx', name: 'N' });
+            if (method === 'abdmAbhaCard') return Promise.resolve({ name: 'N', gender: 'F' });
+            return Promise.resolve(null);
+        });
+        component.otpMode = 'enroll';
+        component.txnId = 't1';
+        component.otp = '123456';
+        await component.confirmOtp();
+        expect(component.step).toBe('card');
+        expect(component.card).toMatchObject({ abhaAddress: 'n@sbx' });
+
+        mockDataService.invoke.mockRejectedValueOnce(new Error('bad otp'));
+        component.otp = '654321';
+        await component.confirmOtp();
+        expect(component.error).toBe('bad otp');
+    });
+
+    it('loads cards and reports card failures', async () => {
+        mockDataService.invoke.mockResolvedValue({ name: 'N', mock: true });
+        await component.showCard('n@sbx', 'Fallback');
+        expect(component.card).toMatchObject({ name: 'N' });
+        expect(component.mockHint).toContain('Mock');
+
+        mockDataService.invoke.mockRejectedValueOnce(new Error('card down'));
+        await component.showCard('n@sbx', 'N');
+        expect(component.error).toBe('card down');
+    });
+
+    it('links from the verified address and reports link failures', async () => {
+        const linked: any[] = [];
+        component.linked.subscribe((v) => linked.push(v));
+        component.verifiedAddress = 'v@sbx';
+        mockDataService.invoke.mockResolvedValue({ id: 1 });
+        await component.link('');
+        expect(linked).toEqual([{ abhaAddress: 'v@sbx', abhaName: '' }]);
+        expect(component.linkedDone).toBe(true);
+
+        mockDataService.invoke.mockRejectedValueOnce(new Error('link down'));
+        await component.link('V');
+        expect(component.error).toBe('link down');
+    });
+
+    it('prints the card through the browser', () => {
+        const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
+        component.printCard();
+        expect(print).toHaveBeenCalled();
+        print.mockRestore();
+    });
+
+    it('saves the card as a PDF with details and photo', () => {
+        const save = vi.fn();
+        const addImage = vi.fn();
+        const doc = {
+            setFont: vi.fn(), setFontSize: vi.fn(), setTextColor: vi.fn(),
+            text: vi.fn(), addImage, save
+        };
+        vi.mocked(jsPDF).mockImplementation(function (this: unknown) { return doc as any; });
+        component.card = {
+            abhaAddress: 'user name@sbx', name: 'Asha',
+            gender: 'F', dateOfBirth: '2000-01-01',
+            imageBase64: 'aGVsbG8=', mimeType: 'image/png'
+        };
+        component.downloadCard();
+        expect(doc.text).toHaveBeenCalledWith(expect.stringContaining('ABHA'), 10, 12);
+        expect(addImage).toHaveBeenCalled();
+        expect(save).toHaveBeenCalledWith(expect.stringMatching(/^abha-card-.*\.pdf$/));
+
+        addImage.mockImplementationOnce(() => { throw new Error('bad image'); });
+        component.downloadCard();
+        expect(save).toHaveBeenCalledTimes(2);
+
+        component.card = null;
+        component.downloadCard();
     });
 });

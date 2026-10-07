@@ -89,4 +89,48 @@ describe('NavbarComponent', () => {
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(component.clinicName).toBe('Test Clinic');
     });
+
+    it('loads doctors with stored, single, and empty selections', async () => {
+        localStorage.setItem('selectedDoctorId', '7');
+        mockDataService.invoke.mockResolvedValue([{ id: 3 }]);
+        await component.loadDoctors();
+        expect(component.doctors).toHaveLength(1);
+        expect(component.selectedDoctorId).toBe(7);
+
+        localStorage.removeItem('selectedDoctorId');
+        await component.loadDoctors();
+        expect(component.selectedDoctorId).toBe(3);
+
+        mockDataService.invoke.mockResolvedValue([]);
+        await component.loadDoctors();
+        expect(component.doctors).toEqual([]);
+    });
+
+    it('tolerates settings and doctor load failures', async () => {
+        mockDataService.invoke.mockRejectedValueOnce(new Error('db down'));
+        await component.loadSettings();
+        mockDataService.invoke.mockRejectedValueOnce(new Error('db down'));
+        await component.loadDoctors();
+    });
+
+    it('persists or clears the doctor pick', () => {
+        component.selectedDoctorId = 9;
+        component.onDoctorChange();
+        expect(localStorage.getItem('selectedDoctorId')).toBe('9');
+        component.selectedDoctorId = null;
+        component.onDoctorChange();
+        expect(localStorage.getItem('selectedDoctorId')).toBeNull();
+    });
+
+    it('initializes runtime on electron sessions', async () => {
+        (window as any).electron = {};
+        component.isElectron = true;
+        mockAuthService.getUser.mockReturnValue({ name: 'A', role: 'doctor' });
+        component.ngOnInit();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(mockRuntimeService.init).toHaveBeenCalled();
+        expect(component.currentUser.role).toBe('doctor');
+        delete (window as any).electron;
+        component.isElectron = false;
+    });
 });

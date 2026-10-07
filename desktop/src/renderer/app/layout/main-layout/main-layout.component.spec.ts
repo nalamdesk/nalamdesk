@@ -136,4 +136,85 @@ describe('MainLayoutComponent', () => {
         layout.retakeTour();
         expect(tours.start).toHaveBeenCalledWith('doctor');
     });
+
+    it('returns zero queue count when the badge service throws', () => {
+        const bad = { count: () => { throw new Error('down'); }, refresh: vi.fn() };
+        const layout = new MainLayoutComponent(
+            mockRouter, mockDialogService, mockAuthService, mockNgZone,
+            mockRuntimeService, undefined, undefined, bad as any
+        );
+        expect(layout.queueCount).toBe(0);
+    });
+
+    it('initializes runtime and refreshes on navigation end', async () => {
+        const events = new Subject();
+        mockRouter.events = events;
+        (globalThis as any).electron = {};
+        const runtime = { init: vi.fn(async () => undefined), lanAccessUrl: '' };
+        const count = { count: () => 0, refresh: vi.fn(async () => undefined) };
+        const layout = new MainLayoutComponent(
+            mockRouter, mockDialogService, mockAuthService, mockNgZone,
+            runtime as any, undefined, undefined, count as any
+        );
+        layout.ngOnInit();
+        expect(runtime.init).toHaveBeenCalled();
+        events.next(new NavigationEnd(1, '/queue', '/queue'));
+        await Promise.resolve();
+        expect(count.refresh).toHaveBeenCalledTimes(2);
+        layout.ngOnDestroy();
+        delete (globalThis as any).electron;
+    });
+
+    it('copies the LAN URL through electron IPC or the web clipboard', async () => {
+        mockRuntimeService.lanAccessUrl = 'http://192.168.1.10:3002';
+        const writeText = vi.fn(async () => undefined);
+        (globalThis as any).electron = { clipboard: { writeText } };
+        component.copyIp();
+        await Promise.resolve();
+        expect(writeText).toHaveBeenCalledWith('http://192.168.1.10:3002');
+        expect(component.isCopied).toBe(true);
+        delete (globalThis as any).electron;
+
+        const webWrite = vi.fn(async () => undefined);
+        (navigator as any).clipboard = { writeText: webWrite };
+        component.isCopied = false;
+        component.copyIp();
+        await Promise.resolve();
+        expect(webWrite).toHaveBeenCalled();
+        delete (navigator as any).clipboard;
+
+        mockRuntimeService.lanAccessUrl = '';
+        component.copyIp();
+    });
+
+    it('logs web clipboard failures', async () => {
+        mockRuntimeService.lanAccessUrl = 'http://x:3002';
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        (navigator as any).clipboard = { writeText: vi.fn(async () => { throw new Error('denied'); }) };
+        delete (globalThis as any).electron;
+        component.copyIp();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(error).toHaveBeenCalledWith('Copy failed:', expect.any(Error));
+        delete (navigator as any).clipboard;
+        mockRuntimeService.lanAccessUrl = '';
+    });
+
+    it('derives route names and user initials', () => {
+        mockRouter.url = '/';
+        expect(component.currentRouteName).toBe('Dashboard');
+        mockRouter.url = '/patients';
+        expect(component.currentRouteName).toBe('Patients');
+
+        component.currentUser = null;
+        expect(component.getUserInitials()).toBe('U');
+        component.currentUser = { name: 'Amy' };
+        expect(component.getUserInitials()).toBe('AM');
+        component.currentUser = { name: 'Amy Pond' };
+        expect(component.getUserInitials()).toBe('AP');
+    });
+
+    it('tolerates a missing drawer checkbox on close', () => {
+        component.drawerCheckbox = undefined as any;
+        expect(() => component.closeDrawer()).not.toThrow();
+    });
 });

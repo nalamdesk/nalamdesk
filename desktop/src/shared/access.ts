@@ -145,7 +145,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
         permissions: [
             'getPatients', 'findDuplicateCandidates', 'getQueue', 'addToQueue', 'removeFromQueue',
             'updateQueueStatus', 'updateQueueStatusByPatientId', 'getPublicSettings',
-            'getDashboardStats', 'getAppointments', 'getAppointmentsByPatient', 'getAppointmentByVisit', 'saveAppointment', 'getVisits',
+            'getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits',
             'getVitals', 'getVitalsHistory', 'getEncounterVitals',
             'abdmAbhaLookup', 'abdmGetShareTokens', 'abdmAcceptShareToken',
             'abdmGetInbox'

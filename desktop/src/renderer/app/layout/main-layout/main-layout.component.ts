@@ -169,6 +169,14 @@ import { TourOverlayComponent } from '../../shared/components/tour-overlay/tour-
       <div class="relative w-full max-w-md rounded-lg bg-white p-6 shadow-lg border border-gray-200">
         <h3 class="text-lg font-bold text-gray-800">Select responsible doctor</h3>
         <p class="text-sm text-gray-500 mt-1">The consultation is recorded under their license. They remain clinically responsible.</p>
+        <div class="mt-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="attending-reason">Why is this visit attributed to them?</label>
+          <textarea id="attending-reason" rows="2" placeholder="e.g. Covering night shift for Dr. Rao"
+              [value]="doctorPick?.reasonInput() ?? ''"
+              (input)="doctorPick?.reasonInput.set(($event.target as HTMLTextAreaElement).value); doctorPick?.reasonError.set(false)"
+              class="w-full border rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+          <p *ngIf="doctorPick?.reasonError()" class="text-xs text-red-600 mt-1">A short reason is required — it is written to the audit trail.</p>
+        </div>
         <div class="mt-4 space-y-2 max-h-64 overflow-y-auto">
           <button *ngFor="let d of doctorPick?.doctors() ?? []" (click)="doctorPick?.choose(d.id)"
                   class="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition flex items-center justify-between gap-3">

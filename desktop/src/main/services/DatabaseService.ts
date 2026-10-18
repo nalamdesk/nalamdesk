@@ -2267,16 +2267,8 @@ export class DatabaseService {
             `).run(queue.id, patientId);
             if (queue.status === 'waiting' && queueUpdate.changes !== 1) throw new Error('Queue entry is no longer available');
 
-            const targetDoctorId = Number(input?.doctorId || actingUserId);
-            const practitioner = this.getPractitioner(targetDoctorId);
-            if (!practitioner) {
-                throw new Error('Clinical authoring requires an active licensed practitioner');
-            }
-            const licenseSnapshot = JSON.stringify({
-                name: practitioner.name,
-                license_number: practitioner.license_number || '',
-                specialty: practitioner.specialty || ''
-            });
+            const { practitioner, licenseSnapshot, attributionReason } =
+                this.resolveAttendingPractitioner(input, actingUserId);
 
             const result = this.db.prepare(`
                 INSERT INTO visits (
@@ -2290,7 +2282,10 @@ export class DatabaseService {
                 this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'begin', Number(result.lastInsertRowid), patientId, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
-            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started encounter for queue entry ${queue.id}`);
+            const attributed = attributionReason
+                ? ` under ${practitioner.name} (reason: ${attributionReason})`
+                : ` under ${practitioner.name}`;
+            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started encounter for queue entry ${queue.id}${attributed}`);
             return this.getEncounterById(Number(result.lastInsertRowid));
         });
 
@@ -2420,16 +2415,8 @@ export class DatabaseService {
                 });
             }
 
-            const targetDoctorId = Number(input?.doctorId || actingUserId);
-            const practitioner = this.getPractitioner(targetDoctorId);
-            if (!practitioner) {
-                throw new Error('Clinical authoring requires an active licensed practitioner');
-            }
-            const licenseSnapshot = JSON.stringify({
-                name: practitioner.name,
-                license_number: practitioner.license_number || '',
-                specialty: practitioner.specialty || ''
-            });
+            const { practitioner, licenseSnapshot, attributionReason } =
+                this.resolveAttendingPractitioner(input, actingUserId);
 
             const queue = this.db.prepare(`
                 SELECT q.*
@@ -2462,7 +2449,10 @@ export class DatabaseService {
                 this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'next', Number(result.lastInsertRowid), queue.patient_id, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
-            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started next encounter for queue entry ${queue.id}`);
+            const attributedNext = attributionReason
+                ? ` under ${practitioner.name} (reason: ${attributionReason})`
+                : ` under ${practitioner.name}`;
+            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started next encounter for queue entry ${queue.id}${attributedNext}`);
             return this.getEncounterById(Number(result.lastInsertRowid));
         });
         return beginNext.immediate();
@@ -2512,6 +2502,38 @@ export class DatabaseService {
             throw new Error('Start request key is stale');
         }
         return this.hydrateVisit(encounter);
+    }
+
+    /**
+     * Resolves the attending practitioner for a new encounter (KB-1).
+     * The doctor named on the record must be the acting user, unless the
+     * acting user is an admin attributing to someone else with a recorded
+     * reason. Callers pass input.doctorId + input.attributionReason through.
+     */
+    private resolveAttendingPractitioner(input: any, actingUserId: number) {
+        const actor = Number(actingUserId);
+        const targetDoctorId = Number(input?.doctorId || actor);
+        const practitioner = this.getPractitioner(targetDoctorId);
+        if (!practitioner) {
+            throw new Error('Clinical authoring requires an active licensed practitioner');
+        }
+        let attributionReason = '';
+        if (Number(practitioner.id) !== actor) {
+            const actorRow = this.db.prepare('SELECT role FROM users WHERE id = ?').get(actor) as any;
+            if (!actorRow || actorRow.role !== 'admin') {
+                throw new Error('Consultations must be started under your own name. An admin can attribute this visit to another doctor with a reason.');
+            }
+            attributionReason = String(input?.attributionReason || '').trim();
+            if (!attributionReason) {
+                throw new Error('A reason is required to start a consultation under another doctor.');
+            }
+        }
+        const licenseSnapshot = JSON.stringify({
+            name: practitioner.name,
+            license_number: practitioner.license_number || '',
+            specialty: practitioner.specialty || ''
+        });
+        return { practitioner, licenseSnapshot, attributionReason };
     }
 
     private assertResponsiblePractitioner(encounter: any, actingUserId: number) {

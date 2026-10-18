@@ -10,7 +10,7 @@ import { AuthService } from '../../services/auth.service';
 import { DataService } from '../../services/api.service';
 import { DialogService } from '../../shared/services/dialog.service';
 import { ToastService } from '../../shared/services/toast.service';
-import { DoctorPickService } from '../../shared/services/doctor-pick.service';
+import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../../shared/services/doctor-pick.service';
 import { newRequestId } from '../../services/request-id';
 import { combineLatest } from 'rxjs';
 import { VitalsFormComponent } from '../vitals/vitals-form.component';
@@ -714,9 +714,9 @@ export class VisitComponent implements OnInit {
   // Admins consult as scribes: the encounter is attributed to them (author_id)
   // while clinical responsibility stays with a licensed doctor (doctor_id),
   // preserving practitioner provenance and the license snapshot.
-  // Returns undefined for non-admins (no doctorId needed), a doctor id when
+  // Returns undefined for non-admins (no doctorId needed), the pick when
   // resolved, or null when the admin cancelled or none exists (abort).
-  private async resolveResponsibleDoctorId(): Promise<number | null | undefined> {
+  private async resolveResponsibleDoctorId(): Promise<{ doctorId: number; attributionReason: string } | null | undefined> {
     if (this.currentUser?.role !== 'admin') return undefined;
     const doctors = await this.dataService.invoke<any[]>('getDoctors').catch(() => []);
     if (!doctors || doctors.length === 0) {
@@ -727,8 +727,12 @@ export class VisitComponent implements OnInit {
       });
       return null;
     }
-    if (doctors.length === 1 || !this.doctorPick) return doctors[0]?.id ?? null;
-    return this.doctorPick.request(doctors);
+    if (doctors.length === 1 || !this.doctorPick) {
+      const id = doctors[0]?.id ?? null;
+      return id == null ? null : { doctorId: id, attributionReason: SOLE_PRACTITIONER_REASON };
+    }
+    const picked = await this.doctorPick.request(doctors);
+    return picked == null ? null : { doctorId: picked.id, attributionReason: picked.reason };
   }
 
   private setChartWritable(writable: boolean) {
@@ -1036,8 +1040,8 @@ export class VisitComponent implements OnInit {
         const queueEntry = queue.find(item => item.patient_id === this.patientId && item.status === 'waiting');
         if (!queueEntry) throw new Error('Patient does not have a waiting queue entry');
         this.startRequestId ||= newRequestId();
-        const doctorId = await this.resolveResponsibleDoctorId();
-        if (this.currentUser?.role === 'admin' && doctorId == null) {
+        const attending = await this.resolveResponsibleDoctorId();
+        if (this.currentUser?.role === 'admin' && attending == null) {
           this.consultationStartPending = false;
           this.isConsulting = false;
           this.setChartWritable(false);
@@ -1047,7 +1051,7 @@ export class VisitComponent implements OnInit {
           patientId: this.patientId,
           queueEntryId: queueEntry.id,
           startRequestId: this.startRequestId,
-          ...(doctorId ? { doctorId } : {})
+          ...(attending ? { doctorId: attending.doctorId, attributionReason: attending.attributionReason } : {})
         });
         this.consultationStartPending = false;
         this.startRequestId = null;
@@ -1336,15 +1340,15 @@ export class VisitComponent implements OnInit {
 
   private async advanceToNext(): Promise<void> {
     this.nextStartRequestId ||= newRequestId();
-    const nextDoctorId = await this.resolveResponsibleDoctorId();
-    if (this.currentUser?.role === 'admin' && nextDoctorId == null) {
+    const nextAttending = await this.resolveResponsibleDoctorId();
+    if (this.currentUser?.role === 'admin' && nextAttending == null) {
       this.router.navigate(['/queue']);
       return;
     }
     try {
       const nextEncounter = await this.dataService.invoke<any>('beginNextConsultation', {
         startRequestId: this.nextStartRequestId,
-        ...(nextDoctorId ? { doctorId: nextDoctorId } : {})
+        ...(nextAttending ? { doctorId: nextAttending.doctorId, attributionReason: nextAttending.attributionReason } : {})
       });
       this.nextStartRequestId = null;
       if (nextEncounter) {

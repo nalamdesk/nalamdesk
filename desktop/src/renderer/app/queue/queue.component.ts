@@ -13,7 +13,7 @@ import { SharedTableComponent } from '../shared/components/table/table.component
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../shared/components/view-toggle/view-toggle.component';
 import { QueueCountService } from '../shared/services/queue-count.service';
 import { ColDef } from 'ag-grid-community';
-import { DoctorPickService } from '../shared/services/doctor-pick.service';
+import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/doctor-pick.service';
 
 @Component({
   selector: 'app-queue',
@@ -502,6 +502,7 @@ export class QueueComponent implements OnInit, OnDestroy {
         const startRequestId = this.startRequestIds.get(item.id) || newRequestId();
         this.startRequestIds.set(item.id, startRequestId);
         let doctorId: number | undefined;
+        let attributionReason: string | undefined;
         const currentUser = this.authService?.getUser();
         if (currentUser?.role === 'admin') {
           const doctors = await this.dataService.invoke<any[]>('getDoctors').catch(() => []);
@@ -514,15 +515,17 @@ export class QueueComponent implements OnInit, OnDestroy {
             return;
           }
           // One doctor -> deterministic; several -> the admin explicitly picks the attending.
-          const picked = this.doctorPick ? await this.doctorPick.request(doctors) : doctors[0]?.id ?? null;
+          const picked = this.doctorPick ? await this.doctorPick.request(doctors) : (doctors[0]?.id != null ? { id: doctors[0].id, reason: SOLE_PRACTITIONER_REASON } : null);
           if (picked == null) return;
-          doctorId = picked;
+          doctorId = picked.id;
+          attributionReason = picked.reason;
         }
         encounter = await this.dataService.invoke<any>('beginConsultation', {
           patientId: item.patient_id,
           queueEntryId: item.id,
           startRequestId,
-          ...(doctorId ? { doctorId } : {})
+          ...(doctorId ? { doctorId } : {}),
+          ...(attributionReason ? { attributionReason } : {})
         });
         this.startRequestIds.delete(item.id);
       }

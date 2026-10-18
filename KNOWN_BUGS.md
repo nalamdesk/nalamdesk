@@ -1,8 +1,25 @@
 # Known Bugs & Accepted Limitations
 
-Clinical-safety findings from PR #68 review that are **acknowledged but deliberately
-deferred**. Each item needs a product or design decision before a code fix lands.
-New code must not make these worse; fixes should reference the tracking issue.
+Clinical-safety findings from PR #68 review. KB-2 below is **resolved** (verified
+against current code with passing regression tests); KB-1, KB-3, KB-4 remain
+**acknowledged but deliberately deferred**. Each remaining item needs a product
+or design decision before a code fix lands. New code must not make these worse;
+fixes should reference the tracking issue.
+
+## KB-2 — RESOLVED: Queue removal preserves triage audit history
+
+Previously removal hard-deleted the queue row. Current code uses a terminal
+`status = 'removed'` (`DatabaseService.removeFromQueue`, no `DELETE`), and
+`queue_triage_history.queue_id` has no `ON DELETE CASCADE`, so history survives
+removal and stays readable via `getQueueTriageHistory`. Proven by
+`ClinicalSafety.spec.ts` ("preserves triage history audit records when queue
+entries are removed", "removes queue entries as terminal rows preserving
+triage history"). Closed 2026-10-18; tracking issue #69 checkbox ticked.
+Original text retained below for the audit trail:
+
+> `queue_triage_history` cascaded from `patient_queue`, while removing a waiting
+> entry hard-deleted the row — erasing every recorded priority change, reason,
+> actor, and timestamp despite the documented permanent audit trail.
 
 ## KB-1 — Practitioner attribution is caller-supplied (trust model)
 

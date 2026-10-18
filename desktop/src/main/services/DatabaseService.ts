@@ -2380,7 +2380,33 @@ export class DatabaseService {
             this.logAudit('ENCOUNTER_COMPLETE', 'visits', encounterId, actingUserId, `Completed queue entry ${encounter.queue_entry_id}`);
             return this.getEncounterById(encounterId);
         });
-        return complete.immediate();
+        const completed = complete.immediate();
+        // Close the booking loop automatically: an arrived appointment fed by
+        // this queue entry fulfills against the finished visit when the
+        // treating practitioner matches the booking (or an admin completes).
+        // Anything else stays arrived for explicit linking from the day view.
+        this.autoFulfillAppointment(completed.queue_entry_id, completed.id, actingUserId);
+        return completed;
+    }
+
+    /**
+     * Best-effort booking fulfillment on the completion path (#19). Never
+     * throws: completion must not fail because a booking names someone else.
+     */
+    private autoFulfillAppointment(queueEntryId: unknown, visitId: number, actingUserId: number) {
+        const qid = Number(queueEntryId);
+        if (!qid) return;
+        const booking = this.db.prepare(
+            `SELECT id, doctor_id, status FROM appointments WHERE queue_entry_id = ? AND status = 'arrived' LIMIT 1`
+        ).get(qid) as any;
+        if (!booking) return;
+        const actor = this.db.prepare('SELECT role FROM users WHERE id = ?').get(Number(actingUserId)) as any;
+        if (actor?.role !== 'admin' && booking.doctor_id != null && Number(booking.doctor_id) !== Number(actingUserId)) return;
+        try {
+            this.fulfillAppointment(Number(booking.id), visitId, actingUserId);
+        } catch (e) {
+            console.error('Auto-fulfill skipped:', e instanceof Error ? e.message : e);
+        }
     }
 
     postponeConsultation(input: any, actingUserId: number) {
@@ -3470,6 +3496,17 @@ export class DatabaseService {
         `).all(date);
     }
 
+    getAppointmentsByPatient(patientId: number) {
+        if (!this.db) throw new Error('DB not initialized');
+        return this.db.prepare(`
+            SELECT a.*, p.name as patient_name, p.mobile as patient_mobile
+            FROM appointments a
+            LEFT JOIN patients p ON p.id = a.patient_id
+            WHERE a.patient_id = ?
+            ORDER BY a.date DESC, a.time DESC
+        `).all(Number(patientId));
+    }
+
     saveAppointment(appt: any, actingUserId?: number) {
         if (!this.db) throw new Error('DB not initialized');
         if (appt.id) {
@@ -3551,6 +3588,7 @@ export class DatabaseService {
             const timeMoved = appt.time !== undefined && String(appt.time) !== String(row.time);
             const patientMoved = appt.patient_id !== undefined && Number(appt.patient_id) !== Number(row.patient_id);
             const doctorMoved = appt.doctor_id !== undefined && Number(appt.doctor_id ?? null) !== Number(row.doctor_id ?? null);
+            const reasonMoved = appt.reason !== undefined && String(appt.reason ?? '') !== String(row.reason ?? '');
             // Shared guard: no reassignment under a live queue entry.
             this.assertReassignSafe(row, appt.patient_id);
             this.applyAppointmentFields(appt, true);
@@ -3562,6 +3600,7 @@ export class DatabaseService {
             // belongs to changes, so it lands in history and audit too.
             if (patientMoved) notes.push(`Reassigned to patient ${appt.patient_id}`);
             if (doctorMoved) notes.push(`Reassigned to doctor ${appt.doctor_id ?? 'unassigned'}`);
+            if (reasonMoved) notes.push('Reason updated');
             if (notes.length > 0) {
                 const from = String(row.status || '').toLowerCase();
                 this.db.prepare(`INSERT INTO appointment_history

@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('electron', {
         updateAppointmentRequestStatus: (data: { id: string, status: string }) => ipcRenderer.invoke('db:updateAppointmentRequestStatus', data),
         // Appointments
         getAppointments: (date: string) => ipcRenderer.invoke('db:getAppointments', date),
+        getAppointmentsByPatient: (patientId: number) => ipcRenderer.invoke('db:getAppointmentsByPatient', patientId),
         saveAppointment: (appt: any) => ipcRenderer.invoke('db:saveAppointment', appt),
         transitionAppointment: (input: { id: number; to: string; reason?: string; date?: string; time?: string }) => ipcRenderer.invoke('db:transitionAppointment', input),
         getAppointmentHistory: (id: number) => ipcRenderer.invoke('db:getAppointmentHistory', id),

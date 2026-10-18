@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 40 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(42);
+        it('should have 43 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(43);
         });
     });
 
@@ -911,6 +911,27 @@ describe('Database Migrations', () => {
             expect(JSON.parse(writes['admin'] || '[]')).toContain('fulfillAppointment');
             expect(JSON.parse(writes['receptionist'] || '[]')).not.toContain('fulfillAppointment');
             expect(writes['nurse']).toBeUndefined();
+        });
+
+        it('grants appointment lookups to all desk roles', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 43)!.up(mockDb);
+            for (const role of ['doctor', 'receptionist', 'nurse', 'admin']) {
+                expect(JSON.parse(writes[role])).toContain('getAppointmentByVisit');
+                expect(JSON.parse(writes[role])).toContain('getAppointmentsByPatient');
+            }
         });
     });
 });

@@ -32,7 +32,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
     'getIdentifiers', 'saveIdentifier', 'deleteIdentifier',
     'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
-            'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
+            'getDashboardStats', 'getDoctors', 'getAppointments', 'getAppointmentsByPatient', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests'
         ]
     },

@@ -942,8 +942,8 @@
                 </div>
 
                 <div *ngIf="editingUser.role === 'doctor'" class="md:col-span-2">
-                    <label class="block text-sm font-medium text-gray-700">Medical License Number <span class="text-red-500">*</span></label>
-                    <input [(ngModel)]="editingUser.license_number" placeholder="e.g. TNMC-12345"
+                    <label class="block text-sm font-medium text-gray-700" for="doctor-license-number">Medical License Number <span class="text-red-500">*</span></label>
+                    <input id="doctor-license-number" [(ngModel)]="editingUser.license_number" placeholder="e.g. TNMC-12345"
                         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
                     <p class="text-[10px] text-gray-400 mt-1">Stamped on every consultation record this doctor signs.</p>
                 </div>

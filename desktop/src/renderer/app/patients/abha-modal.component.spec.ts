@@ -4,15 +4,17 @@
 import '@angular/compiler';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AbhaModalComponent } from './abha-modal.component';
-import { jsPDF } from 'jspdf';
 
-vi.mock('jspdf', () => ({ jsPDF: vi.fn() }));
+const { mockJsPDF } = vi.hoisted(() => ({ mockJsPDF: vi.fn(function (this: unknown) { return undefined; }) }));
+
+vi.mock('jspdf', () => ({ jsPDF: mockJsPDF }));
 
 describe('AbhaModalComponent', () => {
     let component: AbhaModalComponent;
     let mockDataService: any;
 
     beforeEach(() => {
+        mockJsPDF.mockReset();
         mockDataService = { invoke: vi.fn() };
         component = new AbhaModalComponent(mockDataService);
         component.patientId = 7;
@@ -248,13 +250,14 @@ describe('AbhaModalComponent', () => {
             setFont: vi.fn(), setFontSize: vi.fn(), setTextColor: vi.fn(),
             text: vi.fn(), addImage, save
         };
-        vi.mocked(jsPDF).mockImplementation(function (this: unknown) { return doc as any; });
+        mockJsPDF.mockImplementation(function (this: unknown) { return doc as any; });
         component.card = {
             abhaAddress: 'user name@sbx', name: 'Asha',
             gender: 'F', dateOfBirth: '2000-01-01',
             imageBase64: 'aGVsbG8=', mimeType: 'image/png'
         };
         component.downloadCard();
+        expect(mockJsPDF).toHaveBeenCalled();
         expect(doc.text).toHaveBeenCalledWith(expect.stringContaining('ABHA'), 10, 12);
         expect(addImage).toHaveBeenCalled();
         expect(save).toHaveBeenCalledWith(expect.stringMatching(/^abha-card-.*\.pdf$/));

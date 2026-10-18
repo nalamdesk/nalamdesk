@@ -314,7 +314,7 @@ export class AbhaModalComponent {
     /** Save the health ID card as a PDF (works offline, unlike print-to-PDF drivers). */
     downloadCard(): void {
         if (!this.card) return;
-        const doc = new jsPDF({ unit: 'mm', format: [120, 80] });
+        const doc = this.createCardDoc();
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(9);
         doc.setTextColor(100);
@@ -345,6 +345,11 @@ export class AbhaModalComponent {
         doc.text('Issued via ABDM. Verify at nalamdesk.', 10, 72);
         const file = `abha-card-${this.card.abhaAddress.replace(/[^a-zA-Z0-9@.-]/g, '_')}.pdf`;
         doc.save(file);
+    }
+
+    /** Factory seam for the card PDF (lets tests substitute the document). */
+    createCardDoc(): jsPDF {
+        return new jsPDF({ unit: 'mm', format: [120, 80] });
     }
 
     private noteMock(result: any): void {

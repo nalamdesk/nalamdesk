@@ -947,11 +947,28 @@ describe('SettingsComponent Validation', () => {
             });
 
             it('saves a valid new user and clears the form', async () => {
-                component.editingUser = { username: 'newdoc', name: 'New Doc', role: 'doctor', password: '123456' };
+                component.editingUser = { username: 'newdoc', name: 'New Doc', role: 'doctor', password: '123456', license_number: 'MED-1' };
                 invokeImpl({ saveUser: { id: 9 }, getUsers: [] });
                 await component.saveUser();
                 expect(mockData.invoke).toHaveBeenCalledWith('saveUser', expect.objectContaining({ username: 'newdoc' }));
                 expect(component.editingUser).toBeNull();
+            });
+
+            it('requires a license number for new doctor accounts', async () => {
+                component.editingUser = { username: 'nolic', name: 'No Lic', role: 'doctor', password: '123456' };
+                await component.saveUser();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Check user details' }));
+                expect(mockData.invoke).not.toHaveBeenCalledWith('saveUser', expect.anything());
+            });
+
+            it('asks existing license-less doctors to backfill instead of blocking deactivation', async () => {
+                component.editingUser = { id: 7, username: 'legacy', name: 'Legacy', role: 'doctor', active: 1 };
+                await component.saveUser();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Check user details' }));
+                component.editingUser = { id: 7, username: 'legacy', name: 'Legacy', role: 'doctor', active: 0 };
+                invokeImpl({ saveUser: { id: 7 }, getUsers: [] });
+                await component.saveUser();
+                expect(mockData.invoke).toHaveBeenCalledWith('saveUser', expect.objectContaining({ id: 7 }));
             });
 
             it('warns instead of saving an invalid user', async () => {

@@ -178,7 +178,7 @@ export class DatabaseService {
 
     // Users
     getUsers() {
-        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date, abdm_hpr_id FROM users ORDER BY created_at DESC').all();
+        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date, abdm_hpr_id, license_number, specialty FROM users ORDER BY created_at DESC').all();
     }
 
     getUserByUsername(username: string) {
@@ -283,6 +283,9 @@ export class DatabaseService {
 
     private async insertNewUser(safeUser: any, argon2: any, actingUserId?: number) {
         if (!safeUser.password) throw new Error('Password required for new user');
+        if (String(safeUser.role || '').toLowerCase() === 'doctor' && !String(safeUser.license_number || '').trim()) {
+            throw new Error('A license number is required for new doctor accounts.');
+        }
 
         console.log(`[DB] Creating user ${safeUser.username}`);
         safeUser.password = await argon2.hash(safeUser.password);

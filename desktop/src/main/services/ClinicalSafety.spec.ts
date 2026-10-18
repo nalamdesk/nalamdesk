@@ -742,7 +742,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         it('preserves per-doctor registry IDs across unrelated edits', async () => {
             await service.saveUser({
                 username: 'drhpr', password: 'Password1!', role: 'doctor',
-                name: 'Dr. HPR', abdm_hpr_id: 'HPR-DOC-1'
+                name: 'Dr. HPR', license_number: 'MED-HPR-1', abdm_hpr_id: 'HPR-DOC-1'
             }, 99);
             const doctors = service.getDoctors() as any[];
             const match = doctors.find((d) => d.username === 'drhpr');

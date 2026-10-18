@@ -34,7 +34,8 @@ describe.skipIf(!process.versions.electron)('CredentialRotationService SQLCipher
         await database.migrate({ skipBackup: true });
         await database.ensureAdminUser('admin-current');
         await database.saveUser({
-            username: 'doctor', password: 'doctor-current', role: 'doctor', name: 'Doctor'
+            username: 'doctor', password: 'doctor-current', role: 'doctor', name: 'Doctor',
+            license_number: 'MED-E2E-1'
         });
         security.completeProvisioning();
     });

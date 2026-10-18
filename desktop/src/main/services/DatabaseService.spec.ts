@@ -90,6 +90,17 @@ describe('DatabaseService', () => {
             }));
         });
 
+        it('requires a license number for new doctor accounts', async () => {
+            await expect(service.saveUser({
+                username: 'nodoc', password: 'password', role: 'doctor', name: 'No Doc'
+            })).rejects.toThrow('license number is required');
+
+            await service.saveUser({
+                username: 'doc', password: 'password', role: 'doctor', name: 'Doc', license_number: 'MED-9'
+            });
+            expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO users'));
+        });
+
         it('should update an existing user', async () => {
             const user = { id: 1, username: 'test', role: 'doctor' };
             // Mock existing user check

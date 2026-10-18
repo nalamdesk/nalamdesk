@@ -30,7 +30,7 @@ test.describe.serial('UI navigation — all modules', () => {
             const users: any[] = await api.db.getUsers();
             let doctor = users.find((u: any) => u.role === 'doctor');
             if (!doctor) {
-                await api.db.saveUser({ username: 'nav_doctor', password, role: 'doctor', name: 'Nav Doctor' });
+                await api.db.saveUser({ username: 'nav_doctor', password, role: 'doctor', name: 'Nav Doctor', license_number: 'MED-NAV-1' });
                 doctor = (await api.db.getUsers()).find((u: any) => u.username === 'nav_doctor');
             }
             const saved: any = await api.db.savePatient({

@@ -129,4 +129,32 @@ describe('appointment lifecycle integration', () => {
         expect(booking.status).toBe('arrived');
         expect(booking.visit_id).toBeNull();
     });
+
+    it('records reason edits in history without moving state', () => {
+        const created: any = service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '10:00', reason: 'Checkup' });
+        const id = Number(created.lastInsertRowid);
+        service.saveAppointment({ id, reason: 'Checkup and flu shot' });
+        const history = service.getAppointmentHistory(id) as any[];
+        expect(history.some((h) => String(h.reason || '').includes('Reason updated'))).toBe(true);
+        expect(db.prepare('SELECT reason FROM appointments WHERE id = ?').get(id).reason).toBe('Checkup and flu shot');
+    });
+
+    it('leaves the booking arrived when its visit is already linked elsewhere', () => {
+        const created: any = service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '10:00', reason: 'Review' });
+        const id = Number(created.lastInsertRowid);
+        service.transitionAppointment(id, 'confirmed', {}, 10);
+        const checked = service.checkInAppointment(id, 10);
+        db.prepare("UPDATE patient_queue SET status = 'completed' WHERE id = ?").run(checked.queueEntryId);
+        const other: any = service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '11:00', reason: 'Other' });
+        const otherId = Number(other.lastInsertRowid);
+        service.transitionAppointment(otherId, 'confirmed', {}, 10);
+        service.checkInAppointment(otherId, 10);
+        const visit = db.prepare(`INSERT INTO visits (patient_id, status) VALUES (1, 'finished')`).run();
+        service.fulfillAppointment(otherId, Number(visit.lastInsertRowid), 11);
+        // Best-effort sweep survives the lost race: no throw, still arrived.
+        (service as any).autoFulfillAppointment(checked.queueEntryId, Number(visit.lastInsertRowid), 11);
+        const booking = db.prepare('SELECT status, visit_id FROM appointments WHERE id = ?').get(id) as any;
+        expect(booking.status).toBe('arrived');
+        expect(booking.visit_id).toBeNull();
+    });
 });

@@ -134,6 +134,102 @@ describe('AppointmentsComponent', () => {
         expect(component.history[2]).toHaveLength(1);
     });
 
+    it('opens and closes the history view', async () => {
+        mockDataService.invoke.mockResolvedValue([{ to_status: 'booked' }]);
+        const row = { id: 2, status: 'booked' } as any;
+        await component.toggleHistory(row);
+        expect(component.expandedId).toBe(2);
+        expect(component.history[2]).toHaveLength(1);
+        await component.toggleHistory(row);
+        expect(component.expandedId).toBeNull();
+    });
+
+    it('clears history when the lookup fails', async () => {
+        mockDataService.invoke.mockRejectedValue(new Error('gone'));
+        const row = { id: 2, status: 'booked' } as any;
+        await component.toggleHistory(row);
+        expect(component.expandedId).toBe(2);
+        expect(component.history[2]).toEqual([]);
+    });
+
+    it('closes an open link picker on second click', async () => {
+        const row = { id: 9, status: 'arrived', patient_id: 7 } as any;
+        mockDataService.invoke.mockResolvedValue([]);
+        await component.toggleLink(row);
+        expect(component.linkingId).toBe(9);
+        await component.toggleLink(row);
+        expect(component.linkingId).toBeNull();
+    });
+
+    it('keeps visits whose link lookup fails', async () => {
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'getVisits') return Promise.resolve([
+                { id: 21, status: 'finished' },
+                { id: 22, status: 'finished' }
+            ]);
+            if (method === 'getAppointmentByVisit') return Promise.reject(new Error('down'));
+            return Promise.resolve([]);
+        });
+        await component.toggleLink({ id: 9, status: 'arrived', patient_id: 7 } as any);
+        expect(component.linkCandidates[9].map((v: any) => v.id)).toEqual([21, 22]);
+    });
+
+    it('reports linkable-visit load failures without stale rows', async () => {
+        mockDataService.invoke.mockRejectedValue(new Error('db down'));
+        await component.toggleLink({ id: 9, status: 'arrived', patient_id: 7 } as any);
+        expect(component.linkCandidates[9]).toEqual([]);
+    });
+
+    it('reports link failures in the dialog', async () => {
+        mockDataService.invoke.mockRejectedValueOnce(new Error('taken'));
+        const dialogSpy = vi.fn().mockResolvedValue(true);
+        (component as any).dialogService = { open: dialogSpy };
+        await component.fulfill({ id: 9 } as any, { id: 21 });
+        expect(dialogSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Link failed' }));
+    });
+
+    it('ignores stale search responses that finish after a newer search', async () => {
+        const resolvers: Array<(v: any) => void> = [];
+        mockDataService.invoke.mockImplementation(() => new Promise((res) => { resolvers.push(res); }));
+        component.form.patientQuery = 'ash';
+        const first = component.searchPatients();
+        component.form.patientQuery = 'asha';
+        const second = component.searchPatients();
+        resolvers[0]([{ id: 1 }]);
+        resolvers[1]([{ id: 2 }]);
+        await first;
+        await second;
+        expect(component.patientHits).toEqual([{ id: 2 }]);
+    });
+
+    it('ignores stale search errors after a newer search', async () => {
+        const resolvers: Array<(v: any, e?: any) => void> = [];
+        mockDataService.invoke.mockImplementation(() => new Promise((res, rej) => { resolvers.push(((v: any) => v ? res(v) : rej(new Error('gone'))) as any); }));
+        component.form.patientQuery = 'ash';
+        const first = component.searchPatients();
+        component.form.patientQuery = 'asha';
+        const second = component.searchPatients();
+        resolvers[0](null);
+        resolvers[1]([{ id: 2 }]);
+        await first;
+        await second;
+        expect(component.patientHits).toEqual([{ id: 2 }]);
+    });
+
+    it('ignores stale conflict errors after a newer check', async () => {
+        const resolvers: Array<(v: any, e?: any) => void> = [];
+        mockDataService.invoke.mockImplementation(() => new Promise((res, rej) => { resolvers.push(((v: any) => v ? res(v) : rej(new Error('gone'))) as any); }));
+        component.form.date = '2026-10-05';
+        component.form.time = '10:00';
+        const first = component.checkConflicts();
+        const second = component.checkConflicts();
+        resolvers[0](null);
+        resolvers[1]([]);
+        await first;
+        await second;
+        expect(component.conflicts).toEqual([]);
+    });
+
     it('ignores stale day loads that finish after a day change', async () => {
         const resolvers: Array<(v: any) => void> = [];
         mockDataService.invoke.mockImplementation(() => new Promise((res) => { resolvers.push(res); }));

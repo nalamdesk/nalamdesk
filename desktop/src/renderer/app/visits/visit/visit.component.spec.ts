@@ -1099,6 +1099,13 @@ describe('VisitComponent', () => {
             await new Promise((r) => setTimeout(r, 0));
             expect(component.sourceBooking).toBeNull();
         });
+
+        it('clears the source booking without a visit', async () => {
+            (component as any).patchEncounter({ prescription: [] });
+            await new Promise((r) => setTimeout(r, 0));
+            expect(component.sourceBooking).toBeNull();
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('getAppointmentByVisit', expect.anything());
+        });
     });
 });
 

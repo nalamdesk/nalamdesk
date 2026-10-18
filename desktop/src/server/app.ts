@@ -41,7 +41,7 @@ export const ALLOWED_IPC_METHODS = [
     'getQueue', 'addToQueue', 'reassessQueueTriage', 'getQueueTriageHistory', 'updateQueueStatus', 'updateQueueStatusByPatientId', 'removeFromQueue',
     'getAuditLogs',
     'getAppointmentRequests', 'updateAppointmentRequestStatus',
-    'getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
+    'getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
     'validateUser', 'getPermissions',
     'getDashboardStats',
     'getPatients', 'getPatientById', 'savePatient', 'deletePatient',

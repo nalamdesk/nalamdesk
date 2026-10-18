@@ -97,8 +97,9 @@ describe('DashboardComponent', () => {
         await full.checkIn(appt);
 
         expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ type: 'confirm', title: 'Check in patient?' }));
-        expect(mockDataService.invoke).toHaveBeenCalledWith('addToQueue', { patientId: 6, priority: 1 });
-        expect(cloud.saveAppointment).toHaveBeenCalledWith({ id: 1, status: 'CHECKED_IN' });
+        // Single atomic IPC: arrived plus exactly one queue entry.
+        expect(mockDataService.invoke).toHaveBeenCalledWith('checkInAppointment', 1);
+        expect(cloud.saveAppointment).not.toHaveBeenCalled();
     });
 
     it('skips check-in when the dialog is cancelled', async () => {

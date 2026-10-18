@@ -32,7 +32,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
     'getIdentifiers', 'saveIdentifier', 'deleteIdentifier',
     'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
-            'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
+            'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests'
         ]
     },
@@ -118,7 +118,7 @@ export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
     'getDailyClose',
     'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
     'getIdentifiers', 'saveIdentifier', 'deleteIdentifier',
-    'transitionAppointment', 'getAppointmentHistory', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
+    'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
     'abdmAckInbox', 'abdmTransferBundle',
     'getUsers', 'saveUser', 'deleteUser', 'getAllRoles',
     'saveRole', 'deleteRole',

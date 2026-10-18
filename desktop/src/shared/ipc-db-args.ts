@@ -76,6 +76,7 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
                 { reason: payload['reason'], date: payload['date'], time: payload['time'] }, actingUserId];
         }
         case 'getAppointmentHistory':
+        case 'getAppointmentByVisit':
         case 'checkInAppointment': {
             return [Number(payloadObject(args[0])['id'] ?? args[0]), actingUserId];
         }

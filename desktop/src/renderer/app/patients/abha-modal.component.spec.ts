@@ -5,28 +5,11 @@ import '@angular/compiler';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AbhaModalComponent } from './abha-modal.component';
 
-const { MockPDF, mockPdfDoc } = vi.hoisted(() => {
-    const doc = {
-        setFont: vi.fn(), setFontSize: vi.fn(), setTextColor: vi.fn(),
-        text: vi.fn(), addImage: vi.fn(), save: vi.fn(),
-    };
-    class MockPDF {
-        constructor(..._args: unknown[]) {
-            void _args;
-            return doc as unknown as void;
-        }
-    }
-    return { MockPDF, mockPdfDoc: doc };
-});
-
-vi.mock('jspdf', () => ({ jsPDF: MockPDF }));
-
 describe('AbhaModalComponent', () => {
     let component: AbhaModalComponent;
     let mockDataService: any;
 
     beforeEach(() => {
-        vi.clearAllMocks();
         mockDataService = { invoke: vi.fn() };
         component = new AbhaModalComponent(mockDataService);
         component.patientId = 7;
@@ -256,21 +239,27 @@ describe('AbhaModalComponent', () => {
     });
 
     it('saves the card as a PDF with details and photo', () => {
+        const doc = {
+            setFont: vi.fn(), setFontSize: vi.fn(), setTextColor: vi.fn(),
+            text: vi.fn(), addImage: vi.fn(), save: vi.fn()
+        };
+        vi.spyOn(component, 'createCardDoc').mockReturnValue(doc as any);
         component.card = {
             abhaAddress: 'user name@sbx', name: 'Asha',
             gender: 'F', dateOfBirth: '2000-01-01',
             imageBase64: 'aGVsbG8=', mimeType: 'image/png'
         };
         component.downloadCard();
-        expect(mockPdfDoc.text).toHaveBeenCalledWith(expect.stringContaining('ABHA'), 10, 12);
-        expect(mockPdfDoc.addImage).toHaveBeenCalled();
-        expect(mockPdfDoc.save).toHaveBeenCalledWith(expect.stringMatching(/^abha-card-.*\.pdf$/));
+        expect(doc.text).toHaveBeenCalledWith(expect.stringContaining('ABHA'), 10, 12);
+        expect(doc.addImage).toHaveBeenCalled();
+        expect(doc.save).toHaveBeenCalledWith(expect.stringMatching(/^abha-card-.*\.pdf$/));
 
-        mockPdfDoc.addImage.mockImplementationOnce(() => { throw new Error('bad image'); });
+        doc.addImage.mockImplementationOnce(() => { throw new Error('bad image'); });
         component.downloadCard();
-        expect(mockPdfDoc.save).toHaveBeenCalledTimes(2);
+        expect(doc.save).toHaveBeenCalledTimes(2);
 
         component.card = null;
         component.downloadCard();
+        expect(doc.save).toHaveBeenCalledTimes(2);
     });
 });

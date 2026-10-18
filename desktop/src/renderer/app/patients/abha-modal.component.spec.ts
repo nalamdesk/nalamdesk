@@ -238,6 +238,13 @@ describe('AbhaModalComponent', () => {
         print.mockRestore();
     });
 
+    it('creates a real card document by default', () => {
+        const doc = component.createCardDoc();
+        expect(doc).toBeDefined();
+        expect(typeof doc.text).toBe('function');
+        expect(typeof doc.save).toBe('function');
+    });
+
     it('saves the card as a PDF with details and photo', () => {
         const doc = {
             setFont: vi.fn(), setFontSize: vi.fn(), setTextColor: vi.fn(),

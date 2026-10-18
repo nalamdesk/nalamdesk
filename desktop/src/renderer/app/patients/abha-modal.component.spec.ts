@@ -5,16 +5,28 @@ import '@angular/compiler';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AbhaModalComponent } from './abha-modal.component';
 
-const { mockJsPDF } = vi.hoisted(() => ({ mockJsPDF: vi.fn(function (this: unknown) { return undefined; }) }));
+const { MockPDF, mockPdfDoc } = vi.hoisted(() => {
+    const doc = {
+        setFont: vi.fn(), setFontSize: vi.fn(), setTextColor: vi.fn(),
+        text: vi.fn(), addImage: vi.fn(), save: vi.fn(),
+    };
+    class MockPDF {
+        constructor(..._args: unknown[]) {
+            void _args;
+            return doc as unknown as void;
+        }
+    }
+    return { MockPDF, mockPdfDoc: doc };
+});
 
-vi.mock('jspdf', () => ({ jsPDF: mockJsPDF }));
+vi.mock('jspdf', () => ({ jsPDF: MockPDF }));
 
 describe('AbhaModalComponent', () => {
     let component: AbhaModalComponent;
     let mockDataService: any;
 
     beforeEach(() => {
-        mockJsPDF.mockReset();
+        vi.clearAllMocks();
         mockDataService = { invoke: vi.fn() };
         component = new AbhaModalComponent(mockDataService);
         component.patientId = 7;
@@ -244,27 +256,19 @@ describe('AbhaModalComponent', () => {
     });
 
     it('saves the card as a PDF with details and photo', () => {
-        const save = vi.fn();
-        const addImage = vi.fn();
-        const doc = {
-            setFont: vi.fn(), setFontSize: vi.fn(), setTextColor: vi.fn(),
-            text: vi.fn(), addImage, save
-        };
-        mockJsPDF.mockImplementation(function (this: unknown) { return doc as any; });
         component.card = {
             abhaAddress: 'user name@sbx', name: 'Asha',
             gender: 'F', dateOfBirth: '2000-01-01',
             imageBase64: 'aGVsbG8=', mimeType: 'image/png'
         };
         component.downloadCard();
-        expect(mockJsPDF).toHaveBeenCalled();
-        expect(doc.text).toHaveBeenCalledWith(expect.stringContaining('ABHA'), 10, 12);
-        expect(addImage).toHaveBeenCalled();
-        expect(save).toHaveBeenCalledWith(expect.stringMatching(/^abha-card-.*\.pdf$/));
+        expect(mockPdfDoc.text).toHaveBeenCalledWith(expect.stringContaining('ABHA'), 10, 12);
+        expect(mockPdfDoc.addImage).toHaveBeenCalled();
+        expect(mockPdfDoc.save).toHaveBeenCalledWith(expect.stringMatching(/^abha-card-.*\.pdf$/));
 
-        addImage.mockImplementationOnce(() => { throw new Error('bad image'); });
+        mockPdfDoc.addImage.mockImplementationOnce(() => { throw new Error('bad image'); });
         component.downloadCard();
-        expect(save).toHaveBeenCalledTimes(2);
+        expect(mockPdfDoc.save).toHaveBeenCalledTimes(2);
 
         component.card = null;
         component.downloadCard();

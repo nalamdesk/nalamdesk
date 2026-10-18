@@ -761,4 +761,932 @@ describe('SettingsComponent Validation', () => {
             expect(component.formatBytes(2_000_000_000)).toBe('1.9 GB');
         });
     });
+
+    describe('extended module coverage', () => {
+        let mockDialog: any;
+        let mockToast: any;
+
+        const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+        const setElectron = (api: any) => {
+            (window as any).electron = api;
+            component.isElectron = true;
+        };
+        const invokeImpl = (map: Record<string, any>) => {
+            mockData.invoke.mockImplementation((endpoint: string, ...args: any[]) => {
+                const v = map[endpoint];
+                return Promise.resolve(typeof v === 'function' ? v(...args) : v);
+            });
+        };
+
+        beforeEach(() => {
+            mockDialog = { open: vi.fn(async () => true) };
+            mockToast = { success: vi.fn(), error: vi.fn() };
+            (component as any).dialogService = mockDialog;
+            (component as any).toastService = mockToast;
+            mockData.invoke.mockReset().mockResolvedValue(undefined);
+            mockAuth.regenerateRecoveryCode = vi.fn();
+            delete (window as any).electron;
+            component.isElectron = false;
+        });
+
+        describe('filters and tabs', () => {
+            it('filters staff by role and restores the full list', () => {
+                component.users = [
+                    { id: 1, role: 'doctor' },
+                    { id: 2, role: 'nurse' },
+                    { id: 3, role: 'Doctor' }
+                ];
+                component.setFilter('Doctor');
+                expect(component.filteredUsers).toHaveLength(2);
+                component.setFilter('all');
+                expect(component.filteredUsers).toHaveLength(3);
+                component.setFilter('nurse');
+                expect(component.filteredUsers.map((u: any) => u.id)).toEqual([2]);
+            });
+
+            it('loads audit logs when switching to the audit tab', async () => {
+                invokeImpl({ getAuditLogs: [{ id: 1 }] });
+                component.switchTab('audit');
+                await flush();
+                expect(mockData.invoke).toHaveBeenCalledWith('getAuditLogs', 100);
+                expect(component.auditLogs).toEqual([{ id: 1 }]);
+            });
+
+            it('loads ABDM config and inbox on the abdm tab and nothing extra elsewhere', async () => {
+                invokeImpl({ abdmGetConfig: null, abdmGetInbox: [] });
+                component.switchTab('abdm');
+                await flush();
+                expect(mockData.invoke).toHaveBeenCalledWith('abdmGetConfig');
+                expect(mockData.invoke).toHaveBeenCalledWith('abdmGetInbox');
+                expect(component.inboxItems).toEqual([]);
+
+                mockData.invoke.mockClear();
+                component.switchTab('users');
+                expect(mockData.invoke).not.toHaveBeenCalled();
+            });
+
+            it('tolerates audit load failures', async () => {
+                mockData.invoke.mockRejectedValueOnce(new Error('db down'));
+                await component.loadAuditLogs();
+                expect(component.auditLogs).toEqual([]);
+            });
+        });
+
+        describe('settings persistence', () => {
+            it('loads clinic settings into the form', async () => {
+                invokeImpl({
+                    getSettings: {
+                        clinic_name: 'Test Clinic', drive_client_id: 'cid',
+                        drive_client_secret: 'csec', local_backup_path: '/b',
+                        backup_schedule: '09:00', cloud_backup_schedule: '10:00'
+                    }
+                });
+                await component.loadSettings();
+                expect(component.settings.clinic_name).toBe('Test Clinic');
+                expect(component.settings.backup_schedule).toBe('09:00');
+            });
+
+            it('tolerates settings load failures', async () => {
+                mockData.invoke.mockRejectedValueOnce(new Error('db down'));
+                await component.loadSettings();
+            });
+
+            it('saves settings and flags the save', async () => {
+                invokeImpl({ saveSettings: true });
+                await component.saveSettings();
+                expect(mockData.invoke).toHaveBeenCalledWith('saveSettings', component.settings);
+                expect(component.settingsSaved).toBe(true);
+            });
+
+            it('shows a dialog when saving fails', async () => {
+                mockData.invoke.mockRejectedValueOnce(new Error('disk gone'));
+                await component.saveSettings();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Save failed' }));
+            });
+
+            it('picks a backup path and auto-saves', async () => {
+                setElectron({ backup: { selectPath: vi.fn(async () => '/picked'), getLocalBackupHealth: vi.fn(async () => null) } });
+                invokeImpl({ saveSettings: true });
+                await component.selectBackupPath();
+                expect(component.settings.local_backup_path).toBe('/picked');
+                expect(mockData.invoke).toHaveBeenCalledWith('saveSettings', component.settings);
+            });
+
+            it('ignores a cancelled backup path picker', async () => {
+                setElectron({ backup: { selectPath: vi.fn(async () => null) } });
+                await component.selectBackupPath();
+                expect(mockData.invoke).not.toHaveBeenCalledWith('saveSettings', expect.anything());
+            });
+
+            it('resets to the default backup path and auto-saves', async () => {
+                setElectron({ backup: { useDefaultPath: vi.fn(async () => '/default'), getLocalBackupHealth: vi.fn(async () => null) } });
+                invokeImpl({ saveSettings: true });
+                await component.useDefaultBackupPath();
+                expect(component.settings.local_backup_path).toBe('/default');
+            });
+
+            it('does nothing for backup paths outside electron', async () => {
+                await component.selectBackupPath();
+                await component.useDefaultBackupPath();
+                expect(mockData.invoke).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('app version and updates', () => {
+            it('loads the packaged version on electron', async () => {
+                setElectron({ getAppVersion: vi.fn(async () => ({ display: '0.0.8 (development)' })) });
+                await component.loadAppVersion();
+                expect(component.appVersion).toBe('0.0.8 (development)');
+            });
+
+            it('tolerates version load failures', async () => {
+                setElectron({ getAppVersion: vi.fn(async () => { throw new Error('ipc down'); }) });
+                await component.loadAppVersion();
+                expect(component.appVersion).toBe('');
+            });
+
+            it('checks updates through the update service when available', async () => {
+                component.isElectron = true;
+                (component as any).updates = { check: vi.fn(async () => undefined) };
+                await component.checkForUpdates();
+                expect((component as any).updates.check).toHaveBeenCalledWith('manual');
+                expect(component.updateBusy).toBe(false);
+            });
+
+            it('falls back to electron IPC without the service', async () => {
+                component.isElectron = true;
+                (component as any).updates = undefined;
+                const check = vi.fn(async () => undefined);
+                setElectron({ updates: { check } });
+                await component.checkForUpdates();
+                expect(check).toHaveBeenCalledWith({ source: 'manual' });
+            });
+
+            it('skips concurrent or non-electron update checks', async () => {
+                component.isElectron = true;
+                component.updateBusy = true;
+                await component.checkForUpdates();
+                component.updateBusy = false;
+                component.isElectron = false;
+                await component.checkForUpdates();
+            });
+        });
+
+        describe('user management', () => {
+            it('loads users and applies the active filter', async () => {
+                component.staffFilter = 'doctor';
+                invokeImpl({ getUsers: [{ id: 1, role: 'doctor' }, { id: 2, role: 'nurse' }] });
+                await component.loadUsers();
+                expect(component.users).toHaveLength(2);
+                expect(component.filteredUsers.map((u: any) => u.id)).toEqual([1]);
+            });
+
+            it('tolerates user load failures', async () => {
+                mockData.invoke.mockRejectedValueOnce(new Error('db down'));
+                await component.loadUsers();
+            });
+
+            it('saves a valid new user and clears the form', async () => {
+                component.editingUser = { username: 'newdoc', name: 'New Doc', role: 'doctor', password: '123456' };
+                invokeImpl({ saveUser: { id: 9 }, getUsers: [] });
+                await component.saveUser();
+                expect(mockData.invoke).toHaveBeenCalledWith('saveUser', expect.objectContaining({ username: 'newdoc' }));
+                expect(component.editingUser).toBeNull();
+            });
+
+            it('warns instead of saving an invalid user', async () => {
+                component.editingUser = { username: 'ab' };
+                await component.saveUser();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Check user details' }));
+                expect(mockData.invoke).not.toHaveBeenCalledWith('saveUser', expect.anything());
+            });
+
+            it('reports duplicate usernames distinctly', async () => {
+                component.editingUser = { username: 'dup', name: 'Dup', role: 'nurse', password: '123456' };
+                mockData.invoke.mockRejectedValueOnce(new Error('UNIQUE constraint failed: users.username'));
+                await component.saveUser();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Username taken' }));
+                expect(component.editingUser).not.toBeNull();
+            });
+
+            it('reports other save failures generically', async () => {
+                component.editingUser = { username: 'xone', name: 'X One', role: 'nurse', password: '123456' };
+                mockData.invoke.mockRejectedValueOnce(new Error('locked'));
+                await component.saveUser();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Save failed' }));
+            });
+
+            it('deactivates a user after confirmation', async () => {
+                invokeImpl({ deleteUser: true, getUsers: [] });
+                await component.deleteUser(4);
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Deactivate user?' }));
+                expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 4);
+            });
+
+            it('keeps the user when deactivation is cancelled', async () => {
+                mockDialog.open.mockResolvedValueOnce(false);
+                await component.deleteUser(4);
+                expect(mockData.invoke).not.toHaveBeenCalledWith('deleteUser', expect.anything());
+            });
+
+            it('purges a user after confirmation and reports blocks', async () => {
+                invokeImpl({ purgeUser: true, getUsers: [] });
+                await component.purgeUser(5);
+                expect(mockData.invoke).toHaveBeenCalledWith('purgeUser', 5);
+
+                mockData.invoke.mockRejectedValueOnce(new Error('attributed'));
+                await component.purgeUser(6);
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Cannot purge' }));
+            });
+
+            it('deactivates selected users sequentially', async () => {
+                component.selectedUsers = [{ id: 1 }, { id: 2 }];
+                invokeImpl({ deleteUser: true, getUsers: [] });
+                await component.deleteSelectedUsers();
+                expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 1);
+                expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 2);
+                expect(component.selectedUsers).toEqual([]);
+            });
+
+            it('does nothing for an empty selection', async () => {
+                component.selectedUsers = [];
+                await component.deleteSelectedUsers();
+                expect(mockData.invoke).not.toHaveBeenCalled();
+            });
+
+            it('rotates the device envelope with the current password', async () => {
+                mockAuth.rotateDeviceEnvelope.mockResolvedValue({ success: true });
+                component.currentDevicePassword = 'device-secret';
+                component.showDeviceRotationModal = true;
+                await component.rotateDeviceEnvelope();
+                expect(mockAuth.rotateDeviceEnvelope).toHaveBeenCalledWith('device-secret');
+                expect(component.showDeviceRotationModal).toBe(false);
+                expect(component.currentDevicePassword).toBe('');
+            });
+
+            it('does nothing to rotate without a password', async () => {
+                component.currentDevicePassword = '';
+                await component.rotateDeviceEnvelope();
+                expect(mockAuth.rotateDeviceEnvelope).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('roles', () => {
+            it('opens, closes, and reloads the role list', async () => {
+                invokeImpl({ getAllRoles: [{ name: 'billing', permissions: [] }] });
+                await component.openRoles();
+                expect(component.showRolesModal).toBe(true);
+                expect(component.roles).toHaveLength(1);
+                component.closeRoles();
+                expect(component.showRolesModal).toBe(false);
+                expect(component.editingRole).toBeNull();
+            });
+
+            it('tolerates role load failures', async () => {
+                mockData.invoke.mockRejectedValueOnce(new Error('db down'));
+                await component.loadRoles();
+            });
+
+            it('starts and edits role drafts', () => {
+                component.startNewRole();
+                expect(component.editingRole).toEqual({ name: '', isNew: true, permissions: [] });
+                component.editRole({ name: 'billing', permissions: ['getQueue'] });
+                expect(component.editingRole).toEqual({ name: 'billing', isNew: false, permissions: ['getQueue'] });
+            });
+
+            it('applies templates and toggles permissions', () => {
+                component.startNewRole();
+                component.applyRoleTemplate('Front Desk');
+                expect(component.editingRole!.permissions.length).toBeGreaterThan(0);
+                component.applyRoleTemplate('No Such Template');
+                expect(component.editingRole!.permissions).toEqual([]);
+
+                component.toggleRolePermission('getQueue');
+                expect(component.editingRole!.permissions).toEqual(['getQueue']);
+                component.toggleRolePermission('getQueue');
+                expect(component.editingRole!.permissions).toEqual([]);
+
+                component.editingRole = null;
+                component.toggleRolePermission('getQueue');
+                component.applyRoleTemplate('Front Desk');
+            });
+
+            it('saves a named role and reloads', async () => {
+                component.editingRole = { name: ' billing ', isNew: true, permissions: ['getQueue'] };
+                invokeImpl({ saveRole: true, getAllRoles: [] });
+                await component.saveRole();
+                expect(mockData.invoke).toHaveBeenCalledWith('saveRole', { name: 'billing', permissions: ['getQueue'] });
+                expect(component.editingRole).toBeNull();
+            });
+
+            it('refuses to save unnamed roles and reports save failures', async () => {
+                component.editingRole = { name: '   ', isNew: true, permissions: [] };
+                await component.saveRole();
+                expect(mockData.invoke).not.toHaveBeenCalled();
+
+                component.editingRole = { name: 'x', isNew: true, permissions: [] };
+                mockData.invoke.mockRejectedValueOnce(new Error('taken'));
+                await component.saveRole();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Save failed' }));
+            });
+
+            it('deletes roles after confirmation', async () => {
+                invokeImpl({ deleteRole: true, getAllRoles: [] });
+                await component.deleteRoleUI('billing');
+                expect(mockData.invoke).toHaveBeenCalledWith('deleteRole', 'billing');
+
+                mockDialog.open.mockResolvedValueOnce(false);
+                await component.deleteRoleUI('billing');
+                const deletes = mockData.invoke.mock.calls.filter((c: any[]) => c[0] === 'deleteRole');
+                expect(deletes).toHaveLength(1);
+            });
+
+            it('classifies roles and counts holders', () => {
+                expect(component.isBuiltinRole('Admin')).toBe(true);
+                expect(component.isBuiltinRole('billing')).toBe(false);
+                component.roles = [];
+                expect(component.availableRoleNames).toEqual(['admin', 'doctor', 'nurse', 'receptionist']);
+                component.roles = [{ name: 'billing' }, { name: null }];
+                expect(component.availableRoleNames).toEqual(['billing']);
+                component.users = [{ role: 'doctor' }, { role: 'Doctor' }, { role: 'nurse' }];
+                expect(component.userCountFor('DOCTOR')).toBe(2);
+                expect(component.userCountFor('receptionist')).toBe(0);
+            });
+
+            it('filters the method catalog to delegatable actions', () => {
+                expect(component.isPickableAction('getQueue')).toBe(true);
+                expect(component.isPickableAction('savePatient')).toBe(false);
+                for (const group of component.pickableCatalog) {
+                    expect(group.methods.length).toBeGreaterThan(0);
+                    expect(group.methods).not.toContain('savePatient');
+                }
+                expect(component.DELEGATEABLE_ACTIONS).toContain('getQueue');
+            });
+        });
+
+        describe('permission overrides', () => {
+            it('opens, loads, and closes the override panel', async () => {
+                invokeImpl({ getUserOverrides: [{ action: 'getQueue', effect: 'allow' }] });
+                await component.openPermissions({ id: 7 });
+                expect(component.permissionTarget).toEqual({ id: 7 });
+                expect(component.permissionOverrides).toHaveLength(1);
+                component.closePermissions();
+                expect(component.permissionTarget).toBeNull();
+                expect(component.permissionOverrides).toEqual([]);
+            });
+
+            it('tolerates override load failures', async () => {
+                component.permissionTarget = { id: 7 };
+                mockData.invoke.mockRejectedValueOnce(new Error('db down'));
+                await component.loadPermissionOverrides();
+                expect(component.loadingPermissions).toBe(false);
+            });
+
+            it('saves an override with a reason and reloads', async () => {
+                component.permissionTarget = { id: 7 };
+                component.permissionForm = { action: 'getQueue', effect: 'deny', reason: '  covers tuesdays ' };
+                invokeImpl({ saveUserOverride: { id: 1 }, getUserOverrides: [] });
+                await component.addPermissionOverride();
+                expect(mockData.invoke).toHaveBeenCalledWith('saveUserOverride', {
+                    userId: 7, action: 'getQueue', effect: 'deny', reason: 'covers tuesdays'
+                });
+                expect(component.permissionForm.action).toBe('');
+            });
+
+            it('requires target, action, and reason before saving', async () => {
+                component.permissionTarget = null;
+                await component.addPermissionOverride();
+                component.permissionTarget = { id: 7 };
+                component.permissionForm = { action: '', effect: 'allow', reason: '' };
+                await component.addPermissionOverride();
+                component.permissionForm = { action: 'getQueue', effect: 'allow', reason: '   ' };
+                await component.addPermissionOverride();
+                expect(mockData.invoke).not.toHaveBeenCalled();
+            });
+
+            it('removes an override and reloads', async () => {
+                component.permissionTarget = { id: 7 };
+                invokeImpl({ deleteUserOverride: true, getUserOverrides: [] });
+                await component.removePermissionOverride('getQueue');
+                expect(mockData.invoke).toHaveBeenCalledWith('deleteUserOverride', { userId: 7, action: 'getQueue' });
+
+                component.permissionTarget = null;
+                await component.removePermissionOverride('getQueue');
+            });
+        });
+
+        describe('ABDM gateway', () => {
+            it('loads config and clears key fields', async () => {
+                invokeImpl({
+                    abdmGetConfig: {
+                        gateway_env: 'prod', client_id: 'cid', has_secret: true, mock: false,
+                        hip_id: 'H1', counter_id: 'C1', hfr_id: 'F', hpr_id: 'P',
+                        hip_endpoint: 'https://x', has_recipient_key: true, has_callback_secret: false
+                    }
+                });
+                component.abdmRecipientKey = 'stale';
+                await component.loadAbdmConfig();
+                expect(component.abdmConfig.client_id).toBe('cid');
+                expect(component.abdmRecipientKey).toBe('');
+            });
+
+            it('saves config with new secrets only when provided', async () => {
+                component.abdmConfig = { gateway_env: 'sandbox', client_id: 'c', mock: true } as any;
+                component.abdmRecipientKey = '  newkey ';
+                component.abdmCallbackSecret = '';
+                invokeImpl({ abdmSaveConfig: true, abdmGetConfig: null });
+                await component.saveAbdmConfig();
+                expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({
+                    recipient_key: 'newkey'
+                }));
+                expect(mockData.invoke.mock.calls[0][1]).not.toHaveProperty('callback_secret');
+                expect(component.abdmBusy).toBe(false);
+            });
+
+            it('saves the gateway secret and clears the field', async () => {
+                component.abdmSecret = 's3cret';
+                invokeImpl({ abdmSetSecret: true, abdmGetConfig: null });
+                await component.saveAbdmSecret();
+                expect(mockData.invoke).toHaveBeenCalledWith('abdmSetSecret', { secret: 's3cret' });
+                expect(component.abdmSecret).toBe('');
+            });
+
+            it('tests connectivity and reports failures', async () => {
+                invokeImpl({ abdmTestConnectivity: { ok: true, mode: 'live', detail: 'up' } });
+                await component.testAbdm();
+                expect(component.abdmTest).toEqual({ ok: true, mode: 'live', detail: 'up' });
+
+                mockData.invoke.mockRejectedValueOnce(new Error('offline'));
+                await component.testAbdm();
+                expect(component.abdmTest).toEqual({ ok: false, mode: 'error', detail: 'offline' });
+            });
+
+            it('builds a QR payload when facility ids exist', async () => {
+                component.abdmConfig = { hip_id: ' H1 ', counter_id: ' C1 ' } as any;
+                await component.generateQr();
+                expect(component.qrDataUrl).toMatch(/^data:image/);
+
+                component.abdmConfig = { hip_id: '', counter_id: '' } as any;
+                await component.generateQr();
+                expect(component.qrDataUrl).toBeNull();
+            });
+
+            it('queues a demo share token and reports errors', async () => {
+                invokeImpl({ abdmSimulateShare: { token_no: 42 } });
+                await component.simulateShare();
+                expect(component.abdmSimResult).toContain('Token #42');
+
+                mockData.invoke.mockRejectedValueOnce(new Error('nope'));
+                await component.simulateShare();
+                expect(component.abdmSimResult).toBe('nope');
+            });
+
+            it('loads and acknowledges inbox items', async () => {
+                invokeImpl({ abdmGetInbox: [{ id: 3 }], abdmAckInbox: true });
+                await component.loadInbox();
+                expect(component.inboxItems).toEqual([{ id: 3 }]);
+                await component.ackInbox(3);
+                expect(mockData.invoke).toHaveBeenCalledWith('abdmAckInbox', { id: 3 });
+            });
+        });
+
+        describe('recovery codes', () => {
+            it('regenerates a recovery code after password confirm', async () => {
+                mockAuth.regenerateRecoveryCode.mockResolvedValue({ success: true, recoveryCode: 'NEW-CODE' });
+                component.confirmPassword = 'admin-secret';
+                await component.generateRecoveryCode();
+                expect(mockAuth.regenerateRecoveryCode).toHaveBeenCalledWith('admin-secret');
+                expect(component.newRecoveryCode).toBe('NEW-CODE');
+                expect(component.confirmPassword).toBe('');
+            });
+
+            it('does nothing without a password and surfaces backend failures', async () => {
+                await component.generateRecoveryCode();
+                expect(mockAuth.regenerateRecoveryCode).not.toHaveBeenCalled();
+
+                mockAuth.regenerateRecoveryCode.mockResolvedValue({ success: false, error: 'denied' });
+                component.confirmPassword = 'wrong';
+                await component.generateRecoveryCode();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Rotation failed' }));
+
+                mockAuth.regenerateRecoveryCode.mockRejectedValueOnce(new Error('ipc down'));
+                component.confirmPassword = 'wrong';
+                await component.generateRecoveryCode();
+                expect(component.confirmPassword).toBe('');
+            });
+
+            it('copies the code through the electron bridge', async () => {
+                const writeText = vi.fn(async () => undefined);
+                (window as any).electron = { clipboard: { writeText } };
+                component.newRecoveryCode = 'AAAA-BBBB-CCCC-DDDD';
+                component.isCopied = false;
+                await component.copyRecoveryCode();
+                expect(writeText).toHaveBeenCalledWith('AAAA-BBBB-CCCC-DDDD');
+                expect(component.isCopied).toBe(true);
+                component.newRecoveryCode = null;
+                await component.copyRecoveryCode();
+            });
+        });
+
+        describe('drive backups', () => {
+            const driveApi = () => {
+                const api = {
+                    authenticate: vi.fn(),
+                    disconnect: vi.fn(async () => undefined),
+                    listBackups: vi.fn(async () => []),
+                    backup: vi.fn(),
+                    restore: vi.fn(),
+                    isAuthenticated: vi.fn(async () => false)
+                };
+                setElectron({ drive: api });
+                return api;
+            };
+
+            it('connects with stored credentials and lists backups', async () => {
+                const api = driveApi();
+                api.authenticate.mockResolvedValue({ success: true });
+                api.listBackups.mockResolvedValue([{ id: 'b1' }]);
+                component.settings.drive_client_id = 'cid';
+                await component.connectDrive();
+                expect(api.authenticate).toHaveBeenCalledWith({ clientId: 'cid', clientSecret: component.settings.drive_client_secret });
+                expect(component.success).toBe(true);
+                await flush();
+                expect(component.backups).toEqual([{ id: 'b1' }]);
+            });
+
+            it('reports failed and throwing connections distinctly', async () => {
+                const api = driveApi();
+                api.authenticate.mockResolvedValue({ success: false, error: 'bad secret' });
+                await component.connectDrive();
+                expect(component.success).toBe(false);
+                expect(component.message).toBe('bad secret');
+
+                api.authenticate.mockRejectedValueOnce(new Error('network down'));
+                await component.connectDrive();
+                expect(component.message).toBe('network down');
+            });
+
+            it('disconnects after confirmation only', async () => {
+                const api = driveApi();
+                await component.disconnectDrive();
+                expect(api.disconnect).toHaveBeenCalled();
+                expect(component.backups).toEqual([]);
+
+                mockDialog.open.mockResolvedValueOnce(false);
+                await component.disconnectDrive();
+                expect(api.disconnect).toHaveBeenCalledTimes(1);
+            });
+
+            it('runs drive backups and surfaces failures', async () => {
+                const api = driveApi();
+                api.backup.mockResolvedValue({ success: true });
+                api.listBackups.mockResolvedValue([{ id: 'b1' }]);
+                await component.backupNow();
+                await flush();
+                expect(component.backups).toEqual([{ id: 'b1' }]);
+
+                api.backup.mockResolvedValueOnce({ success: false, error: 'quota' });
+                await component.backupNow();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Backup failed' }));
+            });
+
+            it('restores a backup after confirmation', async () => {
+                const api = driveApi();
+                api.restore.mockResolvedValue({ success: true, restartRequired: true });
+                await component.restore('b1');
+                expect(api.restore).toHaveBeenCalledWith('b1');
+                expect(mockToast.success).toHaveBeenCalledWith(
+                    'The application will now restart.', 'Restore Successful');
+
+                mockDialog.open.mockResolvedValueOnce(false);
+                await component.restore('b2');
+                expect(api.restore).toHaveBeenCalledTimes(1);
+            });
+
+            it('reports failed and throwing restores', async () => {
+                const api = driveApi();
+                api.restore.mockResolvedValue({ success: false, error: 'gone' });
+                await component.restore('b9');
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Restore failed' }));
+
+                api.restore.mockRejectedValueOnce(new Error('crashed'));
+                await component.restore('b9');
+                expect(component.isBackupLoading).toBe(false);
+            });
+
+            it('selects restore bundles and flags legacy files', async () => {
+                setElectron({ backup: { selectRestoreBundle: vi.fn(async () => ({ path: '/x/y.ndbackup', name: 'y.ndbackup' })) } });
+                await component.selectRestoreBundle();
+                expect(component.restoreBundle).toEqual({ path: '/x/y.ndbackup', name: 'y.ndbackup' });
+                expect(component.restoreError).toBe('');
+
+                setElectron({ backup: { selectRestoreBundle: vi.fn(async () => ({ path: '/x/y.db', name: 'y.DB' })) } });
+                await component.selectRestoreBundle();
+                expect(component.restoreError).toContain('cannot recover a live vault');
+            });
+
+            it('restores a local bundle through the guarded IPC', async () => {
+                const restoreSystemBackup = vi.fn(async () => ({ success: true }));
+                setElectron({ restoreSystemBackup });
+                component.restoreBundle = { path: '/x/y.ndbackup', name: 'y.ndbackup' };
+                component.restoreRecoveryCode = 'CODE';
+                component.restoreAdminPassword = 'pw';
+                await component.restoreLocalBackup();
+                expect(restoreSystemBackup).toHaveBeenCalledWith({
+                    path: '/x/y.ndbackup', recoveryCode: 'CODE', currentAdminPassword: 'pw'
+                });
+                expect(component.isRestoring).toBe(true);
+            });
+
+            it('validates restore inputs before touching IPC', async () => {
+                setElectron({ restoreSystemBackup: vi.fn() });
+                component.isElectron = false;
+                await component.restoreLocalBackup();
+                component.isElectron = true;
+
+                component.restoreBundle = { path: '/x/y.db', name: 'y.db' };
+                await component.restoreLocalBackup();
+                expect(component.restoreError).toContain('missing recovery metadata');
+
+                component.restoreBundle = { path: '/x/y.ndbackup', name: 'y.ndbackup' };
+                component.restoreRecoveryCode = '';
+                component.restoreAdminPassword = 'pw';
+                await component.restoreLocalBackup();
+                expect(component.restoreError).toContain('Recovery Code');
+
+                component.restoreRecoveryCode = 'CODE';
+                component.restoreAdminPassword = '';
+                await component.restoreLocalBackup();
+                expect(component.restoreError).toContain('administrator password');
+                expect((window as any).electron.restoreSystemBackup).not.toHaveBeenCalled();
+            });
+
+            it('maps restore failure codes to user messages', async () => {
+                const restoreSystemBackup = vi.fn(async () => ({ success: false }));
+                setElectron({ restoreSystemBackup });
+                component.restoreBundle = { path: '/x/y.ndbackup', name: 'y.ndbackup' };
+                component.restoreRecoveryCode = 'CODE';
+                component.restoreAdminPassword = 'pw';
+
+                restoreSystemBackup.mockRejectedValueOnce(new Error('INVALID_RECOVERY_CODE'));
+                await component.restoreLocalBackup();
+                expect(component.restoreError).toContain('Recovery Code is incorrect');
+
+                restoreSystemBackup.mockRejectedValueOnce(new Error('INVALID_ADMIN_CREDENTIAL'));
+                await component.restoreLocalBackup();
+                expect(component.restoreError).toContain('administrator password is incorrect');
+                expect(component.isRestoring).toBe(false);
+            });
+
+            it('checks drive status and refreshes when authenticated', async () => {
+                const api = driveApi();
+                api.isAuthenticated.mockResolvedValue(true);
+                api.listBackups.mockResolvedValue([{ id: 'b1' }]);
+                await component.checkDriveStatus();
+                expect(component.success).toBe(true);
+                await flush();
+                expect(component.backups).toEqual([{ id: 'b1' }]);
+
+                api.isAuthenticated.mockResolvedValue(false);
+                await component.checkDriveStatus();
+            });
+        });
+
+        describe('cloud toggle', () => {
+            const cloudApi = () => {
+                const api = { getStatus: vi.fn(async () => ({ enabled: false, clinicId: null })), toggle: vi.fn(async () => undefined) };
+                setElectron({ cloud: api });
+                return api;
+            };
+
+            it('loads cloud status into the form', async () => {
+                cloudApi();
+                (window as any).electron.cloud.getStatus.mockResolvedValue({ enabled: true, clinicId: 'c1' });
+                await component.loadCloudStatus();
+                expect(component.cloudEnabled).toBe(true);
+                expect(component.cloudClinicId).toBe('c1');
+            });
+
+            it('opens the onboard modal when enabling without a clinic', async () => {
+                const api = cloudApi();
+                component.cloudClinicId = null;
+                const event = { target: { checked: true } };
+                await component.toggleCloud(event);
+                expect(component.showCloudModal).toBe(true);
+                expect(event.target.checked).toBe(false);
+                expect(api.toggle).not.toHaveBeenCalled();
+            });
+
+            it('toggles directly when a clinic exists', async () => {
+                const api = cloudApi();
+                component.cloudClinicId = 'c1';
+                await component.toggleCloud({ target: { checked: false } });
+                expect(api.toggle).toHaveBeenCalledWith(false);
+            });
+
+            it('runs the onboard stub and external links', async () => {
+                await component.submitCloudOnboard();
+                const openExternal = vi.fn(async () => undefined);
+                setElectron({ utils: { openExternal } });
+                const event = { preventDefault: vi.fn() } as any;
+                await component.openDriveConsole(event);
+                await component.openSetupGuide(event);
+                expect(event.preventDefault).toHaveBeenCalledTimes(2);
+                expect(openExternal).toHaveBeenCalledTimes(2);
+            });
+        });
+
+        describe('table renderers', () => {
+            it('formats audit time and action badges', () => {
+                const [time, actor, action] = component.auditColumnDefs as any[];
+                expect(time.valueFormatter({ value: null })).toBe('-');
+                expect(time.valueFormatter({ value: '2026-01-02T03:04:05.000Z' })).toMatch(/\d+\/\d+\/\d+/);
+                expect(actor.cellRenderer({ value: 'Dr A' })).toContain('Dr A');
+                expect(actor.cellRenderer({ value: '' })).toContain('Unknown');
+                expect(action.cellRenderer({ value: 'UPDATE x' })).toContain('text-blue-600');
+                expect(action.cellRenderer({ value: 'INSERT x' })).toContain('text-green-600');
+                expect(action.cellRenderer({ value: 'DELETE x' })).toContain('text-red-600');
+                expect(action.cellRenderer({ value: 'other' })).toContain('text-gray-600');
+            });
+
+            it('renders employee, role, and contact cells', () => {
+                component.currentUser = { id: 1 };
+                const [employee, role, contact] = component.userColumnDefs as any[];
+                expect(employee.cellRenderer({ data: null })).toBe('');
+                const me = employee.cellRenderer({ data: { id: 1, name: 'amy', username: 'amy', role: 'admin' } });
+                expect(me).toContain('YOU');
+                expect(me).toContain('bg-purple-100');
+                expect(role.cellRenderer({ value: '' })).toBe('-');
+                expect(role.cellRenderer({ value: 'doctor', data: {} })).toContain('bg-green-100');
+                expect(role.cellRenderer({ value: 'nurse', data: { designation: 'Sr' } })).toContain('Sr');
+                expect(contact.valueGetter({ data: null })).toBe('');
+                expect(contact.valueGetter({ data: { email: 'a@b.c' } })).toBe('a@b.c');
+                expect(contact.valueGetter({ data: {} })).toBe('No contact info');
+                expect(contact.cellRenderer({ data: null })).toBe('');
+                expect(contact.cellRenderer({ data: { mobile: '999', email: 'a@b.c' } })).toContain('999');
+                expect(contact.cellRenderer({ data: {} })).toContain('No contact info');
+            });
+        });
+
+        describe('lifecycle', () => {
+            it('loads admin surfaces on init for admins', async () => {
+                setElectron({
+                    drive: { listBackups: vi.fn(async () => []), isAuthenticated: vi.fn(async () => false) },
+                    cloud: { getStatus: vi.fn(async () => ({ enabled: false, clinicId: null })) },
+                    backup: { getLocalBackupHealth: vi.fn(async () => null) },
+                    getAppVersion: vi.fn(async () => ({ display: 'v' }))
+                });
+                invokeImpl({ getSettings: {}, getUsers: [], getAllRoles: [] });
+                component.ngOnInit();
+                await flush();
+                expect(mockData.invoke).toHaveBeenCalledWith('getUsers');
+                expect(mockData.invoke).toHaveBeenCalledWith('getAllRoles');
+                expect(component.currentUser?.username).toBe('admin');
+            });
+
+            it('skips admin surfaces for non-admin roles', async () => {
+                mockAuth.getUser.mockReturnValue({ id: 2, username: 'doc', role: 'doctor' });
+                component.ngOnInit();
+                await flush();
+                expect(mockData.invoke).not.toHaveBeenCalledWith('getUsers');
+                expect(mockData.invoke).not.toHaveBeenCalledWith('getAllRoles');
+            });
+        });
+
+        describe('remaining branches', () => {
+            it('opens the password, reset, rotation, and recovery modals', () => {
+                component.openLoginPasswordModal();
+                expect(component.showLoginPasswordModal).toBe(true);
+                expect(component.currentLoginPassword).toBe('');
+
+                component.openUserResetModal({ id: 3 });
+                expect(component.resetTarget).toEqual({ id: 3 });
+                expect(component.showUserResetModal).toBe(true);
+
+                component.openDeviceRotationModal();
+                expect(component.showDeviceRotationModal).toBe(true);
+
+                component.openRecoveryModal();
+                expect(component.showRecoveryModal).toBe(true);
+                expect(component.newRecoveryCode).toBeNull();
+            });
+
+            it('hides the recovery modal when there is no code to confirm', async () => {
+                component.newRecoveryCode = null;
+                component.showRecoveryModal = true;
+                await component.closeRecoveryModal();
+                expect(component.showRecoveryModal).toBe(false);
+                expect(mockAuth.acknowledgeRecoveryCode).not.toHaveBeenCalled();
+            });
+
+            it('renders every role badge branch', () => {
+                const [, role] = component.userColumnDefs as any[];
+                expect(role.cellRenderer({ value: 'admin', data: {} })).toContain('bg-purple-100');
+                expect(role.cellRenderer({ value: 'receptionist', data: {} })).toContain('bg-blue-100');
+                expect(role.cellRenderer({ value: 'coder', data: {} })).toContain('bg-gray-100');
+            });
+
+            it('formats date columns and empty values', () => {
+                const defs = component.userColumnDefs as any[];
+                const dob = defs.find((d: any) => d.headerName === 'DOB');
+                const joined = defs.find((d: any) => d.headerName === 'Joined');
+                expect(dob.valueFormatter({ value: null })).toBe('-');
+                expect(dob.valueFormatter({ value: '2020-05-06T00:00:00.000Z' })).toMatch(/\d{4}|\d+\/\d+\/\d+/);
+                expect(joined.valueFormatter({ value: null })).toBe('-');
+            });
+
+            it('wires action-cell callbacks with admin guards', async () => {
+                const defs = component.userColumnDefs as any[];
+                const actions = defs.find((d: any) => d.headerName === 'Actions').cellRendererParams;
+                expect(actions.canDelete({ username: 'admin' })).toBe(false);
+                expect(actions.canDelete({ username: 'doc' })).toBe(true);
+                expect(actions.canPurge({ username: 'admin' })).toBe(false);
+
+                actions.onEdit({ id: 1, username: 'doc', role: 'nurse', name: 'Doc' });
+                expect(component.editingUser).toMatchObject({ id: 1 });
+
+                invokeImpl({ deleteUser: true, getUsers: [] });
+                await actions.onDelete({ id: 2 });
+                expect(mockData.invoke).toHaveBeenCalledWith('deleteUser', 2);
+
+                invokeImpl({ purgeUser: true, getUsers: [] });
+                await actions.onPurge({ id: 3 });
+                expect(mockData.invoke).toHaveBeenCalledWith('purgeUser', 3);
+
+                invokeImpl({ getUserOverrides: [] });
+                await actions.onPermissions({ id: 4 });
+                expect(component.permissionTarget).toEqual({ id: 4 });
+            });
+
+            it('guards busy ABDM saves and reports failures', async () => {
+                component.abdmBusy = true;
+                await component.saveAbdmConfig();
+                component.abdmSecret = 'x';
+                await component.saveAbdmSecret();
+                expect(mockData.invoke).not.toHaveBeenCalled();
+                component.abdmBusy = false;
+
+                component.abdmSecret = '';
+                await component.saveAbdmSecret();
+                expect(mockData.invoke).not.toHaveBeenCalled();
+
+                component.abdmConfig = { gateway_env: 'sandbox', client_id: 'c', mock: true } as any;
+                mockData.invoke.mockRejectedValueOnce(new Error('down'));
+                await component.saveAbdmConfig();
+                expect(component.abdmBusy).toBe(false);
+
+                mockData.invoke.mockRejectedValueOnce(new Error('down'));
+                component.abdmSecret = 's';
+                await component.saveAbdmSecret();
+            });
+
+            it('tolerates synchronous inbox failures', async () => {
+                mockData.invoke.mockImplementationOnce(() => { throw new Error('sync boom'); });
+                await component.loadInbox();
+                expect(component.inboxItems).toEqual([]);
+            });
+
+            it('reports batch deactivation failures', async () => {
+                component.selectedUsers = [{ id: 1 }];
+                mockData.invoke.mockRejectedValueOnce(new Error('locked'));
+                await component.deleteSelectedUsers();
+                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Deactivate failed' }));
+            });
+
+            it('copies through the web clipboard without electron', async () => {
+                delete (window as any).electron;
+                const writeText = vi.fn(async () => undefined);
+                (navigator as any).clipboard = { writeText };
+                component.newRecoveryCode = 'CODE';
+                await component.copyRecoveryCode();
+                expect(writeText).toHaveBeenCalledWith('CODE');
+                delete (navigator as any).clipboard;
+            });
+
+            it('tolerates restore-bundle picker failures', async () => {
+                setElectron({
+                    backup: {
+                        selectRestoreBundle: vi.fn(() => { throw new Error('no dialog'); })
+                    }
+                });
+                await component.selectRestoreBundle();
+                expect(component.restoreError).toBe('no dialog');
+            });
+
+            it('skips a local backup while one is already running', async () => {
+                component.isElectron = true;
+                component.isBackupLoading = true;
+                (window as any).electron = { backup: { runNow: vi.fn() } };
+                await component.runLocalBackupNow();
+                expect((window as any).electron.backup.runNow).not.toHaveBeenCalled();
+            });
+
+            it('reports update-check failures', async () => {
+                component.isElectron = true;
+                (component as any).updates = { check: vi.fn(async () => { throw new Error('no net'); }) };
+                await component.checkForUpdates();
+                expect(component.updateBusy).toBe(false);
+            });
+        });
+    });
 });

@@ -83,4 +83,73 @@ describe('SharedTableComponent', () => {
         const gridWrap = fixture.nativeElement.querySelector('.flex-1.w-full');
         expect(gridWrap.className).toContain('overflow-x-auto');
     });
+
+    it('applies quick filter only when the grid is ready', () => {
+        const gridApi = { setGridOption: vi.fn() };
+        (component as any).gridApi = gridApi;
+        component.quickFilterText = 'amy';
+        component.ngOnChanges({ quickFilterText: {} } as any);
+        expect(gridApi.setGridOption).toHaveBeenCalledWith('quickFilterText', 'amy');
+
+        (component as any).gridApi = undefined;
+        component.ngOnChanges({ quickFilterText: {} } as any);
+        component.ngOnChanges({} as any);
+    });
+
+    it('wires grid ready, row clicks, and selection changes', () => {
+        const emitted: any[] = [];
+        const selected = [{ id: 1 }];
+        const gridApi = {
+            sizeColumnsToFit: vi.fn(),
+            getColumns: vi.fn(() => []),
+            getSelectedRows: vi.fn(() => selected)
+        };
+        component.rowClick.subscribe((d: any) => emitted.push(['row', d]));
+        component.gridReady.subscribe((d: any) => emitted.push(['ready', d]));
+        component.selectionChanged.subscribe((d: any) => emitted.push(['sel', d]));
+
+        component.onGridReady({ api: gridApi });
+        expect(gridApi.sizeColumnsToFit).toHaveBeenCalled();
+        expect(emitted[0][0]).toBe('ready');
+
+        component.onRowClicked({ data: { id: 7 } });
+        expect(emitted).toContainEqual(['row', { id: 7 }]);
+
+        component.onSelectionChanged({});
+        expect(emitted).toContainEqual(['sel', selected]);
+    });
+
+    it('toggles columns and resets grid state', () => {
+        const gridApi = {
+            setColumnsVisible: vi.fn(),
+            setFilterModel: vi.fn(),
+            applyColumnState: vi.fn(),
+            sizeColumnsToFit: vi.fn(),
+            getColumns: vi.fn(() => [
+                { getColId: () => 'name', getColDef: () => ({ headerName: 'Name' }), isVisible: () => true },
+                { getColId: () => 'x', getColDef: () => ({}), isVisible: () => false }
+            ])
+        };
+        (component as any).gridApi = gridApi;
+        component.toggleColumn('name', false);
+        expect(gridApi.setColumnsVisible).toHaveBeenCalledWith(['name'], false);
+        expect(component.toggleableColumns).toEqual([
+            { colId: 'name', headerName: 'Name', visible: true },
+            { colId: 'x', headerName: 'x', visible: false }
+        ]);
+
+        component.resetState();
+        expect(gridApi.setFilterModel).toHaveBeenCalledWith(null);
+
+        gridApi.getColumns.mockReturnValueOnce(null as any);
+        (component as any).updateColumnState();
+    });
+
+    it('disconnects the resize observer on destroy', () => {
+        component.ngOnDestroy();
+        const disconnect = vi.fn();
+        (component as any).resizeObserver = { disconnect };
+        component.ngOnDestroy();
+        expect(disconnect).toHaveBeenCalled();
+    });
 });

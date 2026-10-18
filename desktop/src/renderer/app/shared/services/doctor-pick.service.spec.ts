@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DoctorPickService } from './doctor-pick.service';
+import { DoctorPickService, SOLE_PRACTITIONER_REASON } from './doctor-pick.service';
 
 describe('DoctorPickService', () => {
     it('resolves null without opening when no doctors are available', async () => {
@@ -8,13 +8,16 @@ describe('DoctorPickService', () => {
         expect(service.open()).toBe(false);
     });
 
-    it('resolves the only doctor immediately without opening', async () => {
+    it('resolves the only doctor immediately with the standing reason', async () => {
         const service = new DoctorPickService();
-        await expect(service.request([{ id: 10, name: 'Dr. Smith' }])).resolves.toBe(10);
+        await expect(service.request([{ id: 10, name: 'Dr. Smith' }])).resolves.toEqual({
+            id: 10,
+            reason: SOLE_PRACTITIONER_REASON
+        });
         expect(service.open()).toBe(false);
     });
 
-    it('opens the picker for several doctors and resolves the choice', async () => {
+    it('opens the picker and resolves the choice with a typed reason', async () => {
         const service = new DoctorPickService();
         const pending = service.request([
             { id: 10, name: 'Dr. Smith' },
@@ -22,10 +25,26 @@ describe('DoctorPickService', () => {
         ]);
         expect(service.open()).toBe(true);
         expect(service.doctors()).toHaveLength(2);
+        service.reasonInput.set('Covering night shift');
         service.choose(11);
-        await expect(pending).resolves.toBe(11);
+        await expect(pending).resolves.toEqual({ id: 11, reason: 'Covering night shift' });
         expect(service.open()).toBe(false);
         expect(service.doctors()).toHaveLength(0);
+    });
+
+    it('keeps the picker open until a reason is given', async () => {
+        const service = new DoctorPickService();
+        const pending = service.request([
+            { id: 10, name: 'Dr. Smith' },
+            { id: 11, name: 'Dr. Jones' }
+        ]);
+        service.choose(11);
+        expect(service.open()).toBe(true);
+        expect(service.reasonError()).toBe(true);
+        service.reasonInput.set('Covering night shift');
+        service.choose(11);
+        await expect(pending).resolves.toEqual({ id: 11, reason: 'Covering night shift' });
+        expect(service.open()).toBe(false);
     });
 
     it('resolves null when the picker is cancelled', async () => {
@@ -49,9 +68,10 @@ describe('DoctorPickService', () => {
             { id: 10, name: 'Dr. Smith' },
             { id: 11, name: 'Dr. Jones' }
         ]);
+        service.reasonInput.set('Covering night shift');
         service.choose(10);
-        await expect(first).resolves.toBe(10);
-        await expect(second).resolves.toBe(10);
+        await expect(first).resolves.toEqual({ id: 10, reason: 'Covering night shift' });
+        await expect(second).resolves.toEqual({ id: 10, reason: 'Covering night shift' });
         expect(service.open()).toBe(false);
     });
 });

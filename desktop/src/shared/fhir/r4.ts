@@ -197,6 +197,7 @@ export interface MedicationRequest extends Resource {
     subject: Reference;
     requester?: Reference;
     authoredOn?: string;
+    validityPeriod?: Period;
     dosageInstruction?: Dosage[];
     dispenseRequest?: DispenseRequest;
     note?: Annotation[];

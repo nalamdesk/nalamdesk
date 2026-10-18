@@ -7,6 +7,7 @@ import { PracticeProfileService } from '../../services/practice-profile.service'
 import { DataService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
 import { DialogService } from '../../shared/services/dialog.service';
+import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../../shared/services/doctor-pick.service';
 import { DatePickerComponent } from '../../shared/components/date-picker/date-picker.component';
 import { SharedTableComponent } from '../../shared/components/table/table.component';
 import { AbhaModalComponent } from '../abha-modal.component';
@@ -1381,6 +1382,7 @@ export class PatientDetailsComponent implements OnInit {
         private dataService: DataService,
         private authService: AuthService,
         private dialogService: DialogService,
+        @Optional() readonly doctorPick?: DoctorPickService,
         @Optional() readonly profileService?: PracticeProfileService
     ) {
         this.initForm();
@@ -1578,11 +1580,25 @@ export class PatientDetailsComponent implements OnInit {
         this.startingConsult = true;
         try {
             let doctorId: number | undefined;
+            let attributionReason: string | undefined;
             if (this.currentUser?.role === 'admin') {
                 const doctors = await this.dataService.invoke<any[]>('getDoctors').catch(() => []);
-                if (doctors && doctors.length > 0) {
-                    doctorId = doctors[0].id;
+                if (!doctors || doctors.length === 0) {
+                    await this.dialogService.open({
+                        title: 'No responsible doctor',
+                        message: 'No active doctor on file. An admin consultation needs a licensed practitioner attached.',
+                        type: 'warning'
+                    });
+                    return;
                 }
+                // Explicit pick with a recorded reason (KB-1): never silently
+                // attribute to the first doctor on file.
+                const picked = this.doctorPick
+                    ? await this.doctorPick.request(doctors)
+                    : (doctors[0]?.id != null ? { id: doctors[0].id, reason: SOLE_PRACTITIONER_REASON } : null);
+                if (picked == null) return;
+                doctorId = picked.id;
+                attributionReason = picked.reason;
             }
 
             let queue = await this.dataService.invoke<any[]>('getQueue');
@@ -1600,7 +1616,8 @@ export class PatientDetailsComponent implements OnInit {
                     patientId: this.patientId,
                     queueEntryId: queueEntry.id,
                     startRequestId: newRequestId(),
-                    ...(doctorId ? { doctorId } : {})
+                    ...(doctorId ? { doctorId } : {}),
+                    ...(attributionReason ? { attributionReason } : {})
                 });
             this.router.navigate(['/visit', this.patientId], {
                 state: { isConsulting: true, encounterId: encounter.id }

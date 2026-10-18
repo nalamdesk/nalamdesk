@@ -84,24 +84,33 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             });
         });
 
-        it('supports delegated authoring by nurse with responsible doctorId', () => {
+        it('rejects cross-attribution by non-admins; admin attribution needs a reason', () => {
             const q = queuePatient(1);
             const qId = Number(q.lastInsertRowid);
 
-            // Nurse starting encounter on behalf of Dr. Jones (11)
-            const enc = service.beginConsultation({ patientId: 1, queueEntryId: qId, doctorId: 11, startRequestId: 'req-nurse' }, 20);
+            // Nurse starting encounter on behalf of Dr. Jones (11) is refused:
+            // consultations must be started under your own name.
+            expect(() => service.beginConsultation({ patientId: 1, queueEntryId: qId, doctorId: 11, startRequestId: 'req-nurse' }, 20))
+                .toThrow('under your own name');
+
+            // Admin naming another doctor without a reason is refused.
+            expect(() => service.beginConsultation({ patientId: 1, queueEntryId: qId, doctorId: 11, startRequestId: 'req-admin-noreason' }, 99))
+                .toThrow('reason is required');
+
+            // Admin attribution with a recorded reason succeeds.
+            const enc = service.beginConsultation({ patientId: 1, queueEntryId: qId, doctorId: 11, attributionReason: 'Covering night shift', startRequestId: 'req-admin-cover' }, 99);
             expect(enc.doctor_id).toBe(11);
-            expect(enc.author_id).toBe(20);
+            expect(enc.author_id).toBe(99);
             expect(enc.doctor_license).toMatchObject({
                 name: 'Dr. Jones',
                 license_number: 'MED-67890'
             });
 
-            // Author (nurse) and responsible doctor can save consultation progress
+            // Author (admin) and responsible doctor can save consultation progress
             const saved = service.saveConsultationProgress({
                 encounterId: enc.id,
                 visit: { symptoms: 'Sore throat and cough' }
-            }, 20);
+            }, 99);
             expect(saved.symptoms).toBe('Sore throat and cough');
 
             // Unrelated doctor cannot access
@@ -203,6 +212,41 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(meds).toHaveLength(2);
             expect(meds.some((m: any) => m.medicine_name === 'Azithromycin 250mg')).toBe(true);
             expect(meds.some((m: any) => m.medicine_name === 'Paracetamol 650mg')).toBe(true);
+        });
+
+        it('derives course end dates from durations and completes past-due courses', () => {
+            const q = queuePatient(1);
+            const enc = service.beginConsultation({ patientId: 1, queueEntryId: Number(q.lastInsertRowid), startRequestId: 'req-kb3' }, 10);
+
+            service.completeConsultation({
+                encounterId: enc.id,
+                visit: {
+                    diagnosis: 'Acute infection',
+                    prescription: [
+                        { medicine: 'Amoxicillin 500mg', dosage: '1 cap', frequency: '1-1-1', duration: '3 days' },
+                        { medicine: 'Metformin 500mg', dosage: '1 tab', frequency: '1-0-1', duration: 'until review' }
+                    ]
+                }
+            }, 10);
+
+            const meds = service.getMedications(1);
+            const acute = meds.find((m: any) => m.medicine_name === 'Amoxicillin 500mg');
+            const chronic = meds.find((m: any) => m.medicine_name === 'Metformin 500mg');
+            expect(acute.status).toBe('active');
+            expect(acute.end_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+            expect(chronic.status).toBe('active');
+            expect(chronic.end_date).toBeNull();
+
+            // Backdate the acute course past its end: the sweep completes it,
+            // while the open-ended course stays active.
+            const past = new Date();
+            past.setUTCDate(past.getUTCDate() - 1);
+            db.prepare('UPDATE patient_medications SET end_date = ? WHERE id = ?')
+                .run(past.toISOString().slice(0, 10), acute.id);
+            service.sweepExpiredMedications();
+            const after = service.getMedications(1);
+            expect(after.find((m: any) => m.medicine_name === 'Amoxicillin 500mg').status).toBe('completed');
+            expect(after.find((m: any) => m.medicine_name === 'Metformin 500mg').status).toBe('active');
         });
 
         it('consolidates patient safety context into a single profile', () => {
@@ -439,12 +483,13 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             const added = service.addToQueue(1, { urgency: 'routine', priority: 1 }, 20);
             const queueId = Number(added.lastInsertRowid);
 
-            // Admin starts consultation providing doctorId
+            // Admin starts consultation providing doctorId plus a recorded reason
             const enc = service.beginConsultation({
                 patientId: 1,
                 queueEntryId: queueId,
                 startRequestId: 'req-admin-delegated',
-                doctorId: 10
+                doctorId: 10,
+                attributionReason: 'Front-desk intake'
             }, 99);
 
             expect(enc).toBeTruthy();
@@ -697,7 +742,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         it('preserves per-doctor registry IDs across unrelated edits', async () => {
             await service.saveUser({
                 username: 'drhpr', password: 'Password1!', role: 'doctor',
-                name: 'Dr. HPR', abdm_hpr_id: 'HPR-DOC-1'
+                name: 'Dr. HPR', license_number: 'MED-HPR-1', abdm_hpr_id: 'HPR-DOC-1'
             }, 99);
             const doctors = service.getDoctors() as any[];
             const match = doctors.find((d) => d.username === 'drhpr');

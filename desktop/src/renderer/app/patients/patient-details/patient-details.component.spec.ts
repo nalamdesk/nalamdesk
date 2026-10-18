@@ -1208,11 +1208,11 @@ describe('PatientDetailsComponent', () => {
             expect(component.displayAge).toContain('41');
         });
 
-        it('starts consults as admin with the first doctor on file', async () => {
+        it('starts consults as admin with the first doctor on file and a recorded reason', async () => {
             component.currentUser = { role: 'admin' };
             component.patientId = 123;
             await component.startConsult();
-            expect(mockDataService.invoke).toHaveBeenCalledWith('beginConsultation', expect.objectContaining({ doctorId: 10 }));
+            expect(mockDataService.invoke).toHaveBeenCalledWith('beginConsultation', expect.objectContaining({ doctorId: 10, attributionReason: expect.any(String) }));
             expect(mockRouter.navigate).toHaveBeenCalledWith(['/visit', 123], expect.objectContaining({ state: expect.objectContaining({ encounterId: 70 }) }));
         });
 

@@ -362,7 +362,8 @@ describe('QueueComponent', () => {
         expect(mockDataService.invoke).toHaveBeenCalledWith('beginConsultation', expect.objectContaining({
             patientId: 11,
             queueEntryId: 1,
-            doctorId: 10
+            doctorId: 10,
+            attributionReason: expect.any(String)
         }));
     });
 
@@ -373,7 +374,7 @@ describe('QueueComponent', () => {
             if (endpoint === 'beginConsultation') return Promise.resolve({ id: 101, patient_id: 11 });
             return Promise.resolve(null);
         });
-        const mockPick = { request: vi.fn().mockResolvedValue(11) };
+        const mockPick = { request: vi.fn().mockResolvedValue({ id: 11, reason: 'Covering night shift' }) };
         const picked = new QueueComponent(mockRouter, mockDataService, mockDialogService, mockAuthService, mockPick as any);
 
         await picked.startConsult({ id: 1, patient_id: 11, patient_name: 'P1' });
@@ -381,7 +382,7 @@ describe('QueueComponent', () => {
         expect(mockPick.request).toHaveBeenCalledWith(expect.arrayContaining([
             expect.objectContaining({ id: 10 }), expect.objectContaining({ id: 11 })
         ]));
-        expect(mockDataService.invoke).toHaveBeenCalledWith('beginConsultation', expect.objectContaining({ doctorId: 11 }));
+        expect(mockDataService.invoke).toHaveBeenCalledWith('beginConsultation', expect.objectContaining({ doctorId: 11, attributionReason: 'Covering night shift' }));
     });
 
     it('aborts silently when admin cancels the attending picker', async () => {

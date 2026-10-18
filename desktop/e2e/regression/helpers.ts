@@ -22,7 +22,7 @@ export const STAFF_NEW_PASSWORD = process.env['REGRESSION_STAFF_NEW_PASSWORD'] |
 const rotatedPasswords = new Set<string>();
 
 export const ROLE_USERS = [
-    { username: 'reg_doctor', password: STAFF_PASSWORD, role: 'doctor', name: 'Reg Doctor' },
+    { username: 'reg_doctor', password: STAFF_PASSWORD, role: 'doctor', name: 'Reg Doctor', license_number: 'MED-REG-1' },
     { username: 'reg_reception', password: STAFF_PASSWORD, role: 'receptionist', name: 'Reg Receptionist' },
     { username: 'reg_nurse', password: STAFF_PASSWORD, role: 'nurse', name: 'Reg Nurse' },
 ] as const;
@@ -182,15 +182,15 @@ export async function logout(window: any): Promise<void> {
 
 /** Create doctor/receptionist/nurse accounts via guarded IPC (call while logged in as admin). */
 export async function provisionRoleUsers(window: any): Promise<void> {
-    await window.evaluate(async (users: readonly { username: string; password: string; role: string; name: string }[]) => {
+    await window.evaluate(async (users: readonly { username: string; password: string; role: string; name: string; license_number?: string }[]) => {
         const api = (window as any).electron.db;
         const existing: any[] = await api.getUsers();
         for (const u of users) {
             if (!existing.some((e: any) => e.username === u.username)) {
-                await api.saveUser({ username: u.username, password: u.password, role: u.role, name: u.name });
+                await api.saveUser({ username: u.username, password: u.password, role: u.role, name: u.name, ...(u.license_number ? { license_number: u.license_number } : {}) });
             }
         }
-    }, ROLE_USERS as unknown as { username: string; password: string; role: string; name: string }[]);
+    }, ROLE_USERS as unknown as { username: string; password: string; role: string; name: string; license_number?: string }[]);
 }
 
 /** Navigate by hash route and wait for the shell to settle. */

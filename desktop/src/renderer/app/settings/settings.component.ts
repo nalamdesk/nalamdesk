@@ -262,13 +262,16 @@ export class SettingsComponent implements OnInit {
         if (role === 'RECEPTIONIST') badgeClass = 'bg-blue-100 text-blue-800';
 
         const designation = params.data.designation ? `<span class="text-[10px] text-gray-400 ml-2">${params.data.designation}</span>` : '';
+        const noLicense = role === 'DOCTOR' && params.data.active !== 0 && !String(params.data.license_number || '').trim()
+            ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700 ml-2">NO LICENSE</span>'
+            : '';
 
         return `
             <div class="flex items-center">
                 <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${badgeClass}">
                   ${role}
                 </span>
-                ${designation}
+                ${designation}${noLicense}
             </div>
           `;
       }
@@ -641,6 +644,13 @@ export class SettingsComponent implements OnInit {
 
     if (!user.id && (!user.password || user.password.length < 6)) {
       errors.push('Password must be at least 6 characters.');
+    }
+
+    const stayingActive = user.active === undefined || Number(user.active) !== 0;
+    if (String(user.role || '').toLowerCase() === 'doctor' && stayingActive && !String(user.license_number || '').trim()) {
+      errors.push(user.id
+        ? 'This doctor has no license on file — add it so records carry a license snapshot.'
+        : 'Medical license number is required for new doctor accounts.');
     }
 
     return errors;

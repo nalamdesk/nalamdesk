@@ -3,6 +3,7 @@ import * as catalog from '../catalog/catalogStore';
 import { createHash } from 'node:crypto';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
 import { validateAbhaNumber, validateIdentifier } from '../../shared/patient-identifiers';
+import { durationEndDate } from '../../shared/clinical-timing';
 
 export class DatabaseService {
     private db: any;
@@ -177,7 +178,7 @@ export class DatabaseService {
 
     // Users
     getUsers() {
-        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date, abdm_hpr_id FROM users ORDER BY created_at DESC').all();
+        return this.db.prepare('SELECT id, username, role, name, active, created_at, designation, mobile, email, joining_date, abdm_hpr_id, license_number, specialty FROM users ORDER BY created_at DESC').all();
     }
 
     getUserByUsername(username: string) {
@@ -282,6 +283,9 @@ export class DatabaseService {
 
     private async insertNewUser(safeUser: any, argon2: any, actingUserId?: number) {
         if (!safeUser.password) throw new Error('Password required for new user');
+        if (String(safeUser.role || '').toLowerCase() === 'doctor' && !String(safeUser.license_number || '').trim()) {
+            throw new Error('A license number is required for new doctor accounts.');
+        }
 
         console.log(`[DB] Creating user ${safeUser.username}`);
         safeUser.password = await argon2.hash(safeUser.password);
@@ -2267,16 +2271,8 @@ export class DatabaseService {
             `).run(queue.id, patientId);
             if (queue.status === 'waiting' && queueUpdate.changes !== 1) throw new Error('Queue entry is no longer available');
 
-            const targetDoctorId = Number(input?.doctorId || actingUserId);
-            const practitioner = this.getPractitioner(targetDoctorId);
-            if (!practitioner) {
-                throw new Error('Clinical authoring requires an active licensed practitioner');
-            }
-            const licenseSnapshot = JSON.stringify({
-                name: practitioner.name,
-                license_number: practitioner.license_number || '',
-                specialty: practitioner.specialty || ''
-            });
+            const { practitioner, licenseSnapshot, attributionReason } =
+                this.resolveAttendingPractitioner(input, actingUserId);
 
             const result = this.db.prepare(`
                 INSERT INTO visits (
@@ -2290,7 +2286,10 @@ export class DatabaseService {
                 this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'begin', Number(result.lastInsertRowid), patientId, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
-            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started encounter for queue entry ${queue.id}`);
+            const attributed = attributionReason
+                ? ` under ${practitioner.name} (reason: ${attributionReason})`
+                : ` under ${practitioner.name}`;
+            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started encounter for queue entry ${queue.id}${attributed}`);
             return this.getEncounterById(Number(result.lastInsertRowid));
         });
 
@@ -2420,16 +2419,8 @@ export class DatabaseService {
                 });
             }
 
-            const targetDoctorId = Number(input?.doctorId || actingUserId);
-            const practitioner = this.getPractitioner(targetDoctorId);
-            if (!practitioner) {
-                throw new Error('Clinical authoring requires an active licensed practitioner');
-            }
-            const licenseSnapshot = JSON.stringify({
-                name: practitioner.name,
-                license_number: practitioner.license_number || '',
-                specialty: practitioner.specialty || ''
-            });
+            const { practitioner, licenseSnapshot, attributionReason } =
+                this.resolveAttendingPractitioner(input, actingUserId);
 
             const queue = this.db.prepare(`
                 SELECT q.*
@@ -2462,7 +2453,10 @@ export class DatabaseService {
                 this.nextCareContextRef());
             this.recordStartRequest(startRequestId, 'next', Number(result.lastInsertRowid), queue.patient_id, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
-            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started next encounter for queue entry ${queue.id}`);
+            const attributedNext = attributionReason
+                ? ` under ${practitioner.name} (reason: ${attributionReason})`
+                : ` under ${practitioner.name}`;
+            this.logAudit('ENCOUNTER_START', 'visits', result.lastInsertRowid, actingUserId, `Started next encounter for queue entry ${queue.id}${attributedNext}`);
             return this.getEncounterById(Number(result.lastInsertRowid));
         });
         return beginNext.immediate();
@@ -2512,6 +2506,38 @@ export class DatabaseService {
             throw new Error('Start request key is stale');
         }
         return this.hydrateVisit(encounter);
+    }
+
+    /**
+     * Resolves the attending practitioner for a new encounter (KB-1).
+     * The doctor named on the record must be the acting user, unless the
+     * acting user is an admin attributing to someone else with a recorded
+     * reason. Callers pass input.doctorId + input.attributionReason through.
+     */
+    private resolveAttendingPractitioner(input: any, actingUserId: number) {
+        const actor = Number(actingUserId);
+        const targetDoctorId = Number(input?.doctorId || actor);
+        const practitioner = this.getPractitioner(targetDoctorId);
+        if (!practitioner) {
+            throw new Error('Clinical authoring requires an active licensed practitioner');
+        }
+        let attributionReason = '';
+        if (Number(practitioner.id) !== actor) {
+            const actorRow = this.db.prepare('SELECT role FROM users WHERE id = ?').get(actor) as any;
+            if (!actorRow || actorRow.role !== 'admin') {
+                throw new Error('Consultations must be started under your own name. An admin can attribute this visit to another doctor with a reason.');
+            }
+            attributionReason = String(input?.attributionReason || '').trim();
+            if (!attributionReason) {
+                throw new Error('A reason is required to start a consultation under another doctor.');
+            }
+        }
+        const licenseSnapshot = JSON.stringify({
+            name: practitioner.name,
+            license_number: practitioner.license_number || '',
+            specialty: practitioner.specialty || ''
+        });
+        return { practitioner, licenseSnapshot, attributionReason };
     }
 
     private assertResponsiblePractitioner(encounter: any, actingUserId: number) {
@@ -2567,23 +2593,43 @@ export class DatabaseService {
         for (const med of prescription) {
             const medName = String(med.medicine || med.name || '').trim();
             if (!medName) continue;
+            // Finite courses (KB-3) carry an end date derived from the
+            // duration line, so acute therapy stops reading as current.
+            const endDate = durationEndDate(new Date().toISOString().slice(0, 10), med.duration);
             const existing = this.db.prepare(
-                "SELECT id, dosage, frequency FROM patient_medications WHERE patient_id = ? AND LOWER(medicine_name) = LOWER(?) AND status = 'active'"
-            ).get(patientId, medName);
+                "SELECT id, dosage, frequency, end_date FROM patient_medications WHERE patient_id = ? AND LOWER(medicine_name) = LOWER(?) AND status = 'active'"
+            ).get(patientId, medName) as any;
             if (!existing) {
                 this.db.prepare(`
                     INSERT INTO patient_medications (
-                        patient_id, medicine_name, dosage, frequency, status, start_date, recorded_at, recorder_id
-                    ) VALUES (?, ?, ?, ?, 'active', CURRENT_DATE, CURRENT_TIMESTAMP, ?)
-                `).run(patientId, medName, med.dosage || '', med.frequency || '', actingUserId);
-            } else if ((existing.dosage || '') !== (med.dosage || '') || (existing.frequency || '') !== (med.frequency || '')) {
-                // Same medicine, changed regimen: refresh the active row so the
-                // safety context shows the current dose, not a stale one.
+                        patient_id, medicine_name, dosage, frequency, status, start_date, end_date, recorded_at, recorder_id
+                    ) VALUES (?, ?, ?, ?, 'active', CURRENT_DATE, ?, CURRENT_TIMESTAMP, ?)
+                `).run(patientId, medName, med.dosage || '', med.frequency || '', endDate, actingUserId);
+            } else {
+                // Same medicine: refresh the active row so the safety context
+                // shows the current dose, not a stale one. A freshly parsed
+                // course end wins; otherwise the stored end date is kept.
                 this.db.prepare(`
-                    UPDATE patient_medications SET dosage = ?, frequency = ? WHERE id = ?
-                `).run(med.dosage || '', med.frequency || '', existing.id);
+                    UPDATE patient_medications SET dosage = ?, frequency = ?, end_date = ? WHERE id = ?
+                `).run(med.dosage || '', med.frequency || '', endDate ?? existing.end_date ?? null, existing.id);
             }
         }
+        this.sweepExpiredMedications();
+    }
+
+    /**
+     * Marks finite courses whose end date has passed as completed (KB-3).
+     * Open-ended courses (no end date) are never touched. Runs after every
+     * prescription sync and on the daily retention sweep.
+     */
+    sweepExpiredMedications() {
+        return this.db.prepare(`
+            UPDATE patient_medications
+            SET status = 'completed'
+            WHERE status = 'active'
+              AND end_date IS NOT NULL AND TRIM(end_date) != ''
+              AND DATE(end_date) < DATE('now')
+        `).run();
     }
 
     private getExactEncounterQueue(encounter: any, allowedStatuses: string[], errorMessage: string) {
@@ -3205,6 +3251,7 @@ export class DatabaseService {
                 WHERE id = ? AND patient_id = ?
             `).run(medicineName, dosage, frequency, status, startDate, endDate, notes, medication.id, patientId);
             this.logAudit('UPDATE', 'patient_medications', medication.id, userId, `Updated medication ${medicineName}`);
+            this.sweepExpiredMedications();
             return this.db.prepare('SELECT *, medicine_name as medication_name FROM patient_medications WHERE id = ?').get(medication.id);
         } else {
             const result = this.db.prepare(`
@@ -3213,6 +3260,7 @@ export class DatabaseService {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
             `).run(patientId, medicineName, dosage, frequency, status, startDate, endDate, userId, notes);
             this.logAudit('INSERT', 'patient_medications', result.lastInsertRowid, userId, `Recorded medication ${medicineName}`);
+            this.sweepExpiredMedications();
             return this.db.prepare('SELECT *, medicine_name as medication_name FROM patient_medications WHERE id = ?').get(Number(result.lastInsertRowid));
         }
     }

@@ -560,6 +560,7 @@ function initializeServices(settings: any): void {
         // rule holds even if the scheduler never fires.
         try {
             databaseService.expireFetchedRecords();
+            databaseService.sweepExpiredMedications();
         } catch (e) {
             console.error('[HIU] Startup retention sweep failed:', e);
         }
@@ -567,6 +568,7 @@ function initializeServices(settings: any): void {
             const retentionJob = new CronJob('0 3 * * *', () => {
                 try {
                     databaseService.expireFetchedRecords();
+                    databaseService.sweepExpiredMedications();
                 } catch (e) {
                     console.error('[HIU] Scheduled retention sweep failed:', e);
                 }

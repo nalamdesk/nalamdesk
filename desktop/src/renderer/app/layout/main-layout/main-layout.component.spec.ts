@@ -137,6 +137,22 @@ describe('MainLayoutComponent', () => {
         expect(tours.start).toHaveBeenCalledWith('doctor');
     });
 
+    it('records the attending reason typed in the picker', () => {
+        const pick = { reasonInput: { set: vi.fn() }, reasonError: { set: vi.fn() } };
+        const layout = new MainLayoutComponent(
+            mockRouter,
+            mockDialogService,
+            mockAuthService,
+            mockNgZone,
+            mockRuntimeService,
+            undefined,
+            pick as any
+        );
+        layout.onAttendingReasonInput({ target: { value: 'Covering night shift' } } as any);
+        expect(pick.reasonInput.set).toHaveBeenCalledWith('Covering night shift');
+        expect(pick.reasonError.set).toHaveBeenCalledWith(false);
+    });
+
     it('returns zero queue count when the badge service throws', () => {
         const bad = { count: () => { throw new Error('down'); }, refresh: vi.fn() };
         const layout = new MainLayoutComponent(

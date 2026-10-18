@@ -173,7 +173,7 @@ import { TourOverlayComponent } from '../../shared/components/tour-overlay/tour-
           <label class="block text-sm font-medium text-gray-700 mb-1" for="attending-reason">Why is this visit attributed to them?</label>
           <textarea id="attending-reason" rows="2" placeholder="e.g. Covering night shift for Dr. Rao"
               [value]="doctorPick?.reasonInput() ?? ''"
-              (input)="doctorPick?.reasonInput.set(($event.target as HTMLTextAreaElement).value); doctorPick?.reasonError.set(false)"
+              (input)="onAttendingReasonInput($event)"
               class="w-full border rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"></textarea>
           <p *ngIf="doctorPick?.reasonError()" class="text-xs text-red-600 mt-1">A short reason is required — it is written to the audit trail.</p>
         </div>
@@ -243,6 +243,13 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
       localStorage.removeItem('nd.tour.dismissed');
     } catch { /* ignore */ }
     this.tourService.start(this.currentUser?.role || '');
+  }
+
+  /** Reason typed in the attending-doctor picker (KB-1 audit). */
+  onAttendingReasonInput(event: Event): void {
+    const value = (event.target as HTMLTextAreaElement | null)?.value ?? '';
+    this.doctorPick?.reasonInput.set(value);
+    this.doctorPick?.reasonError.set(false);
   }
 
   private badgeRefreshId: any;

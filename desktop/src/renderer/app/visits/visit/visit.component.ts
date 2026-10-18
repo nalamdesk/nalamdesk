@@ -133,6 +133,10 @@ interface Visit {
                 <h1 class="text-lg md:text-xl font-bold text-gray-800 truncate">
                   {{ headerTitle }}
                 </h1>
+                <span *ngIf="sourceBooking" class="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5 whitespace-nowrap"
+                      title="Consultation from a scheduled booking">
+                  Booked {{ sourceBooking.date }} {{ sourceBooking.time }}
+                </span>
            </div>
 
            <div class="flex flex-wrap gap-2 items-center justify-end">
@@ -1530,6 +1534,7 @@ export class VisitComponent implements OnInit {
       allergy_override_reason: visit.allergy_override_reason || ''
     });
     this.currentPrescription = visit.prescription || [];
+    void this.loadSourceBooking(visit?.id);
   }
 
   private patchEncounter(encounter: any) {
@@ -1543,6 +1548,23 @@ export class VisitComponent implements OnInit {
       allergy_override_reason: encounter.allergy_override_reason || ''
     });
     this.currentPrescription = encounter.prescription || [];
+    void this.loadSourceBooking(encounter?.id);
+  }
+
+  /** Source booking for the encounter link (hidden when not permitted). */
+  sourceBooking: any = null;
+
+  private async loadSourceBooking(visitId: unknown): Promise<void> {
+    const id = Number(visitId);
+    if (!id) {
+      this.sourceBooking = null;
+      return;
+    }
+    try {
+      this.sourceBooking = await this.dataService.invoke<any>('getAppointmentByVisit', id) || null;
+    } catch {
+      this.sourceBooking = null;
+    }
   }
 
   private isAuthorizationError(error: unknown): boolean {

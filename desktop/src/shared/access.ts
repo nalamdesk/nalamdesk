@@ -32,7 +32,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
     'getIdentifiers', 'saveIdentifier', 'deleteIdentifier',
     'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
-            'getDashboardStats', 'getDoctors', 'getAppointments', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
+            'getDashboardStats', 'getDoctors', 'getAppointments', 'getAppointmentsByPatient', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests'
         ]
     },
@@ -145,7 +145,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
         permissions: [
             'getPatients', 'findDuplicateCandidates', 'getQueue', 'addToQueue', 'removeFromQueue',
             'updateQueueStatus', 'updateQueueStatusByPatientId', 'getPublicSettings',
-            'getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits',
+            'getDashboardStats', 'getAppointments', 'getAppointmentsByPatient', 'getAppointmentByVisit', 'saveAppointment', 'getVisits',
             'getVitals', 'getVitalsHistory', 'getEncounterVitals',
             'abdmAbhaLookup', 'abdmGetShareTokens', 'abdmAcceptShareToken',
             'abdmGetInbox'

@@ -1588,6 +1588,8 @@ handleGuardedDb('db:getAppointments', (_, date) => {
     if (!user) throw new Error('Unauthorized');
     return databaseService.getAppointments(date);
 });
+handleGuardedDb('db:getAppointmentsByPatient', (_, patientId) =>
+    invokeDbMethod(databaseService, 'getAppointmentsByPatient', [patientId], requireDesk(['doctor', 'receptionist', 'nurse', 'admin']).id));
 handleGuardedDb('db:saveAppointment', (_, appt) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
@@ -1607,7 +1609,7 @@ handleGuardedDb('db:transitionAppointment', (_, input) =>
 handleGuardedDb('db:getAppointmentHistory', (_, id) =>
     invokeDbMethod(databaseService, 'getAppointmentHistory', [id], requireDesk().id));
 handleGuardedDb('db:getAppointmentByVisit', (_, visitId) =>
-    invokeDbMethod(databaseService, 'getAppointmentByVisit', [visitId], requireDesk().id));
+    invokeDbMethod(databaseService, 'getAppointmentByVisit', [visitId], requireDesk(['doctor', 'receptionist', 'nurse', 'admin']).id));
 handleGuardedDb('db:detectConflicts', (_, input) =>
     invokeDbMethod(databaseService, 'detectConflicts', [input], requireDesk().id));
 handleGuardedDb('db:checkInAppointment', (_, id) =>

@@ -89,4 +89,44 @@ describe('appointment lifecycle integration', () => {
         expect(() => service.checkInAppointment(id, 10)).toThrow('already in queue');
         expect(db.prepare('SELECT status FROM appointments WHERE id = ?').get(id).status).toBe('confirmed');
     });
+
+    it('lists a patient bookings newest first', () => {
+        db.prepare(`INSERT INTO patients (id, uuid, name, mobile) VALUES (2, 'p-2', 'Patient Two', '9999999998')`).run();
+        service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '10:00', reason: 'First' });
+        service.saveAppointment({ patient_id: 1, date: '2026-10-07', time: '09:00', reason: 'Second' });
+        service.saveAppointment({ patient_id: 2, date: '2026-10-06', time: '09:00', reason: 'Other' });
+        const rows = service.getAppointmentsByPatient(1) as any[];
+        expect(rows.map((r) => r.date)).toEqual(['2026-10-07', '2026-10-05']);
+        expect(rows[0]).toMatchObject({ reason: 'Second', patient_name: 'Patient One' });
+    });
+
+    it('auto-fulfills the arrived booking when its doctor completes the visit', () => {
+        const created: any = service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '10:00', reason: 'Review' });
+        const id = Number(created.lastInsertRowid);
+        service.transitionAppointment(id, 'confirmed', {}, 10);
+        const checked = service.checkInAppointment(id, 10);
+        const enc = service.beginConsultation({
+            patientId: 1, queueEntryId: checked.queueEntryId, startRequestId: 'auto-fulfill-1'
+        }, 11);
+        service.completeConsultation({ encounterId: enc.id, visit: { diagnosis: 'Done' } }, 11);
+        const booking = db.prepare('SELECT status, visit_id FROM appointments WHERE id = ?').get(id) as any;
+        expect(booking.status).toBe('fulfilled');
+        expect(booking.visit_id).toBe(enc.id);
+    });
+
+    it('leaves the booking arrived when another doctor completes the visit', () => {
+        db.prepare("INSERT INTO users (id, username, role, name, active) VALUES (12, 'dr_other', 'doctor', 'Dr Other', 1)").run();
+        const created: any = service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '10:00', reason: 'Review' });
+        const id = Number(created.lastInsertRowid);
+        db.prepare('UPDATE appointments SET doctor_id = 12 WHERE id = ?').run(id);
+        service.transitionAppointment(id, 'confirmed', {}, 10);
+        const checked = service.checkInAppointment(id, 10);
+        const enc = service.beginConsultation({
+            patientId: 1, queueEntryId: checked.queueEntryId, startRequestId: 'auto-fulfill-2'
+        }, 11);
+        service.completeConsultation({ encounterId: enc.id, visit: { diagnosis: 'Done' } }, 11);
+        const booking = db.prepare('SELECT status, visit_id FROM appointments WHERE id = ?').get(id) as any;
+        expect(booking.status).toBe('arrived');
+        expect(booking.visit_id).toBeNull();
+    });
 });

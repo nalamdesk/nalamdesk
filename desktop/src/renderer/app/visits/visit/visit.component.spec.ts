@@ -1081,6 +1081,24 @@ describe('VisitComponent', () => {
             await component.onVisitErrorDecided(null);
             expect(mockDataService.invoke).not.toHaveBeenCalled();
         });
+
+        it('shows the source booking for a linked encounter', async () => {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getAppointmentByVisit') return Promise.resolve({ id: 3, date: '2026-10-05', time: '10:00' });
+                return Promise.resolve(null);
+            });
+            (component as any).patchEncounter({ id: 7, prescription: [] });
+            await new Promise((r) => setTimeout(r, 0));
+            expect(mockDataService.invoke).toHaveBeenCalledWith('getAppointmentByVisit', 7);
+            expect(component.sourceBooking).toMatchObject({ id: 3 });
+        });
+
+        it('hides the source booking when the lookup is forbidden', async () => {
+            mockDataService.invoke.mockRejectedValueOnce(new Error('Forbidden'));
+            (component as any).patchEncounter({ id: 7, prescription: [] });
+            await new Promise((r) => setTimeout(r, 0));
+            expect(component.sourceBooking).toBeNull();
+        });
     });
 });
 

@@ -1597,6 +1597,21 @@ export const MIGRATIONS = [
                 admin: clinicalAppointmentMethods
             });
         }
+    },
+    {
+        version: 43,
+        up: (db: any) => {
+            console.log('Running Migration v43 (appointment lookup grants)...');
+            // Read-only links the day view and chart need: booking for a
+            // finished visit, and bookings for a patient. Nurses hold no
+            // lifecycle grants (v42 stands); these reads are desk-wide.
+            grantRoleMethods(db, {
+                doctor: ['getAppointmentByVisit', 'getAppointmentsByPatient'],
+                receptionist: ['getAppointmentByVisit', 'getAppointmentsByPatient'],
+                nurse: ['getAppointmentByVisit', 'getAppointmentsByPatient'],
+                admin: ['getAppointmentByVisit', 'getAppointmentsByPatient']
+            });
+        }
     }
 ];
 

@@ -61,10 +61,18 @@ interface DayRow {
           <div class="mt-2 flex flex-wrap items-center gap-1.5">
             <button *ngIf="r.status === 'booked'" (click)="transition(r, 'confirmed')" class="btn btn-xs btn-ghost border border-gray-200">Confirm</button>
             <button *ngIf="r.status === 'confirmed'" (click)="checkIn(r)" class="btn btn-xs btn-primary">Check in</button>
+            <button *ngIf="canFulfill(r)" (click)="toggleLink(r)" class="btn btn-xs btn-ghost border border-gray-200">Link visit</button>
             <button *ngIf="canReschedule(r)" (click)="openReschedule(r)" class="btn btn-xs btn-ghost border border-gray-200">Reschedule</button>
             <button *ngIf="canCancel(r)" (click)="askReason(r, 'cancelled')" class="btn btn-xs btn-ghost border border-red-200 text-red-600">Cancel</button>
             <button *ngIf="r.status === 'confirmed' || r.status === 'arrived'" (click)="askReason(r, 'no-show')" class="btn btn-xs btn-ghost border border-gray-200">No-show</button>
             <button (click)="toggleHistory(r)" class="btn btn-xs btn-ghost text-gray-500">History</button>
+          </div>
+          <div *ngIf="linkingId === r.id" class="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-600 space-y-1">
+            <div *ngIf="(linkCandidates[r.id] || []).length === 0" class="text-gray-400">No finished, unlinked visits for this patient yet</div>
+            <div *ngFor="let v of linkCandidates[r.id]" class="flex items-center justify-between gap-2">
+              <span>Visit #{{ v.id }} · {{ v.started_at || v.created_at || '' }} · {{ v.diagnosis || 'no diagnosis' }}</span>
+              <button (click)="fulfill(r, v)" [disabled]="linkingBusy" class="btn btn-xs btn-primary disabled:opacity-50">Link</button>
+            </div>
           </div>
           <div *ngIf="expandedId === r.id" class="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-600 space-y-1">
             <div *ngIf="(history[r.id] || []).length === 0" class="text-gray-400">No history yet</div>
@@ -106,8 +114,8 @@ interface DayRow {
           </div>
           <div class="px-6 py-3 border-t bg-gray-50 flex justify-end gap-2">
             <button (click)="closeCreate()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded border bg-white">Cancel</button>
-            <button (click)="saveBooking()" [disabled]="(!rescheduling && !form.patientId) || !form.date || !form.time"
-                    class="px-4 py-2 text-sm text-white font-medium rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50">Save</button>
+            <button (click)="saveBooking()" [disabled]="(!rescheduling && !form.patientId) || !form.date || !form.time || saving"
+                    class="px-4 py-2 text-sm text-white font-medium rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50">{{ saving ? 'Saving…' : 'Save' }}</button>
           </div>
         </div>
       </div>
@@ -128,13 +136,15 @@ export class AppointmentsComponent implements OnInit {
     private authService: AuthService = inject(AuthService, { optional: true }) as any;
     private dialogService = inject(DialogService, { optional: true } as any) as any;
 
-    day = new Date().toISOString().split('T')[0];
+    /** Clinic-local day (YYYY-MM-DD): UTC dates open on the wrong day abroad. */
+    day = localDay();
     rows: DayRow[] = [];
     loading = false;
     expandedId: number | null = null;
     history: Record<number, any[]> = {};
 
     showCreate = false;
+    saving = false;
     rescheduling: DayRow | null = null;
     form = { patientQuery: '', patientId: null as number | null, date: '', time: '', reason: '' };
     patientHits: any[] = [];
@@ -144,6 +154,14 @@ export class AppointmentsComponent implements OnInit {
     reasonTitle = '';
     reasonTarget: 'cancelled' | 'no-show' = 'cancelled';
     reasonRow: DayRow | null = null;
+
+    linkingId: number | null = null;
+    linkCandidates: Record<number, any[]> = {};
+    linkingBusy = false;
+
+    private loadSeq = 0;
+    private searchSeq = 0;
+    private conflictSeq = 0;
 
     ngOnInit() {
         void this.load();
@@ -174,15 +192,70 @@ export class AppointmentsComponent implements OnInit {
         return !['fulfilled', 'cancelled', 'no-show'].includes(r.status);
     }
 
+    /** Only the treating roles close a booking against a finished visit. */
+    canFulfill(r: DayRow): boolean {
+        if (r.status !== 'arrived') return false;
+        const role = this.authService?.getUser?.()?.role;
+        return role === 'doctor' || role === 'admin';
+    }
+
+    async toggleLink(r: DayRow): Promise<void> {
+        if (this.linkingId === r.id) {
+            this.linkingId = null;
+            return;
+        }
+        this.linkingId = r.id;
+        this.linkCandidates[r.id] = [];
+        try {
+            const visits = await this.dataService.invoke<any[]>('getVisits', r.patient_id) || [];
+            const finished = visits.filter((v: any) => String(v.status || '') === 'finished');
+            const free: any[] = [];
+            for (const v of finished) {
+                try {
+                    const linked = await this.dataService.invoke<any>('getAppointmentByVisit', v.id);
+                    if (!linked) free.push(v);
+                } catch {
+                    free.push(v);
+                }
+            }
+            this.linkCandidates[r.id] = free;
+        } catch (e) {
+            console.error('Failed to load linkable visits', e);
+        }
+    }
+
+    async fulfill(r: DayRow, visit: any): Promise<void> {
+        if (this.linkingBusy) return;
+        this.linkingBusy = true;
+        try {
+            await this.dataService.invoke('fulfillAppointment', { id: r.id, visitId: visit.id });
+            this.linkingId = null;
+            await this.refreshHistory(r.id);
+            await this.load();
+        } catch (e) {
+            await this.dialogService?.open({
+                title: 'Link failed',
+                message: e instanceof Error ? e.message : 'Could not link the visit.',
+                type: 'error'
+            });
+        } finally {
+            this.linkingBusy = false;
+        }
+    }
+
     async load(): Promise<void> {
+        const seq = ++this.loadSeq;
+        const day = this.day;
         this.loading = true;
         try {
-            const rows = await this.dataService.invoke<any[]>('getAppointments', this.day);
+            const rows = await this.dataService.invoke<any[]>('getAppointments', day);
+            // Stale LAN responses must not overwrite a newer day selection.
+            if (seq !== this.loadSeq || day !== this.day) return;
             this.rows = rows || [];
         } catch (e) {
             console.error('Failed to load appointments', e);
         } finally {
-            this.loading = false;
+            if (seq === this.loadSeq) this.loading = false;
         }
     }
 
@@ -192,18 +265,26 @@ export class AppointmentsComponent implements OnInit {
             return;
         }
         this.expandedId = r.id;
-        if (!this.history[r.id]) {
-            try {
-                this.history[r.id] = await this.dataService.invoke<any[]>('getAppointmentHistory', r.id) || [];
-            } catch {
-                this.history[r.id] = [];
-            }
+        await this.refreshHistory(r.id);
+    }
+
+    /** Reloads one booking's history, clearing it after writes (Greptile #5). */
+    private async refreshHistory(id: number): Promise<void> {
+        if (this.expandedId !== id) {
+            delete this.history[id];
+            return;
+        }
+        try {
+            this.history[id] = await this.dataService.invoke<any[]>('getAppointmentHistory', id) || [];
+        } catch {
+            this.history[id] = [];
         }
     }
 
     async transition(r: DayRow, to: string, reason?: string): Promise<void> {
         try {
             await this.dataService.invoke('transitionAppointment', { id: r.id, to, reason });
+            await this.refreshHistory(r.id);
             await this.load();
         } catch (e) {
             await this.dialogService?.open({
@@ -217,6 +298,7 @@ export class AppointmentsComponent implements OnInit {
     async checkIn(r: DayRow): Promise<void> {
         try {
             await this.dataService.invoke('checkInAppointment', r.id);
+            await this.refreshHistory(r.id);
             await this.load();
         } catch (e) {
             await this.dialogService?.open({
@@ -252,7 +334,7 @@ export class AppointmentsComponent implements OnInit {
 
     openReschedule(r: DayRow): void {
         this.rescheduling = r;
-        this.form = { patientQuery: '', patientId: r.patient_id, date: r.date, time: r.time, reason: '' };
+        this.form = { patientQuery: '', patientId: r.patient_id, date: r.date, time: r.time, reason: r.reason || '' };
         this.conflicts = [];
         this.showCreate = true;
         void this.checkConflicts();
@@ -264,14 +346,21 @@ export class AppointmentsComponent implements OnInit {
     }
 
     async searchPatients(): Promise<void> {
+        // A fresh keystroke voids the previous pick: saving must name the
+        // patient shown in the field, never a stale selection (Greptile #1).
+        this.form.patientId = null;
+        const seq = ++this.searchSeq;
         const q = this.form.patientQuery.trim();
         if (q.length < 2) {
             this.patientHits = [];
             return;
         }
         try {
-            this.patientHits = await this.dataService.invoke<any[]>('getPatients', q) || [];
+            const hits = await this.dataService.invoke<any[]>('getPatients', q) || [];
+            if (seq !== this.searchSeq) return;
+            this.patientHits = hits;
         } catch {
+            if (seq !== this.searchSeq) return;
             this.patientHits = [];
         }
     }
@@ -287,25 +376,41 @@ export class AppointmentsComponent implements OnInit {
             this.conflicts = [];
             return;
         }
+        const seq = ++this.conflictSeq;
+        const date = this.form.date;
+        const time = this.form.time;
         try {
-            this.conflicts = await this.dataService.invoke<any[]>('detectConflicts', {
-                date: this.form.date,
-                time: this.form.time,
+            const found = await this.dataService.invoke<any[]>('detectConflicts', {
+                date,
+                time,
                 excludeId: this.rescheduling?.id
             }) || [];
+            if (seq !== this.conflictSeq || date !== this.form.date || time !== this.form.time) return;
+            this.conflicts = found;
         } catch {
+            if (seq !== this.conflictSeq) return;
             this.conflicts = [];
         }
     }
 
     async saveBooking(): Promise<void> {
+        // Double clicks must not book twice: one request at a time (Greptile #2).
+        if (this.saving) return;
+        this.saving = true;
         try {
             if (this.rescheduling) {
                 await this.dataService.invoke('saveAppointment', {
                     id: this.rescheduling.id,
                     date: this.form.date,
-                    time: this.form.time
+                    time: this.form.time,
+                    reason: this.form.reason
                 });
+                const moved = this.rescheduling;
+                this.closeCreate();
+                // Follow a cross-day move to the booking's new day.
+                this.day = this.form.date || this.day;
+                await this.refreshHistory(moved.id);
+                await this.load();
             } else {
                 await this.dataService.invoke('saveAppointment', {
                     patient_id: this.form.patientId,
@@ -313,17 +418,23 @@ export class AppointmentsComponent implements OnInit {
                     time: this.form.time,
                     reason: this.form.reason
                 });
+                this.closeCreate();
+                await this.load();
             }
-            this.closeCreate();
-            // Follow a cross-day move to the booking's new day.
-            this.day = this.form.date || this.day;
-            await this.load();
         } catch (e) {
             await this.dialogService?.open({
                 title: 'Save failed',
                 message: e instanceof Error ? e.message : 'Could not save the booking.',
                 type: 'error'
             });
+        } finally {
+            this.saving = false;
         }
     }
+}
+
+/** Clinic-local day as YYYY-MM-DD (Greptile #6: UTC opens the wrong day). */
+function localDay(when: Date = new Date()): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
 }

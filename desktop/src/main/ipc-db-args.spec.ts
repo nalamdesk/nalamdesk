@@ -50,6 +50,8 @@ describe('IPC DatabaseService argument unpacking', () => {
         const input = { patientId: 42, queueEntryId: 9, startRequestId: 'req-1' };
         expect(resolveDbMethodArgs('beginConsultation', [input], 7)).toEqual([input, 7]);
         expect(resolveDbMethodArgs('getActiveConsultation', [42], 7)).toEqual([42, 7]);
+        expect(resolveDbMethodArgs('getAppointmentsByPatient', [{ patientId: 42 }], 7)).toEqual([42, 7]);
+        expect(resolveDbMethodArgs('getAppointmentsByPatient', [42], 7)).toEqual([42, 7]);
     });
 
     it('leaves read methods unchanged', () => {

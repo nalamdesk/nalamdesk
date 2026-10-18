@@ -88,12 +88,96 @@ describe('AppointmentsComponent', () => {
             patient_id: 7, date: '2026-10-05', time: '09:00'
         }));
 
-        component.openReschedule({ id: 8, patient_id: 7, date: '2026-10-05', time: '09:00', status: 'booked' } as any);
+        component.openReschedule({ id: 8, patient_id: 7, date: '2026-10-05', time: '09:00', reason: 'Follow-up', status: 'booked' } as any);
+        expect(component.form.reason).toBe('Follow-up');
         component.form.date = '2026-10-06';
         await component.saveBooking();
         expect(mockDataService.invoke).toHaveBeenCalledWith('saveAppointment', expect.objectContaining({
-            id: 8, date: '2026-10-06'
+            id: 8, date: '2026-10-06', reason: 'Follow-up'
         }));
         expect(component.day).toBe('2026-10-06');
+    });
+
+    it('clears the picked patient when the search text changes', async () => {
+        component.form.patientQuery = 'Ash';
+        component.form.patientId = 7;
+        component.form.patientQuery = 'Asha X';
+        await component.searchPatients();
+        expect(component.form.patientId).toBeNull();
+    });
+
+    it('ignores double saves while a booking is in flight', async () => {
+        let resolveFirst: (v: any) => void = () => undefined;
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'saveAppointment') return new Promise((res) => { resolveFirst = res; });
+            return Promise.resolve([]);
+        });
+        component.openCreate();
+        component.form.patientId = 7;
+        component.form.date = '2026-10-05';
+        component.form.time = '09:00';
+        const first = component.saveBooking();
+        await component.saveBooking();
+        resolveFirst({ id: 1 });
+        await first;
+        expect(mockDataService.invoke.mock.calls.filter((c: any[]) => c[0] === 'saveAppointment')).toHaveLength(1);
+    });
+
+    it('refreshes history after a transition instead of showing stale entries', async () => {
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'getAppointmentHistory') return Promise.resolve([{ to_status: 'confirmed' }]);
+            return Promise.resolve([]);
+        });
+        const row = { id: 2, status: 'booked' } as any;
+        component.expandedId = 2;
+        await component.transition(row, 'confirmed');
+        expect(component.history[2]).toHaveLength(1);
+    });
+
+    it('ignores stale day loads that finish after a day change', async () => {
+        const resolvers: Array<(v: any) => void> = [];
+        mockDataService.invoke.mockImplementation(() => new Promise((res) => { resolvers.push(res); }));
+        const firstDay = component.day;
+        const first = component.load();
+        component.day = '2026-10-06';
+        const second = component.load();
+        resolvers[0]([{ id: 1 }]);
+        resolvers[1]([]);
+        await first;
+        await second;
+        expect(firstDay).not.toBe('2026-10-06');
+        expect(component.rows).toEqual([]);
+    });
+
+    it('uses the clinic-local day, not UTC', () => {
+        expect(component.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        const d = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        expect(component.day).toBe(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    });
+
+    it('links arrived bookings to finished unlinked visits for doctors', async () => {
+        (component as any).authService = { getUser: () => ({ role: 'doctor' }) };
+        const row = { id: 9, status: 'arrived', patient_id: 7 } as any;
+        expect(component.canFulfill(row)).toBe(true);
+        mockDataService.invoke.mockImplementation((method: string) => {
+            if (method === 'getVisits') return Promise.resolve([
+                { id: 21, status: 'finished', diagnosis: 'Flu' },
+                { id: 22, status: 'in-progress', diagnosis: 'Draft' },
+                { id: 23, status: 'finished', diagnosis: 'Old' }
+            ]);
+            if (method === 'getAppointmentByVisit') return Promise.resolve(null);
+            return Promise.resolve([]);
+        });
+        await component.toggleLink(row);
+        expect(component.linkCandidates[9].map((v: any) => v.id)).toEqual([21, 23]);
+        await component.fulfill(row, { id: 21 });
+        expect(mockDataService.invoke).toHaveBeenCalledWith('fulfillAppointment', { id: 9, visitId: 21 });
+    });
+
+    it('hides link-visit from non-treating roles', async () => {
+        (component as any).authService = { getUser: () => ({ role: 'receptionist' }) };
+        expect(component.canFulfill({ id: 9, status: 'arrived' } as any)).toBe(false);
+        expect(component.canFulfill({ id: 9, status: 'booked' } as any)).toBe(false);
     });
 });

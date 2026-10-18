@@ -1216,6 +1216,34 @@ describe('PatientDetailsComponent', () => {
             expect(mockRouter.navigate).toHaveBeenCalledWith(['/visit', 123], expect.objectContaining({ state: expect.objectContaining({ encounterId: 70 }) }));
         });
 
+        it('loads the patient appointments into upcoming and history', async () => {
+            mockDataService.invoke.mockImplementation((endpoint: string) => {
+                if (endpoint === 'getAppointmentsByPatient') return Promise.resolve([
+                    { id: 1, date: '2026-10-07', time: '09:00', status: 'booked', reason: 'Review' },
+                    { id: 2, date: '2026-09-01', time: '09:00', status: 'fulfilled', reason: 'Done' },
+                    { id: 3, date: '2026-10-05', time: '10:00', status: 'confirmed', reason: 'Follow-up' }
+                ]);
+                if (endpoint === 'getVisits') return Promise.resolve([]);
+                if (endpoint === 'getPatientById') return Promise.resolve({ id: 123 });
+                return Promise.resolve(null);
+            });
+            component.patientId = 123;
+            await component.loadData();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('getAppointmentsByPatient', 123);
+            expect(component.upcomingAppointments.map((a: any) => a.id)).toEqual([3, 1]);
+            expect(component.pastAppointments.map((a: any) => a.id)).toEqual([2]);
+        });
+
+        it('hides appointments the viewer may not see', async () => {
+            mockDataService.invoke.mockImplementation((endpoint: string) => {
+                if (endpoint === 'getAppointmentsByPatient') return Promise.reject(new Error('Forbidden'));
+                return Promise.resolve(null);
+            });
+            component.patientId = 123;
+            await component.loadData();
+            expect(component.appointments).toEqual([]);
+        });
+
         it('renders substance, criticality, condition, and ICD cells', () => {
             const allergy = (component as any).allergyColumnDefs as any[];
             const substance = allergy.find((c: any) => c.headerName === 'Substance');

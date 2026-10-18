@@ -288,14 +288,21 @@ import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patie
                                 class="px-3 py-1.5 rounded-lg text-sm transition">
                             Problems ({{ conditions.length }})
                         </button>
-                        <button type="button" (click)="activeTab = 'medications'"
-                                [class.bg-white]="activeTab === 'medications'"
+                        <button type="button" (click)="activeTab = 'medications'"                                [class.bg-white]="activeTab === 'medications'"
                                 [class.shadow-sm]="activeTab === 'medications'"
                                 [class.text-green-600]="activeTab === 'medications'"
                                 [class.font-bold]="activeTab === 'medications'"
                                 [class.text-gray-600]="activeTab !== 'medications'"
                                 class="px-3 py-1.5 rounded-lg text-sm transition">
                             Medications ({{ medications.length }})
+                        </button>
+                        <button type="button" (click)="activeTab = 'appointments'"                                [class.bg-white]="activeTab === 'appointments'"
+                                [class.shadow-sm]="activeTab === 'appointments'"
+                                [class.text-blue-600]="activeTab === 'appointments'"
+                                [class.font-bold]="activeTab === 'appointments'"
+                                [class.text-gray-600]="activeTab !== 'appointments'"
+                                class="px-3 py-1.5 rounded-lg text-sm transition">
+                            Appointments ({{ appointments.length }})
                         </button>
                         <button type="button" (click)="openExternalTab()"
                                 [class.bg-white]="activeTab === 'external'"
@@ -360,6 +367,32 @@ import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patie
                             </button>
                         </div>
                     </app-shared-table>
+                </div>
+
+                <!-- TAB: APPOINTMENTS (upcoming + history, issue #19) -->
+                <div *ngIf="activeTab === 'appointments'" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-4">
+                    <div>
+                        <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Upcoming ({{ upcomingAppointments.length }})</h4>
+                        <div *ngIf="upcomingAppointments.length === 0" class="text-xs text-gray-400">No upcoming bookings</div>
+                        <div *ngFor="let a of upcomingAppointments" class="bg-white rounded-lg border border-gray-200 p-3 mb-2 shadow-sm">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-sm font-bold text-gray-800">{{ a.date }} · {{ a.time || '--:--' }}</span>
+                                <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{{ a.status }}</span>
+                            </div>
+                            <div *ngIf="a.reason" class="text-xs text-gray-500 mt-1 truncate">{{ a.reason }}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">History ({{ pastAppointments.length }})</h4>
+                        <div *ngIf="pastAppointments.length === 0" class="text-xs text-gray-400">No past bookings</div>
+                        <div *ngFor="let a of pastAppointments" class="bg-gray-50 rounded-lg border border-gray-200 p-3 mb-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-sm font-semibold text-gray-600">{{ a.date }} · {{ a.time || '--:--' }}</span>
+                                <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">{{ a.status }}</span>
+                            </div>
+                            <div *ngIf="a.reason" class="text-xs text-gray-500 mt-1 truncate">{{ a.reason }}</div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- TAB: EXTERNAL RECORDS (M3 HIU) -->
@@ -969,11 +1002,12 @@ export class PatientDetailsComponent implements OnInit {
     currentUser: any;
 
     // Clinical Safety & Longitudinal Records
-    activeTab: 'visits' | 'allergies' | 'conditions' | 'medications' | 'external' = 'visits';
+    activeTab: 'visits' | 'allergies' | 'conditions' | 'medications' | 'appointments' | 'external' = 'visits';
     safetyContext: any = null;
     allergies: any[] = [];
     conditions: any[] = [];
     medications: any[] = [];
+    appointments: any[] = [];
 
     // M3 HIU External Records
     readonly HI_TYPES = ['Prescription', 'DiagnosticReport', 'DischargeSummary', 'OPConsultation', 'ImmunizationRecord', 'WellnessRecord'];
@@ -1499,11 +1533,12 @@ export class PatientDetailsComponent implements OnInit {
 
     async loadData() {
         try {
-            const [patient, visits, vitals, safetyContext] = await Promise.all([
+            const [patient, visits, vitals, safetyContext, appointments] = await Promise.all([
                 this.dataService.invoke<any>('getPatientById', this.patientId),
                 this.dataService.invoke<any[]>('getVisits', this.patientId),
                 this.dataService.invoke<any>('getVitals', this.patientId),
-                this.dataService.invoke<any>('getPatientSafetyContext', this.patientId).catch(() => null)
+                this.dataService.invoke<any>('getPatientSafetyContext', this.patientId).catch(() => null),
+                this.dataService.invoke<any[]>('getAppointmentsByPatient', this.patientId).catch(() => [])
             ]);
 
             this.ngZone.run(() => {
@@ -1514,11 +1549,26 @@ export class PatientDetailsComponent implements OnInit {
                 this.allergies = safetyContext?.allergies || [];
                 this.conditions = safetyContext?.conditions || [];
                 this.medications = safetyContext?.medications || [];
+                this.appointments = appointments || [];
             });
             await this.loadIdentifiers();
         } catch (e) {
             console.error('Failed to load patient details', e);
         }
+    }
+
+    /** Upcoming bookings (active states, soonest first). */
+    get upcomingAppointments(): any[] {
+        return (this.appointments || [])
+            .filter((a: any) => ['proposed', 'booked', 'confirmed', 'arrived'].includes(String(a.status || '')))
+            .sort((x: any, y: any) => String(x.date || '').localeCompare(String(y.date || '')) || String(x.time || '').localeCompare(String(y.time || '')));
+    }
+
+    /** Past bookings (terminals, most recent first). */
+    get pastAppointments(): any[] {
+        return (this.appointments || [])
+            .filter((a: any) => ['fulfilled', 'cancelled', 'no-show'].includes(String(a.status || '')))
+            .sort((x: any, y: any) => String(y.date || '').localeCompare(String(x.date || '')) || String(y.time || '').localeCompare(String(x.time || '')));
     }
 
     // Flexible identifiers (issue #55). Nurses read; curation is a

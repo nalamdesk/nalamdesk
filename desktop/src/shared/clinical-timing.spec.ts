@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
     acceptedFrequencySpellings,
+    durationEndDate,
     frequencyLatin,
     isKnownFrequency,
+    parseDurationDays,
     parseFrequency
 } from './clinical-timing';
 
@@ -47,5 +49,34 @@ describe('clinical-timing', () => {
         expect(spellings).toContain('BID');
         expect(spellings).toContain('1-0-1');
         expect(spellings.length).toBeGreaterThan(20);
+    });
+
+    it('parses finite course durations into days', () => {
+        expect(parseDurationDays('3 days')).toBe(3);
+        expect(parseDurationDays('5 Days')).toBe(5);
+        expect(parseDurationDays('1 week')).toBe(7);
+        expect(parseDurationDays('2 weeks')).toBe(14);
+        expect(parseDurationDays('1 month')).toBe(30);
+        expect(parseDurationDays('3-4 days')).toBe(4);
+        expect(parseDurationDays('single dose')).toBe(1);
+        expect(parseDurationDays('STAT')).toBe(1);
+    });
+
+    it('leaves open-ended and unknown durations open', () => {
+        expect(parseDurationDays('until review')).toBeNull();
+        expect(parseDurationDays('chronic')).toBeNull();
+        expect(parseDurationDays('long term')).toBeNull();
+        expect(parseDurationDays('SOS')).toBeNull();
+        expect(parseDurationDays('')).toBeNull();
+        expect(parseDurationDays(null)).toBeNull();
+        expect(parseDurationDays('every 6 hours')).toBeNull();
+        expect(parseDurationDays('1-0-1')).toBeNull();
+    });
+
+    it('derives course end dates from a start plus duration', () => {
+        expect(durationEndDate('2026-10-01', '3 days')).toBe('2026-10-04');
+        expect(durationEndDate('2026-10-01', '1 week')).toBe('2026-10-08');
+        expect(durationEndDate('2026-10-01', 'until review')).toBeNull();
+        expect(durationEndDate('not-a-date', '3 days')).toBeNull();
     });
 });

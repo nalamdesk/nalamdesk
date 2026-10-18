@@ -214,6 +214,41 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(meds.some((m: any) => m.medicine_name === 'Paracetamol 650mg')).toBe(true);
         });
 
+        it('derives course end dates from durations and completes past-due courses', () => {
+            const q = queuePatient(1);
+            const enc = service.beginConsultation({ patientId: 1, queueEntryId: Number(q.lastInsertRowid), startRequestId: 'req-kb3' }, 10);
+
+            service.completeConsultation({
+                encounterId: enc.id,
+                visit: {
+                    diagnosis: 'Acute infection',
+                    prescription: [
+                        { medicine: 'Amoxicillin 500mg', dosage: '1 cap', frequency: '1-1-1', duration: '3 days' },
+                        { medicine: 'Metformin 500mg', dosage: '1 tab', frequency: '1-0-1', duration: 'until review' }
+                    ]
+                }
+            }, 10);
+
+            const meds = service.getMedications(1);
+            const acute = meds.find((m: any) => m.medicine_name === 'Amoxicillin 500mg');
+            const chronic = meds.find((m: any) => m.medicine_name === 'Metformin 500mg');
+            expect(acute.status).toBe('active');
+            expect(acute.end_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+            expect(chronic.status).toBe('active');
+            expect(chronic.end_date).toBeNull();
+
+            // Backdate the acute course past its end: the sweep completes it,
+            // while the open-ended course stays active.
+            const past = new Date();
+            past.setUTCDate(past.getUTCDate() - 1);
+            db.prepare('UPDATE patient_medications SET end_date = ? WHERE id = ?')
+                .run(past.toISOString().slice(0, 10), acute.id);
+            service.sweepExpiredMedications();
+            const after = service.getMedications(1);
+            expect(after.find((m: any) => m.medicine_name === 'Amoxicillin 500mg').status).toBe('completed');
+            expect(after.find((m: any) => m.medicine_name === 'Metformin 500mg').status).toBe('active');
+        });
+
         it('consolidates patient safety context into a single profile', () => {
             service.saveAllergy({
                 patient_id: 1,

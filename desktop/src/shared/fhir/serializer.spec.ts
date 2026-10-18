@@ -216,6 +216,46 @@ describe('buildOpConsultRecord', () => {
         expect(warnings.join(' ')).toContain('until review');
     });
 
+    it('exports the validity window for finite courses', () => {
+        const input = fixture();
+        input.prescriptions = [
+            { medicine: 'Amoxicillin 500mg', dosage: '500mg', route: 'Oral', frequency: '1-0-1', duration: '1 month' }
+        ];
+        const today = new Date().toISOString();
+        const start = today.slice(0, 10);
+        const expected = new Date(Date.UTC(Number(start.slice(0, 4)), Number(start.slice(5, 7)) - 1, Number(start.slice(8, 10))));
+        expected.setUTCDate(expected.getUTCDate() + 30);
+        const { bundle } = buildOpConsultRecord(input, today);
+        const request: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
+        expect(request.validityPeriod).toMatchObject({ start, end: expected.toISOString().slice(0, 10) });
+        expect(request.status).toBe('active');
+    });
+
+    it('exports long-finished courses as completed instead of active', () => {
+        const input = fixture();
+        input.prescriptions = [
+            { medicine: 'Amoxicillin 500mg', dosage: '500mg', route: 'Oral', frequency: '1-0-1', duration: '3 days' }
+        ];
+        const { bundle } = buildOpConsultRecord(input, '2020-01-01T10:00:00.000Z');
+        const request: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
+        expect(request.validityPeriod).toMatchObject({ start: '2020-01-01', end: '2020-01-04' });
+        expect(request.status).toBe('completed');
+    });
+
+    it('leaves open-ended courses active with no validity window', () => {
+        const input = fixture();
+        input.prescriptions = [
+            { medicine: 'Amoxicillin 500mg', dosage: '500mg', route: 'Oral', frequency: '1-0-1', duration: 'until review' }
+        ];
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const request: any = bundle.entry
+            .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
+        expect(request.validityPeriod).toBeUndefined();
+        expect(request.status).toBe('active');
+    });
+
     it('preserves nonterminal condition statuses', () => {
         const input = fixture();
         input.conditions = [{ name: 'Asthma', status: 'remission' }];

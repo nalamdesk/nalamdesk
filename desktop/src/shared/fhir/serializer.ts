@@ -21,7 +21,7 @@ import {
     ExportablePrescriptionLine, FREQUENCY_PATTERN, IPS_SECTIONS, OP_CONSULT_SECTIONS,
     isExportableMedicationRequest
 } from './nrces';
-import { parseFrequency } from '../clinical-timing';
+import { parseFrequency, durationEndDate } from '../clinical-timing';
 
 export interface ExportPrescriptionLine {
     medicine: string;
@@ -177,6 +177,15 @@ function medicationRequest(
         dosageInstruction: [dosageFor(line)]
     };
     if (line.instruction) request.note = [{ text: line.instruction }];
+    // Finite courses (KB-3) carry their validity window: a course whose end
+    // date has passed exports as completed instead of living on as active.
+    const courseEnd = durationEndDate(String(date).slice(0, 10), line.duration);
+    if (courseEnd) {
+        request.validityPeriod = { start: String(date).slice(0, 10), end: courseEnd };
+        if (courseEnd < new Date().toISOString().slice(0, 10)) {
+            request.status = 'completed';
+        }
+    }
     const supply = supplyDuration(line.duration);
     if (supply) {
         request.dispenseRequest = { expectedSupplyDuration: supply };

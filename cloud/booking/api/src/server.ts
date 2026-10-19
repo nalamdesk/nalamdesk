@@ -1,17 +1,11 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { serve } from '@hono/node-server';
-import { createBookingApp } from './app.js';
+import { buildServerApp, listenAddress, type Adapters } from './bootstrap.js';
 import { documentClient, DynamoBookingStore, DynamoClinicStore, DynamoSlotStore } from './dynamo.js';
-import type { DeviceAuthenticator, Doorbell, Mailbox } from './ports.js';
 
-// Entry point for the Web Function (a plain Node HTTP server on $PORT).
-// The device authenticator, mailbox and doorbell adapters arrive with #154
-// and #155; until they are wired in, the API refuses to start rather than
-// accept bookings it cannot deliver or clinic calls it cannot verify.
-
-function notWired(name: string, issue: string): never {
-    throw new Error(`Booking API: ${name} adapter is not wired yet (${issue}).`);
-}
+// Entry point for the Web Function, bundled to one CommonJS index.js by
+// infra/bundle.ts. The device authenticator, mailbox and doorbell adapters
+// arrive with #154 and #155; until then it serves a 503 holding app.
 
 function required(name: string): string {
     const value = process.env[name];
@@ -19,24 +13,29 @@ function required(name: string): string {
     return value;
 }
 
-const adapters: { devices?: DeviceAuthenticator; mailbox?: Mailbox; doorbell?: Doorbell } = {};
+async function main() {
+    const adapters: Adapters = {};
+    const db = documentClient(process.env.AWS_REGION);
+    // The phone pepper is a SecureString in Parameter Store (as the relay keeps
+    // its vendor secret), read once at start-up so it never sits in the
+    // function's environment. scripts/deploy.sh creates it on first deploy.
+    const parameter = await new SSMClient({}).send(new GetParameterCommand({ Name: required('BOOKING_PHONE_PEPPER_PARAM'), WithDecryption: true }));
+    const pepper = Buffer.from(parameter.Parameter?.Value ?? '', 'utf8');
+    if (pepper.length < 32) throw new Error('Booking API: the phone pepper parameter must be at least 32 characters.');
 
-const db = documentClient(process.env.AWS_REGION);
-// The phone pepper is a SecureString in Parameter Store (as the relay keeps
-// its vendor secret), read once at start-up so it never sits in the
-// function's environment. scripts/deploy.sh creates it on first deploy.
-const parameter = await new SSMClient({}).send(new GetParameterCommand({ Name: required('BOOKING_PHONE_PEPPER_PARAM'), WithDecryption: true }));
-const pepper = Buffer.from(parameter.Parameter?.Value ?? '', 'utf8');
-if (pepper.length < 32) throw new Error('Booking API: the phone pepper parameter must be at least 32 characters.');
+    const { app, missing } = buildServerApp({
+        clinics: new DynamoClinicStore(db, required('BOOKING_CLINICS_TABLE')),
+        slots: new DynamoSlotStore(db, required('BOOKING_SLOTS_TABLE')),
+        bookings: new DynamoBookingStore(db, required('BOOKING_REQUESTS_TABLE')),
+        phonePepper: pepper
+    }, adapters);
+    const { hostname, port } = listenAddress(process.env);
+    serve({ fetch: app.fetch, hostname, port }, () => {
+        console.log(JSON.stringify({ msg: 'booking api listening', port, missing }));
+    });
+}
 
-const app = createBookingApp({
-    clinics: new DynamoClinicStore(db, required('BOOKING_CLINICS_TABLE')),
-    slots: new DynamoSlotStore(db, required('BOOKING_SLOTS_TABLE')),
-    bookings: new DynamoBookingStore(db, required('BOOKING_REQUESTS_TABLE')),
-    devices: adapters.devices ?? notWired('device authenticator', '#154'),
-    mailbox: adapters.mailbox ?? notWired('mailbox', '#155'),
-    doorbell: adapters.doorbell ?? notWired('doorbell', '#155'),
-    phonePepper: pepper
+main().catch((error) => {
+    console.error(JSON.stringify({ msg: 'booking api failed to start', error: (error as Error).message }));
+    process.exit(1);
 });
-
-serve({ fetch: app.fetch, port: Number(process.env.PORT) || 8080 });

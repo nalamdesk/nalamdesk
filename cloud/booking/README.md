@@ -11,8 +11,13 @@ device, so the cloud only ever stores ciphertext, for at most 48 hours, in the s
 | --- | --- |
 | `api/` | Hono app for a Lambda Web Function: directory, slots, `POST /api/book`, status, signed clinic routes. |
 | `web/` | React + Vite + Tailwind site, served from S3 through CloudFront. Design rules in `web/DESIGN.md`. |
-| `infra/` | CDK app (ap-south-1): site bucket, CloudFront, the API Web Function, DynamoDB tables. |
-| `scripts/deploy.sh` | Builds, uploads the API zip to the versioned code bucket, deploys. |
+| `infra/` | CDK app (ap-south-1): site bucket, CloudFront on `book.<zone>`, the API Web Function, DynamoDB tables. |
+| `scripts/deploy.sh` | Creates the phone pepper once, tests and builds, deploys. |
+
+Shared resources come from `cloud/core` (#153) through Parameter Store, under
+`/nalamdesk/<stage>/core/`: the hosted zone, the `book` certificate and the versioned code bucket.
+The names are mirrored in `infra/lib/contract.ts`. The site is `book.<zone>` in production and
+`book-sandbox.<zone>` in sandbox.
 
 The desktop side lives in `desktop/src/main/booking/BookingInboxService.ts` (#158).
 
@@ -35,7 +40,7 @@ The sealed request itself goes to the mailbox (#155).
 
 **Phone limit.** At most 2 open requests per phone per clinic. The browser sends
 `SHA-256("nalamdesk-booking-phone-v1|" + number)`; the API stores only an HMAC of that under a
-pepper from Parameter Store. A ten-digit number space is small, so this is a rate-limit key, not
+pepper from Parameter Store (`/nalamdesk/<stage>/booking/phone-pepper`). A ten-digit number space is small, so this is a rate-limit key, not
 a secret, and a scripted client can send random digests. The CloudFront rate rule is the
 backstop.
 
@@ -65,9 +70,8 @@ serves; these make silent tampering hard, not impossible.
 | `DeviceAuthenticator` (signed clinic routes) | #154 |
 | `Mailbox`, `Doorbell` (sealed store, IoT Core) and presence events | #155 |
 | Desktop transport and the pairing-time X25519 key for `BookingInboxService` | #154, #155 |
-| Shared code bucket, domain and certificate from the core stack | #153 (relay PR #166) |
-
-`api/src/server.ts` refuses to start until the adapters exist, and `main.ts` keeps the old
+Until the adapters exist, `api/src/server.ts` serves a 503 holding app whose `/api/health` names
+what is missing, and `main.ts` keeps the old
 `CloudSyncService` until then.
 
 **CloudFront rate rule.** The Free flat-rate plan includes WAF rate limiting but is not set
@@ -76,8 +80,9 @@ add one rate-based rule: path starts with `/api/book`, 10 requests per IP per 5 
 
 **To confirm on the first deploy** (the Web Function CloudFormation resources are new): the
 `IamAuth` and `HomeRegion` values, the `nodejs24.x` runtime string, the execution role's trust
-principal, how the function starts the zip (`npm start` → `node server.mjs`), and that a CloudFront
-origin access control of type `lambda` can sign requests to a Web Function endpoint.
+principal, and that a CloudFront origin access control of type `lambda` can sign requests to a Web
+Function endpoint. The relay stack (`cloud/relay/infra`) makes the same assumptions and the API is
+bundled the same way: one CommonJS `index.js` that listens on `AWS_LAMBDA_HTTP_ENDPOINT`.
 
 ## Commands
 
@@ -85,6 +90,6 @@ origin access control of type `lambda` can sign requests to a Web Function endpo
 cd api && npm install && npm test && npm run dev   # in-memory API on :8787 with two demo clinics
 cd web && npm install && npm test && npm run dev   # site on :5173, proxies /api to :8787
 cd web && npm run lint:design                       # Impeccable anti-pattern scan
-cd infra && npm install && npm test && npx cdk synth
-scripts/deploy.sh                                   # needs AWS credentials for ap-south-1
+cd infra && npm install && npm test && npx cdk synth -c zoneName=example.in   # needs api/node_modules
+scripts/deploy.sh <zone> [sandbox|production]       # after cloud/core; needs AWS credentials
 ```

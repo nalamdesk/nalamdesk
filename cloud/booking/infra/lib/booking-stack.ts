@@ -1,31 +1,36 @@
 import * as cdk from 'aws-cdk-lib';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
-
-/** A Web Function code zip already uploaded to the versioned code bucket. */
-export interface ApiCodeLocation {
-    key: string;
-    versionId: string;
-}
+import { coreParam, phonePepperParam, stageDomain, type Stage } from './contract.js';
 
 export interface BookingStackProps extends cdk.StackProps {
-    /** Versioned, SSE-S3 bucket that holds the API zip (BookingCodeStack). */
-    codeBucketName: string;
-    /** Omit to deploy only the site and tables, before the first API upload. */
-    apiCode?: ApiCodeLocation;
+    stage: Stage;
+    /** The zone cloud/core manages; the site is book.<zone> (book-sandbox.<zone> in sandbox). */
+    zoneName: string;
+    /** Directory holding the bundled index.js (see lib/bundle.ts). */
+    codeDir: string;
     /** Built site (cloud/booking/web/dist). Omit in tests. */
     siteDir?: string;
 }
 
-/** SecureString parameter holding the phone-limit HMAC key. */
-export const PHONE_PEPPER_PARAM = '/nalamdesk/booking/phone-pepper';
+export const BOOKING_LIMITS = {
+    // The plan caps the booking API at one environment; a request that
+    // cannot get in is retried by the browser, unlike an ABDM callback.
+    maxEnvironments: 1,
+    timeoutSeconds: 10,
+    rateLimitPerSecond: 20
+};
 
 // Content-Security-Policy for the site. Everything is self-hosted (fonts
 // included), so the browser may load and call nothing but this origin.
@@ -66,6 +71,13 @@ export class BookingStack extends cdk.Stack {
 
     constructor(scope: Construct, id: string, props: BookingStackProps) {
         super(scope, id, props);
+        const { stage } = props;
+        // Shared resources come from the Core stack (#153) through Parameter Store.
+        const core = (name: Parameters<typeof coreParam>[1]) =>
+            ssm.StringParameter.valueForStringParameter(this, coreParam(stage, name));
+        const bookingDomain = stageDomain(stage, 'book', props.zoneName);
+        const codeBucket = s3.Bucket.fromBucketName(this, 'CodeBucket', core('code-bucket-name'));
+        const phonePepper = phonePepperParam(stage);
 
         // ---- Tables ----
         const clinics = new dynamodb.Table(this, 'Clinics', {
@@ -103,7 +115,7 @@ export class BookingStack extends cdk.Stack {
         const phonePepperArn = this.formatArn({
             service: 'ssm',
             resource: 'parameter',
-            resourceName: PHONE_PEPPER_PARAM.slice(1)
+            resourceName: phonePepper.slice(1)
         });
 
         // ---- Site bucket ----
@@ -134,114 +146,130 @@ export class BookingStack extends cdk.Stack {
         });
 
         const additionalBehaviors: Record<string, cloudfront.BehaviorOptions> = {};
-        let apiOac: cloudfront.CfnOriginAccessControl | undefined;
 
         // ---- Booking API (Lambda Web Function) ----
-        if (props.apiCode) {
-            const logGroup = new logs.LogGroup(this, 'ApiLogs', {
-                retention: logs.RetentionDays.ONE_MONTH,
-                removalPolicy: cdk.RemovalPolicy.DESTROY
-            });
-            const role = new iam.Role(this, 'ApiRole', {
-                assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-                description: 'NalamDesk booking API Web Function'
-            });
-            clinics.grantReadWriteData(role);
-            slots.grantReadWriteData(role);
-            bookings.grantReadWriteData(role);
-            role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [phonePepperArn] }));
-            // SecureStrings use the account's aws/ssm key; decrypt only via SSM.
-            role.addToPolicy(new iam.PolicyStatement({
-                actions: ['kms:Decrypt'],
-                resources: [this.formatArn({ service: 'kms', resource: 'alias', resourceName: 'aws/ssm' }), this.formatArn({ service: 'kms', resource: 'key', resourceName: '*' })],
-                conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } }
-            }));
-            logGroup.grantWrite(role);
+        const functionName = `nalamdesk-booking-api-${stage}`;
+        const logGroup = new logs.LogGroup(this, 'ApiLogs', {
+            logGroupName: `/aws/lambda/web/${functionName}`,
+            retention: logs.RetentionDays.ONE_MONTH,
+            removalPolicy: cdk.RemovalPolicy.DESTROY
+        });
+        const role = new iam.Role(this, 'ApiRole', {
+            assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+            description: 'NalamDesk booking API Web Function'
+        });
+        clinics.grantReadWriteData(role);
+        slots.grantReadWriteData(role);
+        bookings.grantReadWriteData(role);
+        role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [phonePepperArn] }));
+        // SecureStrings use the account's aws/ssm key; decrypt only via SSM.
+        role.addToPolicy(new iam.PolicyStatement({
+            actions: ['kms:Decrypt'],
+            resources: [this.formatArn({ service: 'kms', resource: 'alias', resourceName: 'aws/ssm' }), this.formatArn({ service: 'kms', resource: 'key', resourceName: '*' })],
+            conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } }
+        }));
+        logGroup.grantWrite(role);
 
-            const functionName = 'nalamdesk-booking-api';
-            const fn = new lambda.CfnWebFunction(this, 'Api', { functionName });
-            const revision = new lambda.CfnWebFunctionRevision(this, 'ApiRevision', {
-                functionName,
-                description: `Booking API ${props.apiCode.key}`,
-                buildConfig: {
-                    codeConfig: {
-                        s3Object: { bucket: props.codeBucketName, key: props.apiCode.key, versionId: props.apiCode.versionId }
-                    },
-                    runtimeConfig: { runtime: 'nodejs24.x' }
+        // Each build is uploaded once to the Core code bucket, named by its
+        // content hash; the revision pins that object's version, so a new
+        // build means a new revision.
+        const code = new s3deploy.BucketDeployment(this, 'ApiCode', {
+            sources: [s3deploy.Source.asset(props.codeDir)],
+            destinationBucket: codeBucket,
+            extract: false,
+            prune: false,
+            retainOnDelete: true
+        });
+        const fn = new lambda.CfnWebFunction(this, 'Api', { functionName });
+        const revision = new lambda.CfnWebFunctionRevision(this, 'ApiRevision', {
+            functionName,
+            description: 'NalamBook booking API',
+            buildConfig: {
+                codeConfig: {
+                    s3Object: {
+                        bucket: codeBucket.bucketName,
+                        key: cdk.Fn.select(0, code.objectKeys),
+                        versionId: cdk.Fn.select(0, code.objectVersionIds)
+                    }
                 },
-                serviceConfig: {
-                    executionRoleArn: role.roleArn,
-                    timeoutSeconds: 10,
-                    environmentVariables: {
-                        NODE_ENV: 'production',
-                        BOOKING_CLINICS_TABLE: clinics.tableName,
-                        BOOKING_SLOTS_TABLE: slots.tableName,
-                        BOOKING_REQUESTS_TABLE: bookings.tableName,
-                        BOOKING_PHONE_PEPPER_PARAM: PHONE_PEPPER_PARAM
-                    },
-                    telemetryConfig: { loggingConfig: { logGroup: logGroup.logGroupName, applicationLogLevel: 'INFO', systemLogLevel: 'WARN' } }
-                }
-            });
-            revision.addDependency(fn);
-            const endpoint = new lambda.CfnWebFunctionEndpoint(this, 'ApiEndpoint', {
-                functionName,
-                endpointName: 'public',
-                endpointType: 'HomeRegion',
-                // Only CloudFront, signing with its origin access control, may call it.
-                authType: 'IamAuth',
-                revisionWeights: [{ revisionId: revision.attrRevisionId, weight: 100 }],
-                scalingConfig: { maxEnvironments: 1 }
-            });
-            endpoint.addDependency(fn);
+                runtimeConfig: { runtime: 'nodejs24.x' }
+            },
+            serviceConfig: {
+                executionRoleArn: role.roleArn,
+                timeoutSeconds: BOOKING_LIMITS.timeoutSeconds,
+                environmentVariables: {
+                    NODE_ENV: 'production',
+                    BOOKING_CLINICS_TABLE: clinics.tableName,
+                    BOOKING_SLOTS_TABLE: slots.tableName,
+                    BOOKING_REQUESTS_TABLE: bookings.tableName,
+                    BOOKING_PHONE_PEPPER_PARAM: phonePepper
+                },
+                telemetryConfig: { loggingConfig: { logGroup: logGroup.logGroupName, applicationLogLevel: 'INFO', systemLogLevel: 'WARN' } }
+            }
+        });
+        revision.node.addDependency(fn);
+        revision.node.addDependency(code, role);
+        const endpoint = new lambda.CfnWebFunctionEndpoint(this, 'ApiEndpoint', {
+            functionName,
+            endpointName: 'public',
+            endpointType: 'HomeRegion',
+            // Only CloudFront, signing with its origin access control, may call it.
+            authType: 'IamAuth',
+            revisionWeights: [{ revisionId: revision.attrRevisionId, weight: 100 }],
+            scalingConfig: { maxEnvironments: BOOKING_LIMITS.maxEnvironments },
+            throttleConfig: { rateLimit: BOOKING_LIMITS.rateLimitPerSecond }
+        });
+        endpoint.node.addDependency(fn);
 
-            apiOac = new cloudfront.CfnOriginAccessControl(this, 'ApiOac', {
-                originAccessControlConfig: {
-                    name: `${this.stackName}-api`,
-                    originAccessControlOriginType: 'lambda',
-                    signingBehavior: 'always',
-                    signingProtocol: 'sigv4'
-                }
-            });
-            const apiOrigin = new origins.HttpOrigin(endpoint.attrDomainName, {
-                protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-                originId: 'booking-api'
-            });
+        const apiOac = new cloudfront.CfnOriginAccessControl(this, 'ApiOac', {
+            originAccessControlConfig: {
+                name: `${this.stackName}-api`,
+                originAccessControlOriginType: 'lambda',
+                signingBehavior: 'always',
+                signingProtocol: 'sigv4'
+            }
+        });
+        const apiOrigin = new origins.HttpOrigin(endpoint.attrDomainName, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+            originId: 'booking-api'
+        });
 
-            // The directory and slot lists change rarely; 30 seconds at the edge
-            // keeps search traffic off the function. The API sets the same max-age.
-            const publicLists = new cloudfront.CachePolicy(this, 'PublicListCache', {
-                defaultTtl: cdk.Duration.seconds(30),
-                maxTtl: cdk.Duration.seconds(30),
-                minTtl: cdk.Duration.seconds(0),
-                queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
-                headerBehavior: cloudfront.CacheHeaderBehavior.none(),
-                cookieBehavior: cloudfront.CacheCookieBehavior.none(),
-                enableAcceptEncodingGzip: true,
-                enableAcceptEncodingBrotli: true
-            });
-            const listBehavior: cloudfront.BehaviorOptions = {
-                origin: apiOrigin,
-                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-                cachePolicy: publicLists,
-                responseHeadersPolicy: securityHeaders
-            };
-            additionalBehaviors['/api/clinics'] = listBehavior;
-            additionalBehaviors['/api/slots/*'] = listBehavior;
-            additionalBehaviors['/api/*'] = {
-                origin: apiOrigin,
-                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-                allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-                cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-                originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-                responseHeadersPolicy: securityHeaders
-            };
+        // The directory and slot lists change rarely; 30 seconds at the edge
+        // keeps search traffic off the function. The API sets the same max-age.
+        const publicLists = new cloudfront.CachePolicy(this, 'PublicListCache', {
+            defaultTtl: cdk.Duration.seconds(30),
+            maxTtl: cdk.Duration.seconds(30),
+            minTtl: cdk.Duration.seconds(0),
+            queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
+            headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+            cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+            enableAcceptEncodingGzip: true,
+            enableAcceptEncodingBrotli: true
+        });
+        const listBehavior: cloudfront.BehaviorOptions = {
+            origin: apiOrigin,
+            viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+            allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+            cachePolicy: publicLists,
+            responseHeadersPolicy: securityHeaders
+        };
+        additionalBehaviors['/api/clinics'] = listBehavior;
+        additionalBehaviors['/api/slots/*'] = listBehavior;
+        additionalBehaviors['/api/*'] = {
+            origin: apiOrigin,
+            viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+            allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+            cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+            originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+            responseHeadersPolicy: securityHeaders
+        };
 
-            new cdk.CfnOutput(this, 'ApiEndpointDomain', { value: endpoint.attrDomainName });
-        }
+        new cdk.CfnOutput(this, 'ApiEndpointDomain', { value: endpoint.attrDomainName });
 
         this.distribution = new cloudfront.Distribution(this, 'Distribution', {
-            comment: 'NalamBook (NalamDesk online booking)',
+            comment: `NalamBook, NalamDesk online booking (${stage})`,
+            domainNames: [bookingDomain],
+            certificate: acm.Certificate.fromCertificateArn(this, 'Certificate', core('booking-certificate-arn')),
             defaultRootObject: 'index.html',
             httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
             priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
@@ -256,12 +284,34 @@ export class BookingStack extends cdk.Stack {
             additionalBehaviors
         });
 
-        if (apiOac) {
-            // The L2 HttpOrigin has no OAC slot, so attach it on the L1. Origins
-            // are listed in first-use order: the site bucket, then the API.
-            const cfn = this.distribution.node.defaultChild as cloudfront.CfnDistribution;
-            cfn.addPropertyOverride('DistributionConfig.Origins.1.OriginAccessControlId', apiOac.attrId);
-        }
+        // The L2 HttpOrigin has no OAC slot, so attach it on the L1. Origins
+        // are listed in first-use order: the site bucket, then the API.
+        const cfn = this.distribution.node.defaultChild as cloudfront.CfnDistribution;
+        cfn.addPropertyOverride('DistributionConfig.Origins.1.OriginAccessControlId', apiOac.attrId);
+
+        // Only this distribution may invoke the API endpoint.
+        new lambda.CfnResourcePolicy(this, 'ApiInvokePolicy', {
+            resourceArn: fn.attrFunctionArn,
+            policyDocument: {
+                Version: '2012-10-17',
+                Statement: [{
+                    Sid: 'CloudFrontOnly',
+                    Effect: 'Allow',
+                    Principal: { Service: 'cloudfront.amazonaws.com' },
+                    Action: 'lambda:InvokeWebFunctionEndpoint',
+                    Resource: fn.attrFunctionArn,
+                    Condition: { ArnLike: { 'aws:SourceArn': this.distribution.distributionArn } }
+                }]
+            }
+        }).node.addDependency(endpoint);
+
+        const zone = route53.HostedZone.fromHostedZoneAttributes(this, 'Zone', {
+            hostedZoneId: core('hosted-zone-id'),
+            zoneName: props.zoneName
+        });
+        const target = route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution));
+        new route53.ARecord(this, 'SiteA', { zone, recordName: bookingDomain, target });
+        new route53.AaaaRecord(this, 'SiteAaaa', { zone, recordName: bookingDomain, target });
 
         if (props.siteDir) {
             // Hashed assets never change, so they cache for a year; index.html
@@ -282,29 +332,11 @@ export class BookingStack extends cdk.Stack {
             });
         }
 
-        new cdk.CfnOutput(this, 'SiteUrl', { value: `https://${this.distribution.distributionDomainName}` });
-    }
-}
-
-/**
- * Versioned, SSE-S3 bucket for Web Function code. A Web Function revision
- * must point at a specific object version here, not at the CDK asset bucket,
- * so the API zip is uploaded between deploying this stack and BookingStack
- * (see scripts/deploy.sh).
- */
-export class BookingCodeStack extends cdk.Stack {
-    readonly bucket: s3.Bucket;
-
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
-        super(scope, id, props);
-        this.bucket = new s3.Bucket(this, 'Code', {
-            versioned: true,
-            encryption: s3.BucketEncryption.S3_MANAGED,
-            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-            enforceSSL: true,
-            lifecycleRules: [{ noncurrentVersionExpiration: cdk.Duration.days(90) }],
-            removalPolicy: cdk.RemovalPolicy.RETAIN
+        new cdk.CfnOutput(this, 'SiteUrl', { value: `https://${bookingDomain}` });
+        new cdk.CfnOutput(this, 'DistributionId', { value: this.distribution.distributionId });
+        new cdk.CfnOutput(this, 'PhonePepperParameter', {
+            value: phonePepper,
+            description: 'Create before first use: aws ssm put-parameter --type SecureString (scripts/deploy.sh does this)'
         });
-        new cdk.CfnOutput(this, 'CodeBucketName', { value: this.bucket.bucketName });
     }
 }

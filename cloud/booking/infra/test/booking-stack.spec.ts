@@ -1,20 +1,26 @@
 import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BookingStack, SITE_CSP } from '../lib/booking-stack.js';
 
-function synth(withApi: boolean) {
+function synth(stage: 'sandbox' | 'production' = 'sandbox') {
+    const codeDir = mkdtempSync(join(tmpdir(), 'booking-code-'));
+    writeFileSync(join(codeDir, 'index.js'), '');
     const app = new cdk.App();
     const stack = new BookingStack(app, 'Test', {
         env: { account: '111111111111', region: 'ap-south-1' },
-        codeBucketName: 'code-bucket',
-        apiCode: withApi ? { key: 'booking-api/abc.zip', versionId: 'v1' } : undefined
+        stage,
+        zoneName: 'example.in',
+        codeDir
     });
     return Template.fromStack(stack);
 }
 
 describe('BookingStack', () => {
-    const t = synth(true);
+    const t = synth();
 
     it('keeps the site bucket private behind CloudFront', () => {
         t.hasResourceProperties('AWS::S3::Bucket', {
@@ -23,17 +29,40 @@ describe('BookingStack', () => {
         t.resourceCountIs('AWS::CloudFront::OriginAccessControl', 2);
     });
 
-    it('caps the API at one environment behind IAM auth, with code from the versioned bucket', () => {
+    it('caps the API at one environment behind IAM auth, with code pinned in the Core code bucket', () => {
         t.hasResourceProperties('AWS::Lambda::WebFunctionEndpoint', {
             AuthType: 'IamAuth',
             EndpointType: 'HomeRegion',
-            ScalingConfig: { MaxEnvironments: 1 }
+            ScalingConfig: { MaxEnvironments: 1 },
+            ThrottleConfig: { RateLimit: 20 }
         });
-        t.hasResourceProperties('AWS::Lambda::WebFunctionRevision', {
-            BuildConfig: {
-                CodeConfig: { S3Object: { Bucket: 'code-bucket', Key: 'booking-api/abc.zip', VersionId: 'v1' } },
-                RuntimeConfig: { Runtime: 'nodejs24.x' }
-            }
+        const revision = Object.values(t.findResources('AWS::Lambda::WebFunctionRevision'))[0] as any;
+        const s3Object = revision.Properties.BuildConfig.CodeConfig.S3Object;
+        expect(JSON.stringify(s3Object.Bucket)).toContain('SsmParameterValuenalamdesksandboxcorecodebucketname');
+        expect(s3Object.VersionId).toBeDefined();
+        expect(revision.Properties.BuildConfig.RuntimeConfig).toEqual({ Runtime: 'nodejs24.x' });
+    });
+
+    it('lets only its own distribution invoke the API', () => {
+        t.hasResourceProperties('AWS::Lambda::ResourcePolicy', {
+            PolicyDocument: Match.objectLike({
+                Statement: [Match.objectLike({
+                    Principal: { Service: 'cloudfront.amazonaws.com' },
+                    Action: 'lambda:InvokeWebFunctionEndpoint',
+                    Condition: { ArnLike: { 'aws:SourceArn': Match.anyValue() } }
+                })]
+            })
+        });
+    });
+
+    it('serves the stage domain with the Core certificate and alias records', () => {
+        t.hasResourceProperties('AWS::CloudFront::Distribution', {
+            DistributionConfig: Match.objectLike({ Aliases: ['book-sandbox.example.in'] })
+        });
+        t.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'book-sandbox.example.in.', Type: 'A' });
+        t.hasResourceProperties('AWS::Route53::RecordSet', { Name: 'book-sandbox.example.in.', Type: 'AAAA' });
+        synth('production').hasResourceProperties('AWS::CloudFront::Distribution', {
+            DistributionConfig: Match.objectLike({ Aliases: ['book.example.in'] })
         });
     });
 
@@ -83,15 +112,8 @@ describe('BookingStack', () => {
         const policies = JSON.stringify(t.findResources('AWS::IAM::Policy'));
         expect(policies).toContain('dynamodb:PutItem');
         expect(policies).toContain('ssm:GetParameter');
-        expect(policies).toContain('parameter/nalamdesk/booking/phone-pepper');
+        expect(policies).toContain('parameter/nalamdesk/sandbox/booking/phone-pepper');
         expect(policies).toContain('kms:ViaService');
         expect(policies).not.toContain('"Action":"*"');
-    });
-
-    it('deploys only the site and tables before the first API upload', () => {
-        const siteOnly = synth(false);
-        siteOnly.resourceCountIs('AWS::Lambda::WebFunction', 0);
-        siteOnly.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
-        siteOnly.resourceCountIs('AWS::DynamoDB::Table', 3);
     });
 });

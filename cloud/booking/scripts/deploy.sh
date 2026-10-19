@@ -1,36 +1,23 @@
 #!/usr/bin/env bash
-# Deploys the online booking stack to ap-south-1 with the current AWS profile.
-#   1. CDK: the versioned code bucket.
-#   2. Bundle the API, zip it with a start script, upload it, note the version.
-#   3. Build the site.
-#   4. CDK: the booking stack, pointing the Web Function revision at that version.
+# Deploys NalamBook (the online booking stack) to ap-south-1 with the current
+# AWS profile. Deploy cloud/core for the same stage and zone first: it owns
+# the hosted zone, the booking certificate and the code bucket.
+#   scripts/deploy.sh <zoneName> [sandbox|production]
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 region=ap-south-1
-
-(cd "$here/infra" && npm ci && npx cdk deploy NalamDeskBookingCode --require-approval never)
+zone="${1:?Pass the zone name, the same as cloud/core}"
+stage="${2:-sandbox}"
 
 # Phone-limit HMAC key: created once, never overwritten (that would reset every open-request count).
-pepper_param=/nalamdesk/booking/phone-pepper
+pepper_param="/nalamdesk/$stage/booking/phone-pepper"
 if ! aws ssm get-parameter --region "$region" --name "$pepper_param" >/dev/null 2>&1; then
   aws ssm put-parameter --region "$region" --name "$pepper_param" --type SecureString \
     --value "$(openssl rand -base64 48)" >/dev/null
 fi
-bucket=$(aws cloudformation describe-stacks --region "$region" --stack-name NalamDeskBookingCode \
-  --query "Stacks[0].Outputs[?OutputKey=='CodeBucketName'].OutputValue" --output text)
 
-(cd "$here/api" && npm ci && npm test && npm run bundle)
-stage=$(mktemp -d)
-cp "$here/api/bundle/server.mjs" "$stage/server.mjs"
-printf '{\n  "type": "module",\n  "scripts": { "start": "node server.mjs" }\n}\n' > "$stage/package.json"
-sha=$(cd "$stage" && cat server.mjs package.json | sha256sum | cut -c1-16)
-key="booking-api/$sha.zip"
-(cd "$stage" && zip -q -X api.zip server.mjs package.json)
-version=$(aws s3api put-object --region "$region" --bucket "$bucket" --key "$key" --body "$stage/api.zip" \
-  --query VersionId --output text)
-rm -rf "$stage"
-
+# The CDK app bundles the API itself (infra/lib/bundle.ts) from api/src.
+(cd "$here/api" && npm ci && npm test)
 (cd "$here/web" && npm ci && npm test && npm run build)
-
-(cd "$here/infra" && npx cdk deploy NalamDeskBooking --require-approval never \
-  -c apiCodeKey="$key" -c apiCodeVersion="$version" -c siteDir="$here/web/dist")
+(cd "$here/infra" && npm ci && npx cdk deploy --require-approval never \
+  -c zoneName="$zone" -c stage="$stage" -c siteDir="$here/web/dist")

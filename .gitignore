@@ -30,7 +30,6 @@ Thumbs.db
 *.log
 desktop/nalamdesk.db
 desktop/nalamdesk-test.db
-cloud/api/nalamdesk.db
 
 # Test Coverage
 coverage/
@@ -38,10 +37,6 @@ test-results/
 playwright-report/
 blob-report/
 
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.backup
 
 # Angular
 .angular/
@@ -77,3 +72,6 @@ skill-output/
 
 # Wrangler local state
 .wrangler/
+
+# CDK synth output
+cdk.out/

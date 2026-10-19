@@ -54,12 +54,9 @@ Follow these steps to set up the development environment from a clean repository
     - A local SQLite database `nalamdesk.db` is automatically created in the `desktop` directory (dev) or `%APPDATA%` (prod) on first run.
 
 ## Cloud Deployment
-Deployment is managed via Terraform in `cloud/infrastructure`.
-```bash
-cd cloud/infrastructure
-terraform init
-terraform apply
-```
+The cloud runs on AWS CDK in ap-south-1. Deploy the shared Core stacks first
+([cloud/core](./cloud/core/README.md)), then the ABDM relay
+([cloud/relay](./cloud/relay/README.md)).
 
 ## Documentation
 ## Documentation

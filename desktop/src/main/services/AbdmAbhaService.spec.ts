@@ -103,6 +103,18 @@ describe('AbdmAbhaService (mock gateway)', () => {
             expect.objectContaining({ body: expect.stringContaining('authData') })
         );
     });
+    it('sends ABHA calls to the ABHA host, not the gateway', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ exists: true, name: 'Real Patient' }) });
+        const svc = new AbdmAbhaService({
+            getSessionToken: async () => ({ token: 'live-token', mock: false }),
+            gatewayBaseUrl: () => 'https://gateway.example',
+            abhaBaseUrl: () => 'https://abha.example/abha/api',
+            fetchFn
+        });
+        await svc.lookupAddress('real@abdm');
+        expect(fetchFn.mock.calls[0][0]).toBe('https://abha.example/abha/api/v3/profile/account/verify');
+    });
+
     it('sends live calls with the session token when credentials exist', async () => {
         const fetchFn = vi.fn().mockResolvedValue({
             ok: true,
@@ -133,7 +145,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
         const calls: any[] = [];
         const fetchFn = vi.fn().mockImplementation(async (url: string, init: any) => {
             calls.push([url, init]);
-            if (String(url).endsWith('/v3/auth/cert')) {
+            if (String(url).endsWith('/v3/profile/public/certificate')) {
                 return { ok: true, json: async () => ({ publicKey }) };
             }
             return { ok: true, json: async () => ({ txnId: 'live-txn-1' }) };
@@ -165,7 +177,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
             privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
         });
         const fetchFn = vi.fn().mockImplementation(async (url: string) => {
-            if (String(url).endsWith('/v3/auth/cert')) {
+            if (String(url).endsWith('/v3/profile/public/certificate')) {
                 return { ok: true, json: async () => ({ publicKey }) };
             }
             return { ok: true, json: async () => ({ txnId: 'live-txn-9' }) };
@@ -178,7 +190,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
 
         await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
         await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876500001' });
-        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/auth/cert'))).toHaveLength(1);
+        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/profile/public/certificate'))).toHaveLength(1);
     });
 
     it('fails plainly when the gateway certificate is unusable', async () => {
@@ -226,7 +238,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
         let env = 'sandbox';
         const certCalls: string[] = [];
         const fetchFn = vi.fn().mockImplementation(async (url: string) => {
-            if (String(url).endsWith('/v3/auth/cert')) {
+            if (String(url).endsWith('/v3/profile/public/certificate')) {
                 certCalls.push(env);
                 const keys = env === 'sandbox' ? sandboxKeys : stagingKeys;
                 return { ok: true, json: async () => ({ publicKey: keys.publicKey }) };
@@ -253,7 +265,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
             privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
         });
         const fetchFn = vi.fn().mockImplementation(async (url: string) => {
-            if (String(url).endsWith('/v3/auth/cert')) {
+            if (String(url).endsWith('/v3/profile/public/certificate')) {
                 return { ok: true, json: async () => ({ publicKey }) };
             }
             return { ok: true, json: async () => ({ txnId: 'live-txn-inv' }) };
@@ -267,7 +279,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
         await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
         svc.invalidateCert();
         await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
-        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/auth/cert'))).toHaveLength(2);
+        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/profile/public/certificate'))).toHaveLength(2);
     });
 
     it('pins token, mode, and gateway URL for the whole operation', async () => {
@@ -281,7 +293,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
         const urls: string[] = [];
         const fetchFn = vi.fn().mockImplementation(async (url: string, init: any) => {
             urls.push(String(url));
-            if (String(url).endsWith('/v3/auth/cert')) {
+            if (String(url).endsWith('/v3/profile/public/certificate')) {
                 // Flip the environment while the operation is in flight.
                 env = 'staging';
                 return { ok: true, json: async () => ({ publicKey }) };
@@ -313,7 +325,7 @@ describe('AbdmAbhaService (mock gateway)', () => {
         const urls: string[] = [];
         const fetchFn = vi.fn().mockImplementation(async (url: string) => {
             urls.push(String(url));
-            if (String(url).endsWith('/v3/auth/cert')) {
+            if (String(url).endsWith('/v3/profile/public/certificate')) {
                 return { ok: true, json: async () => ({ publicKey }) };
             }
             return { ok: true, json: async () => ({ txnId: 'live-txn-atomic' }) };

@@ -517,6 +517,13 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         });
     });
 
+    it('accepts the production gateway and ignores unknown environments', async () => {
+        await postIpc('abdmSaveConfig', [{ gateway_env: 'production' }]);
+        await postIpc('abdmSaveConfig', [{ gateway_env: 'elsewhere' }]);
+        expect(savedSettings[0]).toMatchObject({ abdm_gateway_env: 'production' });
+        expect(savedSettings[1]).not.toHaveProperty('abdm_gateway_env');
+    });
+
     it('forbids ABDM config writes for non-admin LAN roles', async () => {
         const response = await postIpc('abdmSaveConfig', [{ gateway_env: 'staging' }], 'doctor');
         expect(response.statusCode).toBe(403);

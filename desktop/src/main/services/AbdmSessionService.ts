@@ -1,11 +1,29 @@
 import * as crypto from 'node:crypto';
 import type { DeviceKeyStore } from './DeviceKeyStore';
 
-export type AbdmGatewayEnv = 'sandbox' | 'staging';
+export type AbdmGatewayEnv = 'sandbox' | 'staging' | 'production';
 
+export const ABDM_GATEWAY_ENVS: readonly AbdmGatewayEnv[] = ['sandbox', 'staging', 'production'];
+
+export function isAbdmGatewayEnv(value: unknown): value is AbdmGatewayEnv {
+    return typeof value === 'string' && (ABDM_GATEWAY_ENVS as readonly string[]).includes(value);
+}
+
+// Gateway roots: v3 paths (including the session endpoint) live under
+// /api/hiecm on each host.
 export const ABDM_GATEWAY_BASE_URLS: Record<AbdmGatewayEnv, string> = {
-    sandbox: 'https://dev.abdm.gov.in/gateway',
-    staging: 'https://staging.abdm.gov.in/gateway'
+    sandbox: 'https://dev.abdm.gov.in',
+    staging: 'https://staging.abdm.gov.in',
+    production: 'https://live.abdm.gov.in'
+};
+
+// ABHA v3 (enrolment, login, profile, card) is served from its own host,
+// not the gateway. Staging has no ABHA host of its own and uses the sandbox
+// one. Confirm both with NHA during sandbox registration (#152).
+export const ABDM_ABHA_BASE_URLS: Record<AbdmGatewayEnv, string> = {
+    sandbox: 'https://abhasbx.abdm.gov.in/abha/api',
+    staging: 'https://abhasbx.abdm.gov.in/abha/api',
+    production: 'https://abha.abdm.gov.in/abha/api'
 };
 
 // All ABDM traffic stays local-first: without credentials the service runs
@@ -64,11 +82,16 @@ export class AbdmSessionService {
     }
 
     gatewayEnv(): AbdmGatewayEnv {
-        return this.settings.abdm_gateway_env === 'staging' ? 'staging' : 'sandbox';
+        const env = this.settings.abdm_gateway_env;
+        return isAbdmGatewayEnv(env) ? env : 'sandbox';
     }
 
     gatewayBaseUrl(): string {
         return ABDM_GATEWAY_BASE_URLS[this.gatewayEnv()];
+    }
+
+    abhaBaseUrl(): string {
+        return ABDM_ABHA_BASE_URLS[this.gatewayEnv()];
     }
 
     isMockMode(): boolean {

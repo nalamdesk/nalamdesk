@@ -127,6 +127,27 @@ describe('AbdmSessionService', () => {
         expect(ABDM_MOCK_TOKEN_TTL_MS).toBe(20 * 60 * 1000);
     });
 
+    it('opens live sessions on the v3 session endpoint of the gateway root', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ accessToken: 't', expiresIn: 900 }) });
+        const svc = service({ fetchFn });
+        settings.abdm_mock = 0;
+        settings.abdm_client_id = 'CID';
+        settings.abdm_client_secret_protected = Buffer.from('protected:s3cret', 'utf8').toString('base64');
+        await svc.getSessionToken();
+        expect(fetchFn.mock.calls[0][0]).toBe('https://dev.abdm.gov.in/api/hiecm/gateway/v3/sessions');
+    });
+
+    it('offers a production environment with its own gateway and ABHA hosts', () => {
+        const svc = service();
+        expect(svc.abhaBaseUrl()).toBe('https://abhasbx.abdm.gov.in/abha/api');
+        settings.abdm_gateway_env = 'production';
+        expect(svc.gatewayEnv()).toBe('production');
+        expect(svc.gatewayBaseUrl()).toBe('https://live.abdm.gov.in');
+        expect(svc.abhaBaseUrl()).toBe('https://abha.abdm.gov.in/abha/api');
+        settings.abdm_gateway_env = 'nonsense';
+        expect(svc.gatewayEnv()).toBe('sandbox');
+    });
+
     it('returns the base URL with every session snapshot', async () => {
         const svc = service();
         const session = await svc.getSessionToken();

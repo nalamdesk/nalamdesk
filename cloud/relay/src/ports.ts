@@ -83,7 +83,7 @@ export interface DeviceCertificates {
  * revocation finds every one even while an issue is in flight.
  */
 export interface CertificateLedger {
-    /** Records the certificate if the device is still active: the device's recorded set, or null once it is revoked. */
+    /** Records the certificate if the device is still active: the certificates recorded before it, or null once it is revoked. */
     record(deviceId: string, certificateArn: string): Promise<string[] | null>;
     /** The recorded certificates, read consistently. */
     recorded(deviceId: string): Promise<string[]>;

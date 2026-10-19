@@ -186,21 +186,7 @@ export class DynamoMailbox {
      */
     async purge(clinicId: string, beforeMs: number): Promise<number> {
         const cut = itemIdFloor(beforeMs);
-        let removed = 0;
-        let startKey: Item | undefined;
-        do {
-            const page = await this.dynamo.send(new QueryCommand({
-                TableName: this.options.table,
-                KeyConditionExpression: 'clinicId = :c AND itemId < :cut',
-                ExpressionAttributeValues: { ':c': { S: clinicId }, ':cut': { S: cut } },
-                ProjectionExpression: 'itemId',
-                ExclusiveStartKey: startKey
-            }));
-            const ids = (page.Items ?? []).map((item) => item.itemId?.S).filter((id): id is string => !!id);
-            for (let i = 0; i < ids.length; i += 25) await this.batchDelete(clinicId, ids.slice(i, i + 25));
-            removed += ids.length;
-            startKey = page.LastEvaluatedKey;
-        } while (startKey);
+        let removed = await this.deleteRowsBefore(clinicId, cut);
 
         const prefix = `mailbox/${clinicId}/`;
         let token: string | undefined;
@@ -213,6 +199,30 @@ export class DynamoMailbox {
             }
             token = listing.IsTruncated ? listing.NextContinuationToken : undefined;
         } while (token);
+
+        // A put stores its object before its row, so a row written while the
+        // objects went may point at one just deleted. Sweep the rows again.
+        removed += await this.deleteRowsBefore(clinicId, cut);
+        return removed;
+    }
+
+    private async deleteRowsBefore(clinicId: string, cut: string): Promise<number> {
+        let removed = 0;
+        let startKey: Item | undefined;
+        do {
+            const page = await this.dynamo.send(new QueryCommand({
+                TableName: this.options.table,
+                KeyConditionExpression: 'clinicId = :c AND itemId < :cut',
+                ExpressionAttributeValues: { ':c': { S: clinicId }, ':cut': { S: cut } },
+                ProjectionExpression: 'itemId',
+                ConsistentRead: true,
+                ExclusiveStartKey: startKey
+            }));
+            const ids = (page.Items ?? []).map((item) => item.itemId?.S).filter((id): id is string => !!id);
+            for (let i = 0; i < ids.length; i += 25) await this.batchDelete(clinicId, ids.slice(i, i + 25));
+            removed += ids.length;
+            startKey = page.LastEvaluatedKey;
+        } while (startKey);
         return removed;
     }
 

@@ -16,7 +16,7 @@ import { requireExistingRestoreAuthorization } from './services/RestoreAuthoriza
 import { CrashService } from './services/CrashService';
 import { SecurityService } from './services/SecurityService';
 import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './services/DeviceKeyStore';
-import { AbdmSessionService } from './services/AbdmSessionService';
+import { AbdmSessionService, isAbdmGatewayEnv } from './services/AbdmSessionService';
 import { AbdmAbhaService } from './services/AbdmAbhaService';
 import { HiuService } from './services/HiuService';
 import { FideliusService } from './services/FideliusService';
@@ -165,7 +165,8 @@ const abdmSessionService = new AbdmSessionService({
 });
 const abdmAbhaService = new AbdmAbhaService({
     getSessionToken: () => abdmSessionService.getSessionToken(),
-    gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl()
+    gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl(),
+    abhaBaseUrl: () => abdmSessionService.abhaBaseUrl()
 });
 const hiuService = new HiuService({
     getSettings: () => databaseService.getSettings(),
@@ -1225,7 +1226,7 @@ handleGuardedDb('db:abdmSaveConfig', (_, config) => {
     if (user.role !== 'admin') throw new Error('Forbidden');
     const patch: Record<string, unknown> = {};
     if (config && typeof config['gateway_env'] === 'string'
-        && ['sandbox', 'staging'].includes(config['gateway_env'] as string)) {
+        && isAbdmGatewayEnv(config['gateway_env'])) {
         patch['abdm_gateway_env'] = config['gateway_env'];
     }
     if (config && typeof config['client_id'] === 'string') {

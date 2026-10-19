@@ -3,6 +3,8 @@ import { AbdmSessionService } from './AbdmSessionService';
 export interface AbdmAbhaDeps {
     getSessionToken?: () => Promise<{ token: string; mock: boolean }>;
     gatewayBaseUrl?: () => string;
+    /** ABHA v3 host; falls back to the gateway base URL when not supplied. */
+    abhaBaseUrl?: () => string;
     fetchFn?: (url: string, init?: any) => Promise<any>;
     nowMs?: () => number;
 }
@@ -33,9 +35,8 @@ const PATHS = {
     loginVerify: '/v3/profile/login/verify',
     verifyAbha: '/v3/profile/account/verify',
     abhaCard: '/v3/profile/account/abha-card',
-    // Gateway public key for encrypting enrollment identifiers (HIE-CM cert
-    // endpoint per public ABDM docs; reconfirm at live integration).
-    authCert: '/v3/auth/cert'
+    // ABHA public key for encrypting Aadhaar, mobile, login IDs and OTPs.
+    authCert: '/v3/profile/public/certificate'
 };
 
 // Gateway certificates rotate infrequently; refetch at most daily.
@@ -66,7 +67,8 @@ export class AbdmAbhaService {
     // synchronously before any await, so even a flip during session
     // resolution cannot split the snapshot.
     private async resolveSnapshot(): Promise<{ token: string; mock: boolean; baseUrl: string }> {
-        const baseUrl = this.deps.gatewayBaseUrl ? this.deps.gatewayBaseUrl() : '';
+        const resolveBase = this.deps.abhaBaseUrl ?? this.deps.gatewayBaseUrl;
+        const baseUrl = resolveBase ? resolveBase() : '';
         const getSession = this.deps.getSessionToken;
         const session = getSession
             ? await getSession()
@@ -106,8 +108,8 @@ export class AbdmAbhaService {
         return { json: await response.json(), mock: false };
     }
 
-    // Fetches (and caches) the gateway public key used to encrypt enrollment
-    // identifiers on live calls. The cache is keyed by gateway base URL so an
+    // Fetches (and caches) the ABHA public key used to encrypt enrollment
+    // identifiers on live calls. The cache is keyed by ABHA base URL so an
     // environment switch never reuses the previous environment's key. Mock
     // sessions never reach this path.
     private async getGatewayPublicKey(

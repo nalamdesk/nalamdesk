@@ -10,7 +10,7 @@ import * as http from 'node:http';
 import { loadDevelopmentEnv } from '../shared/load-env';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { hashUrlForPathname } from '../shared/hash-app-path';
-import { AbdmSessionService } from '../main/services/AbdmSessionService';
+import { AbdmSessionService, isAbdmGatewayEnv } from '../main/services/AbdmSessionService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
 import { HiuService } from '../main/services/HiuService';
 import { AccessPolicy } from '../main/services/AccessPolicy';
@@ -97,7 +97,8 @@ export class ApiServer {
             this.abdmSessionSvc = session;
             this.abdmAbhaSvc = new AbdmAbhaService({
                 getSessionToken: () => session.getSessionToken(),
-                gatewayBaseUrl: () => session.gatewayBaseUrl()
+                gatewayBaseUrl: () => session.gatewayBaseUrl(),
+                abhaBaseUrl: () => session.abhaBaseUrl()
             });
             this.hiuSvc = new HiuService({
                 getSettings: () => db.getSettings(),
@@ -149,7 +150,7 @@ export class ApiServer {
             case 'abdmSaveConfig': {
                 const patch: Record<string, unknown> = {};
                 if (typeof payload['gateway_env'] === 'string'
-                    && ['sandbox', 'staging'].includes(payload['gateway_env'])) {
+                    && isAbdmGatewayEnv(payload['gateway_env'])) {
                     patch['abdm_gateway_env'] = payload['gateway_env'];
                 }
                 if (typeof payload['client_id'] === 'string') patch['abdm_client_id'] = String(payload['client_id']).trim();

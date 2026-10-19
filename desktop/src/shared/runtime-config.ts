@@ -9,9 +9,8 @@ loadDevelopmentEnv();
  * Port | Service                         | Config / consumer
  * -----|---------------------------------|----------------------------------
  * 3000 | Installed desktop local API     | NALAMDESK_DESKTOP_PROD_API_PORT
- * 3001 | Cloud API (cloud/api)           | NALAMDESK_CLOUD_API_PORT
- *      |   + cloud/web booking portal    |   cloud/web environments
- *      |   + desktop CloudSyncService    |   CLOUD_API_URL
+ * 3001 | Cloud sync API                  | NALAMDESK_CLOUD_API_PORT
+ *      |   desktop CloudSyncService      |   CLOUD_API_URL
  * 3002 | Desktop dev local API           | NALAMDESK_DESKTOP_DEV_API_PORT
  * 4200 | Desktop Angular dev server      | NALAMDESK_DESKTOP_ANGULAR_PORT
  *

@@ -47,7 +47,7 @@ Default ports are defined in the repo-root [`.env.development`](https://github.c
 | Port | Service |
 |------|---------|
 | 3000 | Installed desktop local API (production Electron app) |
-| 3001 | Cloud API (`cloud/api`) — cloud/web and desktop cloud sync |
+| 3001 | Cloud sync API (desktop cloud sync) |
 | 3002 | Desktop dev local API (`cd desktop && npm start`) |
 | 4200 | Desktop Angular dev server |
 

@@ -5,7 +5,7 @@ import { openSealed } from './mailboxSeal';
 
 // ABDM items from the mailbox (#155): gateway callbacks and HIU data pushes
 // the relay sealed to this computer. They are opened here and kept in the
-// local `abdm_inbox` table (inside the encrypted database) for the ABDM
+// local `abdm_mailbox` table (inside the encrypted database) for the ABDM
 // flows to pick up (#160). Saving is idempotent on the mailbox item ID, so
 // an item offered twice is stored once.
 

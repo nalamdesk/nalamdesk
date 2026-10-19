@@ -1661,8 +1661,9 @@ export const MIGRATIONS = [
             }
             // ABDM callbacks and HIU data pushes opened from the mailbox, for
             // the ABDM flows to process (#160). The ID is the mailbox item ID.
+            // Its own table: v20's abdm_inbox holds the older callback queue.
             db.exec(`
-                CREATE TABLE IF NOT EXISTS abdm_inbox (
+                CREATE TABLE IF NOT EXISTS abdm_mailbox (
                     id TEXT PRIMARY KEY,
                     type TEXT NOT NULL CHECK (type IN ('abdm-callback', 'abdm-data-push')),
                     path TEXT,
@@ -1672,8 +1673,8 @@ export const MIGRATIONS = [
                     status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'processed', 'failed')),
                     created_at INTEGER NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS idx_abdm_inbox_status ON abdm_inbox(status, created_at);
-                CREATE INDEX IF NOT EXISTS idx_abdm_inbox_request ON abdm_inbox(request_id);
+                CREATE INDEX IF NOT EXISTS idx_abdm_mailbox_status ON abdm_mailbox(status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_abdm_mailbox_request ON abdm_mailbox(request_id);
             `);
         }
     }

@@ -53,7 +53,7 @@ export type SyncCounts = Record<string, number>;
 export interface MailboxReaderDeps {
     transport: MailboxTransport;
     handlers: Record<string, MailboxHandler>;
-    /** After each pass, with the number of items saved per type. */
+    /** After each successful pass, with the number of items saved per type (possibly none). */
     onSynced?: (saved: SyncCounts) => void;
     nowMs?: () => number;
 }
@@ -103,7 +103,7 @@ export class MailboxReader {
             } finally {
                 this.running = null;
             }
-            if (Object.keys(saved).length > 0) this.deps.onSynced?.(saved);
+            this.deps.onSynced?.(saved);
             return saved;
         })();
         return this.running;

@@ -842,7 +842,7 @@ export class DatabaseService {
 
     // ABDM callbacks and data pushes opened from the cloud mailbox (#155).
     saveAbdmInboxItem(row: AbdmInboxRow) {
-        this.db.prepare(`INSERT OR IGNORE INTO abdm_inbox(id, type, path, request_id, received_at, payload, created_at)
+        this.db.prepare(`INSERT OR IGNORE INTO abdm_mailbox(id, type, path, request_id, received_at, payload, created_at)
             VALUES(@id, @type, @path, @request_id, @received_at, @payload, @created_at)`).run({ ...row, created_at: Date.now() });
     }
 

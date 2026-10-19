@@ -56,7 +56,7 @@ describe('MailboxReader', () => {
         h.put({ id: 'a', type: 'booking-request', sealed: 's' });
         expect(await h.reader.sync()).toEqual({});
         expect(h.acked).toEqual([]);
-        expect(h.synced).toEqual([]);
+        expect(h.synced).toEqual([{}]);
     });
 
     it('reads further pages while it makes progress', async () => {

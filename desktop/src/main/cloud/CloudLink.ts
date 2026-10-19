@@ -9,7 +9,10 @@ import { MailboxReader, type ListedItem, type MailboxTransport } from './Mailbox
 import { SignedCloudClient, type Audience } from './SignedCloudClient';
 
 const ROTATION_CHECK_MS = 24 * 60 * 60 * 1000;
-const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024;
+// A sealed envelope is base64 JSON around base64 ciphertext, so the relay's
+// 5 MiB data push grows to about 8.9 MiB.
+const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /** Signed booking API requests (#154). */
 export function bookingTransport(client: SignedCloudClient): ClinicCloudTransport {
@@ -30,7 +33,8 @@ export function mailboxTransport(client: SignedCloudClient, fetchFn: typeof fetc
             return { items, more: response.body?.more === true };
         },
         async download(url) {
-            const response = await fetchFn(url, { redirect: 'error' });
+            // The deadline covers the body too, so one stalled link can't hold up the pass.
+            const response = await fetchFn(url, { redirect: 'error', signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const text = await response.text();
             if (text.length > MAX_DOWNLOAD_BYTES) throw new Error('Item too large.');
@@ -54,7 +58,7 @@ export interface CloudLinkDeps {
     onPairingChange?: (status: PairingStatus) => void;
     /** The doorbell connected or dropped, or a mailbox check finished. */
     onMailboxChange?: () => void;
-    /** ABDM callbacks or data pushes were saved to `abdm_inbox`. */
+    /** ABDM callbacks or data pushes were saved to `abdm_mailbox`. */
     onAbdmItems?: (count: number) => void;
     fetchFn?: typeof fetch;
     /** mqtt.connect, injectable for tests. */
@@ -107,6 +111,7 @@ export class CloudLink {
             },
             nowMs: deps.nowMs,
             onSynced: (saved) => {
+                deps.onMailboxChange?.();
                 if (saved['booking-request']) deps.onNewRequests?.(saved['booking-request']);
                 const abdmCount = (saved['abdm-callback'] ?? 0) + (saved['abdm-data-push'] ?? 0);
                 if (abdmCount) deps.onAbdmItems?.(abdmCount);

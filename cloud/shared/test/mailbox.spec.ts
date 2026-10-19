@@ -101,12 +101,19 @@ describe('DynamoMailbox', () => {
     it('purges a clinic\'s mail stored before a replacement, and keeps what came after', async () => {
         const old = newMailboxItemId(NOW - 1);
         const fresh = newMailboxItemId(NOW + 1);
-        const dynamo = client((command) => (command instanceof QueryCommand ? { Items: [{ itemId: { S: old } }] } : {}));
+        // The row of a put that finished while the objects went shows up on the second sweep.
+        let queries = 0;
+        const late = newMailboxItemId(NOW - 2);
+        const dynamo = client((command) => (command instanceof QueryCommand ? { Items: [{ itemId: { S: ++queries === 1 ? old : late } }] } : {}));
         const s3 = client((command) => (command instanceof ListObjectsV2Command
             ? { Contents: [{ Key: `mailbox/cln_1/${old}` }, { Key: `mailbox/cln_1/${fresh}` }] } : {}));
         const mailbox = new DynamoMailbox({ table: 'mail', bucket: 'b', dynamo: dynamo as never, s3: s3 as never });
-        expect(await mailbox.purge('cln_1', NOW)).toBe(1);
+        expect(await mailbox.purge('cln_1', NOW)).toBe(2);
         const query = (dynamo.sent[0] as QueryCommand).input;
+        expect(query.ConsistentRead).toBe(true);
+        const deleted = dynamo.sent.filter((c) => c instanceof BatchWriteItemCommand)
+            .flatMap((c) => (c as BatchWriteItemCommand).input.RequestItems!.mail!.map((r) => r.DeleteRequest!.Key!.itemId!.S));
+        expect(deleted).toEqual([old, late]);
         expect(query.KeyConditionExpression).toBe('clinicId = :c AND itemId < :cut');
         expect(old < (query.ExpressionAttributeValues![':cut']!.S as string)).toBe(true);
         expect(fresh > (query.ExpressionAttributeValues![':cut']!.S as string)).toBe(true);

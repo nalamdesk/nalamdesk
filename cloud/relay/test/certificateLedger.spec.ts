@@ -9,13 +9,14 @@ function client(respond: (command: any) => unknown) {
 
 describe('DynamoCertificateLedger', () => {
     it('records a certificate only while the device is active', async () => {
-        const db = client(() => ({ Attributes: { iotCertArns: { SS: ['arn:old', 'arn:new'] } } }));
-        expect(await new DynamoCertificateLedger('devices', { client: db as never }).record('dev_1', 'arn:new')).toEqual(['arn:old', 'arn:new']);
+        const db = client(() => ({ Attributes: { status: { S: 'active' }, iotCertArns: { SS: ['arn:old'] } } }));
+        expect(await new DynamoCertificateLedger('devices', { client: db as never }).record('dev_1', 'arn:new')).toEqual(['arn:old']);
         const update = db.sent[0] as UpdateItemCommand;
         expect(update).toBeInstanceOf(UpdateItemCommand);
         expect(update.input).toMatchObject({
             TableName: 'devices', Key: { deviceId: { S: 'dev_1' } }, UpdateExpression: 'ADD iotCertArns :arn',
-            ConditionExpression: '#status = :active', ExpressionAttributeValues: { ':arn': { SS: ['arn:new'] }, ':active': { S: 'active' } }
+            ConditionExpression: '#status = :active', ExpressionAttributeValues: { ':arn': { SS: ['arn:new'] }, ':active': { S: 'active' } },
+            ReturnValues: 'ALL_OLD'
         });
     });
 

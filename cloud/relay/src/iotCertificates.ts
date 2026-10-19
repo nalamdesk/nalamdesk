@@ -53,14 +53,14 @@ export class IotDeviceCertificates implements DeviceCertificates {
             throw new CertificateError('bad_csr', 'The CSR must be for a P-256 key.');
         }
 
-        let recorded: string[] | null;
+        let recordedBefore: string[] | null;
         try {
-            recorded = await this.ledger.record(device.deviceId, certificateArn);
+            recordedBefore = await this.ledger.record(device.deviceId, certificateArn);
         } catch (error) {
             await this.retire(certificateArn, certificateId).catch(() => undefined);
             throw error;
         }
-        if (!recorded) {
+        if (!recordedBefore) {
             // Revoked meanwhile; the certificate has no policy and no thing yet.
             await this.retire(certificateArn, certificateId);
             throw new CertificateError('device_revoked', 'The device has been revoked.');
@@ -76,8 +76,12 @@ export class IotDeviceCertificates implements DeviceCertificates {
         await this.client.send(new AttachPolicyCommand({ policyName: this.policyName, target: certificateArn }));
         await this.client.send(new AttachThingPrincipalCommand({ thingName: device.deviceId, principal: certificateArn }));
 
-        // One certificate per device: retire any earlier one.
-        const earlier = new Set([...recorded, ...await this.principals(device.deviceId)]);
+        // One certificate per device: retire the ones recorded before this one,
+        // and any attached but never recorded. A certificate recorded after this
+        // one belongs to a newer issue, which retires this one in turn.
+        const current = new Set(await this.ledger.recorded(device.deviceId));
+        const unrecorded = (await this.principals(device.deviceId)).filter((arn) => !current.has(arn));
+        const earlier = new Set([...recordedBefore, ...unrecorded]);
         earlier.delete(certificateArn);
         for (const principal of earlier) await this.detachAndRetire(device.deviceId, principal);
         await this.ledger.forget(device.deviceId, [...earlier]);

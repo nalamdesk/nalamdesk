@@ -104,7 +104,12 @@ describe('IotDeviceCertificates', () => {
         const row = { status: 'active' as 'active' | 'revoked', arns: new Set(arns) };
         return {
             row,
-            record: async (_: string, arn: string) => (row.status === 'active' ? (row.arns.add(arn), [...row.arns]) : null),
+            record: async (_: string, arn: string) => {
+                if (row.status !== 'active') return null;
+                const before = [...row.arns];
+                row.arns.add(arn);
+                return before;
+            },
             recorded: async () => [...row.arns],
             forget: async (_: string, gone: string[]) => { for (const arn of gone) row.arns.delete(arn); }
         };
@@ -159,6 +164,18 @@ describe('IotDeviceCertificates', () => {
         expect(sentBeforeRecord.some((c) => c instanceof AttachPolicyCommand || c instanceof AttachThingPrincipalCommand)).toBe(false);
         expect(iot.sent.filter((c) => c instanceof UpdateCertificateCommand).map((c) => c.input)).toEqual([{ certificateId: 'old', newStatus: 'REVOKED' }]);
         expect([...row.row.arns]).toEqual(['arn:aws:iot:ap-south-1:1:cert/new']);
+    });
+
+    it('leaves a certificate recorded by a newer, overlapping issue alone', async () => {
+        const newer = 'arn:aws:iot:ap-south-1:1:cert/newer';
+        const row = ledger(['arn:aws:iot:ap-south-1:1:cert/old']);
+        // The newer issue records and attaches its certificate while this one attaches.
+        const iot = client(['arn:aws:iot:ap-south-1:1:cert/new', newer, 'arn:aws:iot:ap-south-1:1:cert/old', 'arn:aws:iot:ap-south-1:1:cert/stray'], p256(), (command) => {
+            if (command instanceof AttachThingPrincipalCommand) row.row.arns.add(newer);
+        });
+        await new IotDeviceCertificates('policy', row, { client: iot as never }).issue({ deviceId: 'dev_1', clinicId: 'cln_1' }, CSR);
+        expect(iot.sent.filter((c) => c instanceof UpdateCertificateCommand).map((c) => c.input.certificateId).sort()).toEqual(['old', 'stray']);
+        expect(row.row.arns.has(newer)).toBe(true);
     });
 
     it('refuses and retires the certificate when the revocation was written first', async () => {

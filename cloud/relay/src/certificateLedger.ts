@@ -30,9 +30,9 @@ export class DynamoCertificateLedger implements CertificateLedger {
                 ConditionExpression: '#status = :active',
                 ExpressionAttributeNames: { '#status': 'status' },
                 ExpressionAttributeValues: { ':arn': { SS: [certificateArn] }, ':active': { S: 'active' } },
-                ReturnValues: 'ALL_NEW'
+                ReturnValues: 'ALL_OLD'
             }));
-            return result.Attributes?.iotCertArns?.SS ?? [certificateArn];
+            return result.Attributes?.iotCertArns?.SS ?? [];
         } catch (error) {
             if (conditionFailed(error)) return null;
             throw error;

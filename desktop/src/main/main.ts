@@ -6,7 +6,7 @@ import log from 'electron-log';
 import { bindUpdateIpc, createUpdateService, type UpdaterPort } from './updates/updateService';
 
 import { preferLinuxGnomeLibsecret } from './linuxKeyring';
-import { loadAppVersionInfo, readPackageVersion } from './appVersionInfo';
+import { buildIdentityPath, loadAppVersionInfo, readBuildIdentityFile, readPackageVersion } from './appVersionInfo';
 import { SessionService } from './services/SessionService';
 import { BackupService } from './services/BackupService';
 import { selectRestoreBundle } from './services/BackupFileSelection';
@@ -22,7 +22,9 @@ import { HiuService } from './services/HiuService';
 import { FideliusService, parseKeyMaterial } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
-import { CloudSyncService } from './services/CloudSyncService';
+import { CloudLink } from './cloud/CloudLink';
+import { BookingError } from './booking/BookingInboxService';
+import { getCloudServiceUrl } from '../shared/runtime-config';
 import { buildAuthenticatedLoginResult } from './services/AuthResult';
 import { ProvisioningService } from './services/ProvisioningService';
 import { CredentialRotationService } from './services/CredentialRotationService';
@@ -193,7 +195,19 @@ const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
 const provisioningService = new ProvisioningService(securityService, databaseService);
 const googleDriveService = new GoogleDriveService();
-const cloudSyncService = new CloudSyncService(databaseService);
+// NalamDesk Cloud (#154): pairing, signed requests and the booking inbox.
+const stampedIdentity = readBuildIdentityFile(buildIdentityPath(app.getAppPath()));
+const notifyRenderer = (channel: string, payload: unknown) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+};
+const cloudLink = new CloudLink({
+    store: databaseService,
+    keyStore: new ElectronSafeStorageDeviceKeyStore(),
+    appVersion: app.getVersion(),
+    baseUrl: (audience) => getCloudServiceUrl(audience, stampedIdentity),
+    onNewRequests: (count) => notifyRenderer('cloud:newRequests', { count }),
+    onPairingChange: (status) => notifyRenderer('cloud:pairingChanged', status)
+});
 
 // Determine Static Path for ApiServer
 const staticPath = isDev
@@ -217,7 +231,10 @@ const backupService = new BackupService(databaseService, googleDriveService, sec
     appVersion: app.getVersion(),
     // Restore validation must not reconfigure or close the live vault.
     createIsolatedSecurityService: () => new SecurityService(new ElectronSafeStorageDeviceKeyStore()),
-    onRestoreCommitted: () => sessionService.clearSession()
+    onRestoreCommitted: () => {
+        cloudLink.stop();
+        sessionService.clearSession();
+    }
 });
 const authorizedRestorePaths = new Set<string>();
 const restoreOperationGate = new RestoreOperationGate();
@@ -578,6 +595,7 @@ function initializeServices(settings: any): void {
         } catch (e) {
             console.error('[HIU] Could not schedule retention sweep:', e);
         }
+        cloudLink.start();
     } catch (e) {
         console.error('Failed to configure services', e);
     }
@@ -1524,41 +1542,104 @@ handleGuardedDb('db:getAuditLogs', (_, limit) => {
     return databaseService.getAuditLogs(limit);
 });
 
-// Cloud IPC Handlers
-// Cloud IPC Handlers
+// Cloud IPC Handlers (#154). Pairing and the public listing are admin-only;
+// any signed-in user can see the state and refresh the inbox.
+const requireUser = () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return user;
+};
+const requireAdminUser = () => {
+    const user = requireUser();
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return user;
+};
+const requirePaired = () => {
+    if (!cloudLink.pairing.isPaired()) throw new Error('This computer is not paired with NalamDesk Cloud.');
+};
+const cloudStatus = () => ({
+    ...cloudLink.pairing.status(),
+    listingEnabled: !!databaseService.getSettings()?.cloud_enabled
+});
 ipcMain.handle('cloud:getStatus', () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    return cloudSyncService.getStatus();
+    requireUser();
+    return cloudStatus();
 });
-ipcMain.handle('cloud:onboard', (_, { name, city }) => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    return cloudSyncService.onboard(name, city);
+ipcMain.handle('cloud:requestPairing', async (_, input) => {
+    requireAdminUser();
+    await cloudLink.pairing.request({ hfrId: String(input?.hfrId ?? ''), label: String(input?.label ?? '') });
+    return cloudStatus();
 });
-ipcMain.handle('cloud:toggle', (_, enabled) => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    return cloudSyncService.setEnabled(enabled);
+ipcMain.handle('cloud:cancelPairing', async () => {
+    requireAdminUser();
+    await cloudLink.pairing.cancel();
+    return cloudStatus();
 });
-ipcMain.handle('cloud:publishSlots', (_, slots, dates) => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    return cloudSyncService.publishSlots(slots, dates);
+ipcMain.handle('cloud:activatePairing', async (_, input) => {
+    requireAdminUser();
+    await cloudLink.pairing.activate({ code: String(input?.code ?? '') });
+    return cloudStatus();
+});
+ipcMain.handle('cloud:forgetPairing', () => {
+    requireAdminUser();
+    cloudLink.pairing.forget();
+    databaseService.saveSettings({ cloud_enabled: 0, cloud_clinic_id: null });
+    return cloudStatus();
+});
+ipcMain.handle('cloud:enableListing', async (_, input) => {
+    requireAdminUser();
+    requirePaired();
+    const name = String(input?.name ?? '').trim();
+    const city = String(input?.city ?? '').trim();
+    if (!name || !city) throw new Error('Clinic name and city are required.');
+    await cloudLink.booking.enableListing({ name, city, specialty: String(input?.specialty ?? '').trim() || undefined });
+    databaseService.saveSettings({ cloud_enabled: 1, cloud_clinic_id: cloudLink.pairing.status().clinicId ?? null });
+    return cloudStatus();
+});
+ipcMain.handle('cloud:disableListing', async () => {
+    requireAdminUser();
+    if (cloudLink.pairing.isPaired()) await cloudLink.booking.disableListing();
+    databaseService.saveSettings({ cloud_enabled: 0 });
+    return cloudStatus();
+});
+ipcMain.handle('cloud:publishSlots', async (_, slots, dates) => {
+    requireAdminUser();
+    requirePaired();
+    const published = await cloudLink.booking.publishSlots(Array.isArray(dates) ? dates : [], Array.isArray(slots) ? slots : []);
+    return { published };
 });
 ipcMain.handle('cloud:syncNow', async () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    await cloudSyncService.poll();
-    return { success: true };
+    requireUser();
+    if (!cloudLink.pairing.isPaired()) return { success: false, paired: false, saved: 0 };
+    const saved = await cloudLink.booking.sync();
+    return { success: true, paired: true, saved };
 });
-ipcMain.handle('cloud:getPublishedSlots', (_, date) => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    return cloudSyncService.getPublishedSlots(date);
+ipcMain.handle('cloud:getPublishedSlots', async (_, date) => {
+    requireUser();
+    if (!cloudLink.pairing.isPaired()) return [];
+    const day = String(date ?? '');
+    return cloudLink.booking.publishedSlots(day, day);
+});
+// Accept or decline an online booking request: the cloud first (it books or
+// releases the slot and updates the patient's status page), then locally.
+ipcMain.handle('cloud:decide', async (_, input) => {
+    requireDesk();
+    const ref = String(input?.ref ?? '');
+    const decision = input?.decision === 'accepted' ? 'accepted' : input?.decision === 'declined' ? 'declined' : null;
+    if (!decision) throw new Error('Decision must be accepted or declined.');
+    try {
+        await cloudLink.booking.decide(ref, decision);
+    } catch (error) {
+        // Requests left over from the retired cloud sync have no online
+        // reference; they are decided locally only.
+        if (error instanceof BookingError && error.code === 'bad_ref') {
+            databaseService.updateAppointmentRequestStatus(ref, decision === 'declined' ? 'rejected' : 'accepted');
+            return { success: true, local: true };
+        }
+        if (error instanceof BookingError) throw new Error(`${error.code}: ${error.message}`);
+        throw error;
+    }
+    return { success: true };
 });
 
 // Appointment Request IPC

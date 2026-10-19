@@ -9,8 +9,6 @@ loadDevelopmentEnv();
  * Port | Service                         | Config / consumer
  * -----|---------------------------------|----------------------------------
  * 3000 | Installed desktop local API     | NALAMDESK_DESKTOP_PROD_API_PORT
- * 3001 | Cloud sync API                  | NALAMDESK_CLOUD_API_PORT
- *      |   desktop CloudSyncService      |   CLOUD_API_URL
  * 3002 | Desktop dev local API           | NALAMDESK_DESKTOP_DEV_API_PORT
  * 4200 | Desktop Angular dev server      | NALAMDESK_DESKTOP_ANGULAR_PORT
  *
@@ -26,11 +24,6 @@ export const PROD_API_PORT = parsePort(
 export const DEV_API_PORT = parsePort(
     process.env['NALAMDESK_DESKTOP_DEV_API_PORT'],
     3002
-);
-
-export const CLOUD_API_PORT = parsePort(
-    process.env['NALAMDESK_CLOUD_API_PORT'],
-    3001
 );
 
 export const DESKTOP_ANGULAR_PORT = parsePort(
@@ -49,12 +42,36 @@ export function getApiPort(isPackaged: boolean): number {
     return isPackaged ? PROD_API_PORT : DEV_API_PORT;
 }
 
-export function getCloudApiUrl(): string {
-    const configured = process.env['CLOUD_API_URL'];
-    if (configured) {
-        return configured;
+export type CloudAudience = 'relay' | 'booking';
+
+/**
+ * NalamDesk Cloud addresses (#154): the relay (ABDM bridge, pairing,
+ * mailbox) and the online booking API. A release build carries them in
+ * build-identity.json (stamped from the same variables); the environment
+ * overrides that for development. Without one, pairing is unavailable.
+ */
+export function getCloudServiceUrl(
+    audience: CloudAudience,
+    stamped: { relayUrl?: string | null; bookingApiUrl?: string | null } | null = null,
+    env: NodeJS.ProcessEnv = process.env
+): string | null {
+    const raw = audience === 'relay'
+        ? env['NALAMDESK_RELAY_URL'] || stamped?.relayUrl
+        : env['NALAMDESK_BOOKING_API_URL'] || stamped?.bookingApiUrl;
+    return normalizeCloudUrl(raw);
+}
+
+function normalizeCloudUrl(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    try {
+        const url = new URL(raw);
+        const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+        if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) return null;
+        if (url.search || url.hash || url.username || url.password) return null;
+        return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+    } catch {
+        return null;
     }
-    return `http://127.0.0.1:${CLOUD_API_PORT}/api/v1`;
 }
 
 export function getDevUiProxyUrl(): string {

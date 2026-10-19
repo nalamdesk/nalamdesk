@@ -149,8 +149,9 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
     const start = 9; // 9 AM
     const end = 20;  // 8 PM
     for (let i = start; i < end; i++) {
-      this.timeSlots.push(`${i}:00`);
-      this.timeSlots.push(`${i}:30`);
+      const hour = String(i).padStart(2, '0');
+      this.timeSlots.push(`${hour}:00`);
+      this.timeSlots.push(`${hour}:30`);
     }
   }
 
@@ -272,8 +273,17 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
       cancelText: 'Cancel'
     });
     if (!confirmed) return;
+    // 1. Tell the cloud first: it books the slot and updates the patient's
+    //    status page. A lapsed or taken slot stops here.
     try {
-      // 1. Find or Create Patient
+      await this.cloud.decide(req.id, 'accepted');
+    } catch (e) {
+      await this.showDecisionError('Accept failed', e);
+      await this.loadRequests();
+      return;
+    }
+    try {
+      // 2. Find or Create Patient
       let patientId;
       const existingPatients = await this.patientService.getPatients(req.phone);
       const found = existingPatients.find(p => p.mobile === req.phone);
@@ -294,7 +304,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
         patientId = res.lastInsertRowid;
       }
 
-      // 2. Create Appointment
+      // 3. Create Appointment
       if (patientId) {
         await this.cloud.saveAppointment({
           patient_id: patientId,
@@ -304,8 +314,6 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
           status: 'CONFIRMED'
         });
 
-        // 3. Update Request Status (Server Sync)
-        await this.cloud.updateRequestStatus(req.id, 'accepted');
         await this.loadRequests();
         this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
       }
@@ -313,7 +321,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
       console.error('Accept flow failed', e);
       await this.dialogService?.open({
         title: 'Accept failed',
-        message: 'The booking could not be accepted. Please retry.',
+        message: 'The patient was told the booking is accepted, but the appointment could not be added here. Add it from the appointments screen.',
         type: 'error'
       });
     }
@@ -328,7 +336,18 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
       cancelText: 'Keep'
     });
     if (!confirmed) return;
-    await this.cloud.updateRequestStatus(req.id, 'rejected');
+    try {
+      await this.cloud.decide(req.id, 'declined');
+    } catch (e) {
+      await this.showDecisionError('Reject failed', e);
+    }
     this.loadRequests();
+  }
+
+  /** Main's errors arrive as "Error invoking remote method ...: Error: <code>: <message>". */
+  private async showDecisionError(title: string, e: unknown) {
+    const raw = String((e as any)?.message || e || '');
+    const message = raw.replace(/^.*?Error: /, '').replace(/^[a-z_]+: /, '') || 'Please retry.';
+    await this.dialogService?.open({ title, message, type: 'error' });
   }
 }

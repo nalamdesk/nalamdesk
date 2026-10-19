@@ -9,7 +9,7 @@ import log from 'electron-log';
 // It talks to the cloud only through ports owned by earlier iterations:
 //   ClinicCloudTransport -> #154 (signed device requests) and #155 (mailbox fetch/ack)
 //   ClinicSealingKey     -> #154 (the X25519 key created at pairing, in DeviceKeyStore)
-// main.ts keeps the old CloudSyncService until those adapters exist.
+// Both are wired in main/cloud/CloudLink.ts.
 
 const MAILBOX_LABEL = 'nalamdesk-mailbox-v1';
 const BOOKING_TYPE = 'booking-request';

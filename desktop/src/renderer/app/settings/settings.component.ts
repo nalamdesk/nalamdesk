@@ -10,6 +10,7 @@ import { PracticeProfileService } from '../services/practice-profile.service';
 import { StandardsMode } from '../../../shared/practice-profile';
 import { ColDef, ValueGetterParams } from 'ag-grid-community';
 import { DatePickerComponent } from '../shared/components/date-picker/date-picker.component';
+import { CloudLinkComponent } from './cloud-link.component';
 import { CatalogSettingsComponent } from './catalog-settings.component';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
@@ -19,7 +20,7 @@ import { AppUpdateService } from '../services/update.service';
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, SharedTableComponent, ActionRendererComponent, DatePickerComponent, CatalogSettingsComponent],
+  imports: [CommonModule, FormsModule, SharedTableComponent, ActionRendererComponent, DatePickerComponent, CatalogSettingsComponent, CloudLinkComponent],
   templateUrl: './settings.component.html',
   styles: [`
     :host { display: block; height: 100%; }
@@ -70,12 +71,6 @@ export class SettingsComponent implements OnInit {
   abdmSimResult: string | null = null;
   inboxItems: any[] = [];
 
-  // Cloud
-  cloudEnabled = false;
-  cloudClinicId: string | null = null;
-  showCloudModal = false;
-  cloudForm = { name: '', city: '' };
-  cloudLoading = false;
 
   // Editing
   editingUser: any = null;
@@ -383,7 +378,6 @@ export class SettingsComponent implements OnInit {
     if (this.isElectron) {
       this.listBackups();
       this.checkDriveStatus();
-      this.loadCloudStatus();
       void this.loadBackupHealth();
     }
     if (this.currentUser?.role === 'admin') {
@@ -1372,26 +1366,6 @@ export class SettingsComponent implements OnInit {
     } catch (e) {
       console.error('Failed to check drive status', e);
     }
-  }
-
-  async loadCloudStatus() {
-    if (!this.isElectron) return;
-    const s = await window.electron.cloud.getStatus();
-    this.ngZone.run(() => { this.cloudEnabled = s.enabled; this.cloudClinicId = s.clinicId; });
-  }
-  async toggleCloud(e: any) {
-    if (!this.isElectron) return;
-    const enabled = e.target.checked;
-    if (enabled && !this.cloudClinicId) {
-      this.showCloudModal = true;
-      e.target.checked = false;
-    } else {
-      await window.electron.cloud.toggle(enabled);
-      this.loadCloudStatus();
-    }
-  }
-  async submitCloudOnboard() {
-    // ... existing ...
   }
 
   openDriveConsole(e: Event) {

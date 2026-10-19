@@ -1,4 +1,5 @@
 import { MIGRATIONS } from '../schema/migrations';
+import type { CloudDeviceRow } from '../cloud/DeviceIdentity';
 import * as catalog from '../catalog/catalogStore';
 import { createHash } from 'node:crypto';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
@@ -805,6 +806,36 @@ export class DatabaseService {
             }
         });
         return (save as any).immediate ? (save as any).immediate() : (save as any)();
+    }
+
+    // Main-process-only: this computer's NalamDesk Cloud identity (#154).
+    // The private keys in it are keychain-wrapped; never exposed over IPC or LAN.
+    getCloudDevice(): CloudDeviceRow | null {
+        try {
+            const row = this.db.prepare('SELECT * FROM cloud_device WHERE id = 1').get() as any;
+            if (!row) return null;
+            const { id: _id, ...rest } = row;
+            return rest as CloudDeviceRow;
+        } catch {
+            return null;
+        }
+    }
+
+    saveCloudDevice(row: CloudDeviceRow) {
+        const columns = [
+            'state', 'hfr_id', 'request_id', 'request_expires_at', 'device_id', 'clinic_id', 'data_push_url', 'label',
+            'signing_public', 'signing_private_protected', 'signing_created_at', 'previous_signing_public',
+            'previous_signing_private_protected', 'sealing_public', 'sealing_private_protected', 'paired_at',
+            'revoked_reason', 'updated_at'
+        ] as const;
+        const params: Record<string, unknown> = { id: 1 };
+        for (const column of columns) params[column] = row[column] ?? null;
+        this.db.prepare(`INSERT OR REPLACE INTO cloud_device(id, ${columns.join(', ')})
+            VALUES(@id, ${columns.map((c) => `@${c}`).join(', ')})`).run(params);
+    }
+
+    clearCloudDevice() {
+        this.db.prepare('DELETE FROM cloud_device').run();
     }
 
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL AND active != 0').get().count;

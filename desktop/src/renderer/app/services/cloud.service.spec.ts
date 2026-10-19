@@ -24,7 +24,11 @@ describe('CloudService', () => {
             mockCloud = {
                 publishSlots: vi.fn().mockResolvedValue({ success: true }),
                 getPublishedSlots: vi.fn().mockResolvedValue([{ time: '10:00' }]),
-                syncNow: vi.fn().mockResolvedValue({ synced: true })
+                syncNow: vi.fn().mockResolvedValue({ synced: true }),
+                decide: vi.fn().mockResolvedValue({ success: true }),
+                getStatus: vi.fn().mockResolvedValue({ state: 'paired' }),
+                requestPairing: vi.fn().mockResolvedValue({ state: 'requested' }),
+                activatePairing: vi.fn().mockResolvedValue({ state: 'paired' })
             };
             mockDb = {
                 getAppointmentRequests: vi.fn().mockResolvedValue([{ id: '1', status: 'pending' }]),
@@ -55,10 +59,19 @@ describe('CloudService', () => {
             expect(result).toEqual([{ id: '1', status: 'pending' }]);
         });
 
-        it('should update request status via IPC', async () => {
-            const result = await service.updateRequestStatus('1', 'approved');
-            expect(mockDb.updateAppointmentRequestStatus).toHaveBeenCalledWith({ id: '1', status: 'approved' });
+        it('should decide a booking request through the cloud', async () => {
+            const result = await service.decide('ABCDEFGHJKMN', 'accepted');
+            expect(mockCloud.decide).toHaveBeenCalledWith({ ref: 'ABCDEFGHJKMN', decision: 'accepted' });
+            expect(mockDb.updateAppointmentRequestStatus).not.toHaveBeenCalled();
             expect(result).toEqual({ success: true });
+        });
+
+        it('should pair through IPC', async () => {
+            expect(await service.getStatus()).toEqual({ state: 'paired' });
+            await service.requestPairing('IN2710000123', 'Reception');
+            await service.activatePairing('ABCD-1234');
+            expect(mockCloud.requestPairing).toHaveBeenCalledWith({ hfrId: 'IN2710000123', label: 'Reception' });
+            expect(mockCloud.activatePairing).toHaveBeenCalledWith({ code: 'ABCD-1234' });
         });
 
         it('should sync now via IPC', async () => {
@@ -97,9 +110,13 @@ describe('CloudService', () => {
             expect(result).toEqual([]);
         });
 
-        it('updateRequestStatus should return undefined', async () => {
-            const result = await service.updateRequestStatus('1', 'approved');
+        it('decide should return undefined', async () => {
+            const result = await service.decide('ABCDEFGHJKMN', 'declined');
             expect(result).toBeUndefined();
+        });
+
+        it('getStatus should return null', async () => {
+            expect(await service.getStatus()).toBeNull();
         });
 
         it('syncNow should return undefined', async () => {

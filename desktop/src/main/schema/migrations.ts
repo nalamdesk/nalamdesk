@@ -1612,6 +1612,42 @@ export const MIGRATIONS = [
                 admin: ['getAppointmentByVisit', 'getAppointmentsByPatient']
             });
         }
+    },
+    {
+        version: 44,
+        up: (db: any) => {
+            console.log('Running Migration v44 (cloud device pairing)...');
+            // This computer's NalamDesk Cloud identity (#154): one row. Private
+            // keys are wrapped by the OS keychain before they are stored here.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS cloud_device (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    state TEXT NOT NULL CHECK (state IN ('requested', 'paired', 'revoked')),
+                    hfr_id TEXT NOT NULL,
+                    request_id TEXT,
+                    request_expires_at INTEGER,
+                    device_id TEXT,
+                    clinic_id TEXT,
+                    data_push_url TEXT,
+                    label TEXT NOT NULL,
+                    signing_public TEXT NOT NULL,
+                    signing_private_protected TEXT NOT NULL,
+                    signing_created_at INTEGER NOT NULL,
+                    previous_signing_public TEXT,
+                    previous_signing_private_protected TEXT,
+                    sealing_public TEXT NOT NULL,
+                    sealing_private_protected TEXT NOT NULL,
+                    paired_at INTEGER,
+                    revoked_reason TEXT,
+                    updated_at INTEGER NOT NULL
+                )
+            `);
+            // The old cloud sync used a shared app secret and a per-clinic API
+            // key; both are gone. Online booking is listed again after pairing.
+            try {
+                db.exec('UPDATE settings SET cloud_api_key = NULL, cloud_clinic_id = NULL, cloud_enabled = 0');
+            } catch (e) { }
+        }
     }
 ];
 

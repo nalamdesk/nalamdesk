@@ -25,10 +25,52 @@ export class CloudService {
         return [];
     }
 
-    async updateRequestStatus(id: string, status: string) {
+    /**
+     * Accepts or declines an online booking request. The cloud books or
+     * releases the slot first; main records the decision locally after.
+     */
+    async decide(ref: string, decision: 'accepted' | 'declined') {
         if ((window as any).electron) {
-            return (window as any).electron.db.updateAppointmentRequestStatus({ id, status });
+            return (window as any).electron.cloud.decide({ ref, decision });
         }
+    }
+
+    // ---- Pairing with NalamDesk Cloud (#154) ----
+
+    async getStatus(): Promise<CloudStatus | null> {
+        if ((window as any).electron) {
+            return (window as any).electron.cloud.getStatus();
+        }
+        return null;
+    }
+
+    async requestPairing(hfrId: string, label: string): Promise<CloudStatus> {
+        return (window as any).electron.cloud.requestPairing({ hfrId, label });
+    }
+
+    async activatePairing(code: string): Promise<CloudStatus> {
+        return (window as any).electron.cloud.activatePairing({ code });
+    }
+
+    async cancelPairing(): Promise<CloudStatus> {
+        return (window as any).electron.cloud.cancelPairing();
+    }
+
+    async forgetPairing(): Promise<CloudStatus> {
+        return (window as any).electron.cloud.forgetPairing();
+    }
+
+    async enableListing(listing: { name: string; city: string; specialty?: string }): Promise<CloudStatus> {
+        return (window as any).electron.cloud.enableListing(listing);
+    }
+
+    async disableListing(): Promise<CloudStatus> {
+        return (window as any).electron.cloud.disableListing();
+    }
+
+    /** Subscribes to pairing changes pushed from main; returns the unsubscribe. */
+    onPairingChanged(callback: (status: CloudStatus) => void): () => void {
+        return (window as any).electron?.cloud?.onPairingChanged?.(callback) ?? (() => undefined);
     }
 
     async syncNow() {

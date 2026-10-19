@@ -46,7 +46,7 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 2.  **Stateless Cloud**: Cloud functions MUST NOT rely on local file storage. State is in SQLite (Desktop); the cloud holds only ciphertext and routing metadata.
 3.  **Dev vs Prod isolation** (defaults in repo-root `.env.development`; override via `.env.local`):
     - **DB**: `userData/nalamdesk.db` — prod `NalamDesk/`, dev `NalamDesk-Dev/` (not `desktop/nalamdesk.db`).
-    - **Ports**: 3000 installed API · 3001 cloud API · 3002 dev API · 4200 ng serve. Dev and installed app may run together.
+    - **Ports**: 3000 installed API · 3002 dev API · 4200 ng serve. Dev and installed app may run together.
 4.  **Secrets**: NEVER commit `.env` or `credentials.json`.
 5.  **Sync Logic**: If Cloud returns `401` or `404` (Clinic Not Found), the Desktop App MUST self-heal (reset cloud settings) to prevent orphaned states.
 

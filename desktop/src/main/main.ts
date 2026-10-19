@@ -19,7 +19,7 @@ import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './serv
 import { AbdmSessionService, isAbdmGatewayEnv } from './services/AbdmSessionService';
 import { AbdmAbhaService } from './services/AbdmAbhaService';
 import { HiuService } from './services/HiuService';
-import { FideliusService } from './services/FideliusService';
+import { FideliusService, parseKeyMaterial } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
 import { CloudSyncService } from './services/CloudSyncService';
@@ -1257,15 +1257,7 @@ handleGuardedDb('db:abdmSaveConfig', (_, config) => {
         if (!key) {
             // Empty field means "leave the stored key alone", never wipe it.
         } else {
-            try {
-                Buffer.from(key, 'base64');
-            } catch {
-                throw new Error('Recipient key must be base64.');
-            }
-            if (Buffer.from(key, 'base64').length !== 32) {
-                throw new Error('Recipient key must be a 32-byte X25519 public key.');
-            }
-            patch['abdm_recipient_key'] = key;
+            patch['abdm_recipient_key'] = JSON.stringify(parseKeyMaterial(key));
         }
     }
     if (config && typeof config['callback_secret'] === 'string') {

@@ -34,7 +34,7 @@ describe('HiuService (HIU keypair)', () => {
         const svc = new HiuService({ ...store, keyStore: fakeKeyStore() as any });
         expect(svc.getPublicKey()).toBeNull();
         const first = svc.ensureKeypair();
-        expect(first.publicKey).toMatch(/^[A-Za-z0-9+/=]{43,44}$/);
+        expect(Buffer.from(first.publicKey, 'base64')).toHaveLength(309);
         expect(svc.getPublicKey()).toBe(first.publicKey);
         const second = svc.ensureKeypair();
         expect(second.publicKey).toBe(first.publicKey);
@@ -46,9 +46,8 @@ describe('HiuService (HIU keypair)', () => {
     it('round-trips a bundle through Fidelius using the stored keypair', () => {
         const store = memoryStore();
         const svc = new HiuService({ ...store, keyStore: fakeKeyStore() as any });
-        const { publicKey } = svc.ensureKeypair();
         const fidelius = new FideliusService();
-        const envelope = fidelius.encryptBundle({ hello: 'hiu' }, publicKey);
+        const envelope = fidelius.encryptBundle({ hello: 'hiu' }, svc.keyMaterial());
         const decrypted = svc.decryptForTest(envelope);
         expect(decrypted).toEqual({ hello: 'hiu' });
     });
@@ -64,18 +63,47 @@ describe('HiuService (HIU keypair)', () => {
     it('rejects tampered envelopes on the stored key', () => {
         const store = memoryStore();
         const svc = new HiuService({ ...store, keyStore: fakeKeyStore() as any });
-        const { publicKey } = svc.ensureKeypair();
         const fidelius = new FideliusService();
-        const envelope = fidelius.encryptBundle({ hello: 'hiu' }, publicKey);
-        envelope.ciphertext = Buffer.from('tampered').toString('base64');
+        const envelope = fidelius.encryptBundle({ hello: 'hiu' }, svc.keyMaterial());
+        envelope.encryptedData = Buffer.from('tampered-with-enough-bytes').toString('base64');
         expect(() => svc.decryptForTest(envelope)).toThrow();
     });
 
     it('rejects malformed envelopes before touching crypto', () => {
         const svc = new HiuService({ ...memoryStore(), keyStore: fakeKeyStore() as any });
         expect(() => svc.decryptRecord(null as any)).toThrow('envelope is required');
-        expect(() => svc.decryptRecord({} as any)).toThrow('missing ephemeralPublicKey');
-        expect(() => svc.decryptRecord({ ephemeralPublicKey: 'x' } as any)).toThrow('missing nonce');
+        expect(() => svc.decryptRecord({} as any)).toThrow('missing keyMaterial');
+        expect(() => svc.decryptRecord({ keyMaterial: {} } as any)).toThrow('missing encryptedData');
+    });
+
+    it('advertises its public key in its key material', () => {
+        const svc = new HiuService({ ...memoryStore(), keyStore: fakeKeyStore() as any });
+        const material = svc.keyMaterial();
+        expect(material.dhPublicKey.keyValue).toBe(svc.getPublicKey());
+        expect(Buffer.from(material.nonce, 'base64')).toHaveLength(32);
+        // Stable per key, so a sender can use material fetched earlier.
+        expect(svc.keyMaterial().nonce).toBe(material.nonce);
+    });
+
+    it('re-encodes a key stored before Fidelius interop instead of rotating it', () => {
+        const store = memoryStore();
+        const keyStore = fakeKeyStore();
+        const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519', {
+            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+        });
+        const wrapped = keyStore.protect(Buffer.from(privateKey, 'utf8')).toString('base64');
+        store.settings.abdm_hiu_private_protected = wrapped;
+        store.settings.abdm_hiu_public_key = publicKey.export({ type: 'spki', format: 'der' })
+            .subarray(-32).toString('base64');
+        const svc = new HiuService({ ...store, keyStore: keyStore as any });
+
+        const upgraded = svc.ensureKeypair();
+
+        expect(Buffer.from(upgraded.publicKey, 'base64')).toHaveLength(309);
+        expect(store.settings.abdm_hiu_public_key).toBe(upgraded.publicKey);
+        expect(store.settings.abdm_hiu_private_protected).toBe(wrapped);
+        const fidelius = new FideliusService();
+        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, svc.keyMaterial()))).toEqual({ ok: 1 });
     });
 });
 
@@ -233,7 +261,7 @@ describe('HiuService (consent flow, mock gateway)', () => {
         expect(healed.publicKey).not.toBe('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=');
         // Round trip proves the healed pair belongs together.
         const fidelius = new FideliusService();
-        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, healed.publicKey))).toEqual({ ok: 1 });
+        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, svc.keyMaterial()))).toEqual({ ok: 1 });
     });
 
     it('regenerates when the private blob cannot be unwrapped', () => {
@@ -244,7 +272,7 @@ describe('HiuService (consent flow, mock gateway)', () => {
         store.settings.abdm_hiu_private_protected = Buffer.from('foreign-blob').toString('base64');
         const healed = svc.ensureKeypair();
         const fidelius = new FideliusService();
-        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, healed.publicKey))).toEqual({ ok: 1 });
+        expect(svc.decryptForTest(fidelius.encryptBundle({ ok: 1 }, svc.keyMaterial()))).toEqual({ ok: 1 });
     });
 
     it('writes both halves through the atomic saver when available', () => {

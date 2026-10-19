@@ -8,8 +8,8 @@ const JWT_SECRET = vi.hoisted(() => {
 
 import * as jwt from 'jsonwebtoken';
 import * as os from 'node:os';
-import * as crypto from 'node:crypto';
 import { ApiServer } from './app';
+import { FideliusService } from '../main/services/FideliusService';
 
 function authHeader(user: { id: number; role: string; username?: string }) {
     const token = jwt.sign(
@@ -393,7 +393,7 @@ describe('ABDM HIU data transfer route', () => {
             url: '/abdm/hiu/data/transfer',
             payload: {
                 requestId: 'nope',
-                records: [{ ephemeralPublicKey: 'x', nonce: 'x', ciphertext: 'x', tag: 'x' }]
+                records: [{ keyMaterial: { nonce: 'x' }, encryptedData: 'x' }]
             }
         });
         expect(unknown.statusCode).toBe(400);
@@ -405,7 +405,7 @@ describe('ABDM HIU data transfer route', () => {
             url: '/abdm/hiu/data/transfer',
             payload: {
                 requestId: 'req-denied',
-                records: [{ ephemeralPublicKey: 'x', nonce: 'x', ciphertext: 'x', tag: 'x' }]
+                records: [{ keyMaterial: { nonce: 'x' }, encryptedData: 'x' }]
             }
         });
         expect(denied.statusCode).toBe(400);
@@ -419,7 +419,7 @@ describe('ABDM HIU data transfer route', () => {
             url: '/abdm/hiu/data/transfer',
             payload: {
                 requestId: 'req-2',
-                records: [{ ephemeralPublicKey: 'nope', nonce: 'nope', ciphertext: 'nope', tag: 'nope' }]
+                records: [{ keyMaterial: { nonce: 'nope' }, encryptedData: 'nope' }]
             }
         });
         expect(response.statusCode).toBe(400);
@@ -580,15 +580,9 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
     });
 
     it('transfers bundles over LAN without exposing the recipient key', async () => {
-        const { generateKeyPairSync } = await import('node:crypto');
-        const { publicKey } = generateKeyPairSync('x25519', {
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        });
-        const raw = crypto.createPublicKey(publicKey)
-            .export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
+        const { keyMaterial } = new FideliusService().generateKeyMaterial();
         db.getSettings = vi.fn().mockReturnValue({
-            abdm_recipient_key: raw,
+            abdm_recipient_key: JSON.stringify(keyMaterial),
             abdm_hip_endpoint: ''
         });
         const response = await postIpc('abdmTransferBundle', [

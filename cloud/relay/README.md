@@ -16,7 +16,7 @@ Function (Node 24, arm64) and on a local Node server.
 | `POST /api/v3/...` | ABDM gateway | The callback JWT is verified against the gateway's published keys, the facility must be linked to the bridge, then headers and body are sealed to the clinic's X25519 key, stored in the mailbox, and the doorbell rings. `202` is sent only after the store succeeds, because ABDM does not resend an acknowledged callback. |
 | `POST /hiu/data-push/:token` | An HIP | Fidelius ciphertext for an HIU request, routed by the opaque token in the clinic's data push URL and sealed byte for byte. |
 | `POST /pairing/request`, `DELETE /pairing/request`, `POST /pairing/activate` | Desktop, before pairing | See [Pairing](#pairing). Bodies are signed by the install's new key; requests are rate limited per client IP. |
-| `POST /device/rotate-key` | Paired desktop | Signed. Replaces the signing key, with proof from the new key; the old key stays valid for 10 minutes. |
+| `POST /device/rotate-key` | Paired desktop | Signed. Replaces the signing key, with proof from the new key; the old key stays valid for 10 minutes, and another rotation waits until then. |
 | `GET /ops/` | NalamDesk staff | The ops console page. |
 | `/ops/api/*` | Ops console | Cognito access token from the ops pool, `ops` group: list, approve and reject pairing requests; list and revoke devices. |
 | `GET /health` | Load balancer | Liveness. |
@@ -40,6 +40,7 @@ Logs hold metadata only (route, path, facility, status, timing); see `src/log.ts
    upper case, no dash). The signature is checked before the code, so only that install can spend
    attempts; 5 wrong codes void the request. One transaction creates the device, revokes any other
    active device for the HFR ID, and deletes the request. The clinic ID stays the same for the HFR ID.
+   If the answer is lost, the same signed activation returns the same device again.
 
 The answer carries the device ID, clinic ID and the clinic's HIU data push URL. Timestamps must be
 within 60 seconds (`401 clock_skew` returns the server time). The client IP comes from

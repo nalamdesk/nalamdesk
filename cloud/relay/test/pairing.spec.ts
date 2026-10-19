@@ -142,7 +142,9 @@ describe('pairing a desktop', () => {
         expect(r.store.devices.get(device.deviceId)).toMatchObject({ status: 'active', approvedBy: 'staff-sub-1', linkedToBridge: true, sealingPublicKey: pc.sealingPublicKey });
 
         expect((await r.signedCall(pc, device.deviceId)).status).toBe(200);
-        expect((await r.activate(pc, 'K7QM3XRA')).status).toBe(404);
+        // Spending the code again creates nothing; the same install just hears its device again.
+        expect(await (await r.activate(pc, 'K7QM3XRA')).json()).toMatchObject({ deviceId: device.deviceId });
+        expect(r.store.devices.size).toBe(1);
     });
 
     it('revokes the first install when a second one pairs for the same HFR ID', async () => {
@@ -316,6 +318,25 @@ describe('ops console', () => {
     });
 });
 
+describe('a lost activation answer', () => {
+    it('gives the same install the same device again, and nobody else anything', async () => {
+        const r = await relayWithPairing();
+        const pc = install();
+        expect((await r.requestPairing(pc)).status).toBe(202);
+        const { body } = await r.approve();
+        const first = await (await r.activate(pc, body.code)).json() as Record<string, unknown>;
+
+        r.advance(5_000);
+        const retried = await r.activate(pc, body.code);
+        expect(retried.status).toBe(200);
+        expect(await retried.json()).toEqual({ ...first, serverTimeMs: START + 5_000 });
+        expect(r.store.devices.size).toBe(1);
+
+        const stranger = install('Other PC');
+        expect((await r.activate(pc, body.code, HFR, stranger)).status).toBe(404);
+    });
+});
+
 describe('signing key rotation', () => {
     it('swaps the key with proof from the new key and keeps the old one for the overlap', async () => {
         const r = await relayWithPairing();
@@ -335,6 +356,17 @@ describe('signing key rotation', () => {
 
         expect((await r.signedCall(pc, deviceId, next)).status).toBe(200);
         expect((await r.signedCall(pc, deviceId)).status).toBe(200);
+
+        // A second rotation waits until the first key's overlap ends.
+        const third = crypto.generateKeyPairSync('ed25519').privateKey;
+        const thirdKey = ed25519PublicKeyRaw(third);
+        const proof = crypto.sign(null, Buffer.from(pairingMessages.rotate({ deviceId, oldKey: newKey, newKey: thirdKey })), third).toString('base64url');
+        const again = JSON.stringify({ signingPublicKey: thirdKey, proof });
+        const againHeaders = { 'content-type': 'application/json', ...signRequest({ privateKey: next, deviceId, audience: 'relay', method: 'POST', path: '/device/rotate-key', body: new TextEncoder().encode(again), nowMs: r.now() }) };
+        const refused = await r.h.app.request('/device/rotate-key', { method: 'POST', headers: againHeaders, body: again });
+        expect(refused.status).toBe(409);
+        expect(await refused.json()).toEqual({ error: 'rotation_in_progress' });
+
         r.advance(PAIRING_LIMITS.rotationOverlapMs + 31_000);
         expect((await r.signedCall(pc, deviceId)).status).toBe(401);
         expect((await r.signedCall(pc, deviceId, next)).status).toBe(200);

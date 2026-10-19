@@ -300,7 +300,7 @@ export class PairingService {
         const skew = this.clock<ActivatedDevice>(body.timestamp);
         if (skew) return skew;
         const request = await this.live(hfrId);
-        if (!request) return refuse(404, 'no_request');
+        if (!request) return (await this.alreadyActivated(hfrId, code, body)) ?? refuse(404, 'no_request');
 
         // The signature comes first, so only the install that asked can spend attempts.
         const message = pairingMessages.activate({
@@ -358,6 +358,32 @@ export class PairingService {
         };
     }
 
+    /**
+     * A retried activation whose first answer was lost: the request is gone,
+     * but the install that now owns the active device proves it with the same
+     * signed message and gets the same answer. Nothing new is created.
+     */
+    private async alreadyActivated(hfrId: string, code: string, body: Record<string, unknown>): Promise<PairingResult<ActivatedDevice> | null> {
+        const devices = (await this.options.store.devicesFor(hfrId)).filter((d) => d.status === 'active');
+        for (const device of devices) {
+            const message = pairingMessages.activate({
+                hfrId, code, signingPublicKey: device.signingPublicKey, sealingPublicKey: device.sealingPublicKey, timestamp: body.timestamp as string
+            });
+            if (!verifyEd25519(device.signingPublicKey, message, String(body.signature ?? ''))) continue;
+            return {
+                ok: true,
+                value: {
+                    deviceId: device.deviceId,
+                    clinicId: device.clinicId,
+                    hipId: hfrId,
+                    dataPushUrl: `${this.options.bridgeUrl}/hiu/data-push/${device.dataPushToken}`,
+                    serverTimeMs: this.nowMs()
+                }
+            };
+        }
+        return null;
+    }
+
     // ---- Ops ----
 
     async listRequests(): Promise<(Omit<PairingRequest, 'codeHash' | 'signingPublicKey' | 'sealingPublicKey'> & { keyFingerprint: string })[]> {
@@ -411,6 +437,8 @@ export class PairingService {
         const message = pairingMessages.rotate({ deviceId, oldKey: device.signingPublicKey, newKey });
         if (!verifyEd25519(newKey, message, String(body.proof ?? ''))) return refuse(401, 'bad_proof');
         const now = this.nowMs();
+        // One rotation at a time, so the key before it keeps its full overlap.
+        if ((device.previousKeyValidUntil ?? 0) > now) return refuse(409, 'rotation_in_progress');
         if (!(await this.options.store.rotateKey(deviceId, device.signingPublicKey, newKey, now + PAIRING_LIMITS.rotationOverlapMs, now))) {
             return refuse(409, 'conflict');
         }

@@ -219,6 +219,8 @@ export const OPS_JS = `'use strict';
     $('approve-label').textContent = r.label;
     $('approve-form').reset();
     const dialog = $('approve-dialog');
+    // A dismissed dialog keeps the last returnValue; start each one empty.
+    dialog.returnValue = '';
     dialog.onclose = async () => {
       if (dialog.returnValue !== 'approve') return;
       try {

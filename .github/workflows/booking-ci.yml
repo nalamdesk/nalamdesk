@@ -1,0 +1,46 @@
+name: Online Booking CI
+# Online booking stack (cloud/booking): API, site and CDK app.
+# Ubuntu only; runs when the booking code or this workflow changes.
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'cloud/booking/**'
+      - '.github/workflows/booking-ci.yml'
+
+concurrency:
+  group: booking-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  booking:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [api, web, infra]
+    defaults:
+      run:
+        working-directory: ./cloud/booking/${{ matrix.package }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: cloud/booking/${{ matrix.package }}/package-lock.json
+      - name: Install Dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Run Unit Tests
+        run: npm test
+      - name: Design lint (Impeccable)
+        if: matrix.package == 'web'
+        run: npm run lint:design
+      - name: Build site
+        if: matrix.package == 'web'
+        run: npm run build

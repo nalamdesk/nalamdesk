@@ -79,10 +79,12 @@ describe('BookingStack', () => {
         });
     });
 
-    it('gives the API role table and secret access only', () => {
+    it('gives the API role table and pepper-parameter access only', () => {
         const policies = JSON.stringify(t.findResources('AWS::IAM::Policy'));
         expect(policies).toContain('dynamodb:PutItem');
-        expect(policies).toContain('secretsmanager:GetSecretValue');
+        expect(policies).toContain('ssm:GetParameter');
+        expect(policies).toContain('parameter/nalamdesk/booking/phone-pepper');
+        expect(policies).toContain('kms:ViaService');
         expect(policies).not.toContain('"Action":"*"');
     });
 

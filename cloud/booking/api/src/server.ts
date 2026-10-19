@@ -1,4 +1,4 @@
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { serve } from '@hono/node-server';
 import { createBookingApp } from './app.js';
 import { documentClient, DynamoBookingStore, DynamoClinicStore, DynamoSlotStore } from './dynamo.js';
@@ -22,11 +22,12 @@ function required(name: string): string {
 const adapters: { devices?: DeviceAuthenticator; mailbox?: Mailbox; doorbell?: Doorbell } = {};
 
 const db = documentClient(process.env.AWS_REGION);
-// The phone pepper is read once at start-up from Secrets Manager, so it never
-// sits in the function's environment.
-const secret = await new SecretsManagerClient({}).send(new GetSecretValueCommand({ SecretId: required('BOOKING_PHONE_PEPPER_SECRET') }));
-const pepper = Buffer.from(secret.SecretString ?? '', 'utf8');
-if (pepper.length < 32) throw new Error('Booking API: the phone pepper secret must be at least 32 characters.');
+// The phone pepper is a SecureString in Parameter Store (as the relay keeps
+// its vendor secret), read once at start-up so it never sits in the
+// function's environment. scripts/deploy.sh creates it on first deploy.
+const parameter = await new SSMClient({}).send(new GetParameterCommand({ Name: required('BOOKING_PHONE_PEPPER_PARAM'), WithDecryption: true }));
+const pepper = Buffer.from(parameter.Parameter?.Value ?? '', 'utf8');
+if (pepper.length < 32) throw new Error('Booking API: the phone pepper parameter must be at least 32 characters.');
 
 const app = createBookingApp({
     clinics: new DynamoClinicStore(db, required('BOOKING_CLINICS_TABLE')),

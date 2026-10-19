@@ -9,6 +9,13 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 region=ap-south-1
 
 (cd "$here/infra" && npm ci && npx cdk deploy NalamDeskBookingCode --require-approval never)
+
+# Phone-limit HMAC key: created once, never overwritten (that would reset every open-request count).
+pepper_param=/nalamdesk/booking/phone-pepper
+if ! aws ssm get-parameter --region "$region" --name "$pepper_param" >/dev/null 2>&1; then
+  aws ssm put-parameter --region "$region" --name "$pepper_param" --type SecureString \
+    --value "$(openssl rand -base64 48)" >/dev/null
+fi
 bucket=$(aws cloudformation describe-stacks --region "$region" --stack-name NalamDeskBookingCode \
   --query "Stacks[0].Outputs[?OutputKey=='CodeBucketName'].OutputValue" --output text)
 

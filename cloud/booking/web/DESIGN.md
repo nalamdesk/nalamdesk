@@ -13,15 +13,33 @@ colors:
   ink-soft: "#4a5263"
   muted: "#5b6170"
   line: "#d5dce6"
+  field-border: "#a3adbd"
+  placeholder: "#646b7a"
   success: "#2b6e47"
   error: "#a8261d"
   error-wash: "#fbeceb"
 typography:
+  display-lg:
+    fontFamily: "'Newsreader', Georgia, serif"
+    fontWeight: 500
+    fontSize: "52px"
+    lineHeight: 1.08
   display:
     fontFamily: "'Newsreader', Georgia, serif"
     fontWeight: 500
+    fontSize: "40px"
     lineHeight: 1.08
+  headline-lg:
+    fontFamily: "'Newsreader', Georgia, serif"
+    fontWeight: 600
+    fontSize: "28px"
+    lineHeight: 1.2
   headline:
+    fontFamily: "'Newsreader', Georgia, serif"
+    fontWeight: 600
+    fontSize: "24px"
+    lineHeight: 1.25
+  title:
     fontFamily: "'Newsreader', Georgia, serif"
     fontWeight: 600
     fontSize: "22px"
@@ -93,12 +111,12 @@ words, one obvious next step, and no claims the clinic has not made. Product pri
 - **Accent** `#d98a1c` on `#fbefd9`: the selected time or call-back choice, and the "waiting" status. Never text colour.
 - **Ink** `#1b2230` body text; **Ink soft** `#4a5263` secondary text; **Muted** `#5b6170` small print.
 - **Success** `#2b6e47`: "Open on NalamDesk now" and Accepted. **Error** `#a8261d` on `#fbeceb`: alerts and Declined.
-- All text pairs meet WCAG AA on both ground and surface; placeholders use `#646b7a` (4.5:1 on surface).
+- All text pairs meet WCAG AA on both ground and surface; placeholders use `#646b7a` (4.5:1 on surface); field borders `#a3adbd` (3:1, non-text contrast).
 
 ## Typography
 
-- Display (h1): Newsreader 500, 40px mobile / 52px desktop, tight leading, balanced wrap.
-- Headline (clinic names, dialog titles): Newsreader 600, 22–24px.
+- Display (page h1): Newsreader 500, 40px mobile / 52px desktop, tight leading, balanced wrap.
+- Headline-lg ("Request sent", the reference): 28px. Headline (dialog title): 24px. Title (clinic names): 22px.
 - Body: Atkinson Hyperlegible Next 400, 16px (18px for lead paragraphs), 1.55 line height.
 - Labels and buttons: Atkinson 600, 15–16px. References use tabular figures with 0.12em tracking.
 - Prose is capped near 52–54ch so lines stay under about 75 characters.

@@ -57,7 +57,7 @@ export function StatusPage({ initialRef }: { initialRef: string }) {
 
     return (
         <section aria-labelledby="status-title" className="pt-6 sm:pt-12">
-            <h1 id="status-title" className="text-[2.25rem] leading-tight font-medium tracking-tight sm:text-[2.75rem]">Check a request</h1>
+            <h1 id="status-title" className="text-display leading-tight font-medium tracking-tight sm:text-display-lg">Check a request</h1>
             <p className="mt-3 max-w-[52ch] text-lg text-ink-soft">Enter the 12-character reference you got when you sent the request.</p>
 
             <form onSubmit={submit} className="mt-8 flex max-w-xl flex-col gap-3 sm:flex-row sm:items-end" noValidate>

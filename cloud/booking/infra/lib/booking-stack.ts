@@ -7,7 +7,6 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import type { Construct } from 'constructs';
 
 /** A Web Function code zip already uploaded to the versioned code bucket. */
@@ -24,6 +23,9 @@ export interface BookingStackProps extends cdk.StackProps {
     /** Built site (cloud/booking/web/dist). Omit in tests. */
     siteDir?: string;
 }
+
+/** SecureString parameter holding the phone-limit HMAC key. */
+export const PHONE_PEPPER_PARAM = '/nalamdesk/booking/phone-pepper';
 
 // Content-Security-Policy for the site. Everything is self-hosted (fonts
 // included), so the browser may load and call nothing but this origin.
@@ -94,10 +96,14 @@ export class BookingStack extends cdk.Stack {
         });
         this.tables = { clinics, slots, bookings };
 
-        // Turns the browser's phone digest into a per-clinic key the tables can hold.
-        const phonePepper = new secretsmanager.Secret(this, 'PhonePepper', {
-            description: 'NalamDesk booking: HMAC key for the per-clinic phone limit.',
-            generateSecretString: { passwordLength: 64, excludePunctuation: true }
+        // HMAC key that turns the browser's phone digest into a per-clinic key
+        // the tables can hold. A SecureString parameter, like the relay's
+        // vendor secret; CloudFormation cannot create SecureStrings, so
+        // scripts/deploy.sh puts a random one there on first deploy.
+        const phonePepperArn = this.formatArn({
+            service: 'ssm',
+            resource: 'parameter',
+            resourceName: PHONE_PEPPER_PARAM.slice(1)
         });
 
         // ---- Site bucket ----
@@ -143,7 +149,13 @@ export class BookingStack extends cdk.Stack {
             clinics.grantReadWriteData(role);
             slots.grantReadWriteData(role);
             bookings.grantReadWriteData(role);
-            phonePepper.grantRead(role);
+            role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [phonePepperArn] }));
+            // SecureStrings use the account's aws/ssm key; decrypt only via SSM.
+            role.addToPolicy(new iam.PolicyStatement({
+                actions: ['kms:Decrypt'],
+                resources: [this.formatArn({ service: 'kms', resource: 'alias', resourceName: 'aws/ssm' }), this.formatArn({ service: 'kms', resource: 'key', resourceName: '*' })],
+                conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } }
+            }));
             logGroup.grantWrite(role);
 
             const functionName = 'nalamdesk-booking-api';
@@ -165,7 +177,7 @@ export class BookingStack extends cdk.Stack {
                         BOOKING_CLINICS_TABLE: clinics.tableName,
                         BOOKING_SLOTS_TABLE: slots.tableName,
                         BOOKING_REQUESTS_TABLE: bookings.tableName,
-                        BOOKING_PHONE_PEPPER_SECRET: phonePepper.secretArn
+                        BOOKING_PHONE_PEPPER_PARAM: PHONE_PEPPER_PARAM
                     },
                     telemetryConfig: { loggingConfig: { logGroup: logGroup.logGroupName, applicationLogLevel: 'INFO', systemLogLevel: 'WARN' } }
                 }

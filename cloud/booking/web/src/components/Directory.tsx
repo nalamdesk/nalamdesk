@@ -33,7 +33,7 @@ export function Directory() {
     return (
         <>
             <section aria-labelledby="intro" className="pt-6 pb-8 sm:pt-12">
-                <h1 id="intro" className="max-w-[18ch] text-[2.5rem] leading-[1.08] font-medium tracking-tight sm:text-[3.25rem]">
+                <h1 id="intro" className="max-w-[18ch] text-display leading-[1.08] font-medium tracking-tight sm:text-display-lg">
                     Ask your clinic for a time.
                 </h1>
                 <p className="mt-4 max-w-[52ch] text-lg text-ink-soft">
@@ -86,7 +86,7 @@ export function Directory() {
                         {shown.map((clinic) => (
                             <li key={clinic.clinicId} className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="min-w-0">
-                                    <h2 className="text-[1.375rem] leading-snug font-semibold">{clinic.name}</h2>
+                                    <h2 className="text-title leading-snug font-semibold">{clinic.name}</h2>
                                     <p className="mt-0.5 text-ink-soft">{clinic.specialty} · {clinic.city}</p>
                                     <Presence online={clinic.online} />
                                 </div>

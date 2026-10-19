@@ -107,7 +107,7 @@ export function BookingDialog({ clinic, onClose }: { clinic: ClinicSummary; onCl
             <div className="flex h-full max-h-[inherit] flex-col">
                 <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
                     <div className="min-w-0">
-                        <h2 id={titleId} className="text-[1.5rem] leading-tight font-semibold">{clinic.name}</h2>
+                        <h2 id={titleId} className="text-headline leading-tight font-semibold">{clinic.name}</h2>
                         <p className="text-sm text-ink-soft">{clinic.specialty} · {clinic.city}</p>
                     </div>
                     <button type="button" onClick={close} className="btn -mr-2 -mt-1 px-3 text-ink-soft" aria-label="Close">
@@ -396,14 +396,14 @@ function SentStep({ clinic, choice, ref_, onDone }: { clinic: ClinicSummary; cho
     const statusPath = `/booking/${ref_}`;
     return (
         <div role="status">
-            <h3 className="text-[1.75rem] leading-tight font-semibold">Request sent</h3>
+            <h3 className="text-headline-lg leading-tight font-semibold">Request sent</h3>
             <p className="mt-2 text-ink-soft">
                 {clinic.name} will call you to confirm {choice && choice !== 'callback' ? slotSentence(choice.date, choice.time) : 'a time'}.
                 {!clinic.online && ' They are offline now, so the call may come once they open.'}
             </p>
             <div className="mt-6 rounded-[6px] border border-line bg-paper px-4 py-4">
                 <p className="text-sm text-muted">Your reference</p>
-                <p className="mt-1 text-[1.625rem] font-semibold tracking-[0.12em] tabular-nums">{formatReference(ref_)}</p>
+                <p className="mt-1 text-headline-lg font-semibold tracking-[0.12em] tabular-nums">{formatReference(ref_)}</p>
             </div>
             <p className="mt-4 text-[0.9375rem] text-ink-soft">
                 Keep it to <a href={statusPath} onClick={(e) => { onDone(); onLinkClick(statusPath)(e); }} className="font-semibold text-brand-deep underline underline-offset-4">check the request</a> later.

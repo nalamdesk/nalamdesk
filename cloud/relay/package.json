@@ -1,0 +1,27 @@
+{
+  "name": "@nalamdesk/abdm-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zero-knowledge ABDM relay: holds the vendor credentials, proxies signed desktop calls, seals gateway callbacks into the clinic mailbox.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/server.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.13",
+    "jose": "^6.2.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

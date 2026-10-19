@@ -77,3 +77,6 @@ skill-output/
 
 # Wrangler local state
 .wrangler/
+
+# CDK synth output
+cdk.out/

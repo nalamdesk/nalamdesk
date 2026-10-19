@@ -2,19 +2,22 @@
   "name": "@nalamdesk/abdm-relay",
   "version": "0.1.0",
   "private": true,
-  "description": "Zero-knowledge ABDM relay: holds the vendor credentials, proxies signed desktop calls, seals gateway callbacks into the clinic mailbox.",
+  "description": "Zero-knowledge ABDM relay (Hono app on a Lambda Web Function) and its CDK stack.",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "start": "node dist/server.js"
+    "bundle": "tsx -e \"import('./infra/bundle.ts').then((m) => m.bundleRelay())\"",
+    "start": "npm run bundle && node build/relay/index.js",
+    "synth": "cdk synth --quiet",
+    "deploy": "cdk deploy"
   },
   "license": "UNLICENSED",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1152.0",
     "@aws-sdk/client-ssm": "^3.1152.0",
     "@hono/node-server": "^2.1.5",
     "hono": "^4.13.13",
@@ -22,6 +25,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
+    "aws-cdk": "^2.1145.0",
+    "aws-cdk-lib": "^2.273.0",
+    "constructs": "^10.8.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }

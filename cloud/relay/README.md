@@ -25,18 +25,50 @@ Logs hold metadata only (route, path, facility, status, timing); see `src/log.ts
 AES-256-GCM, with `nalamdesk-mailbox-v1|<clinic ID>|<item type>` as associated data. The desktop's
 mailbox reader (#155) must match `open()` in the same file.
 
+## Infrastructure (`infra/`)
+
+`infra/relay-stack.ts` is a CDK stack in ap-south-1 that deploys everything the relay needs:
+
+| Resource | Notes |
+| --- | --- |
+| `AWS::Lambda::WebFunction`, `WebFunctionRevision`, `WebFunctionEndpoint` | Node 24, HomeRegion endpoint with `IamAuth`, `MaxEnvironments` 2, 64 concurrent requests per environment, 30-second timeout, 100 requests a second |
+| Code upload | `infra/bundle.ts` bundles `src/server.ts` to one `index.js`; it is uploaded to the Core code bucket and pinned by S3 version |
+| IAM execution role | Reads the two Parameter Store values (with `kms:Decrypt` only via SSM), queries the device registry indexes, writes its log group |
+| CloudWatch log group | `/aws/lambda/web/nalamdesk-abdm-relay-<stage>`, 30-day retention |
+| CloudFront distribution | On `abdm.<zone>` (production) or `abdm-sandbox.<zone>`, TLS 1.2+, no caching, origin access control that signs every request (`always-amz-auth`, so ABDM's own `Authorization` JWT still reaches the relay) |
+| `AWS::Lambda::ResourcePolicy` | Only that distribution may invoke the endpoint |
+| Route 53 A and AAAA records | Bridge domain to CloudFront |
+
+It reads the Core stack's names from Parameter Store (`/nalamdesk/<stage>/core/...`, see
+`cloud/core`). CloudFormation cannot create a SecureString, so the vendor credentials are
+created once by hand:
+
+```sh
+aws ssm put-parameter --region ap-south-1 --type String       --name /nalamdesk/sandbox/relay/abdm-client-id     --value <client id>
+aws ssm put-parameter --region ap-south-1 --type SecureString --name /nalamdesk/sandbox/relay/abdm-client-secret --value <secret>
+```
+
+Deploy `cloud/core` first, then:
+
+```sh
+npm run deploy -- -c zoneName=<zone> [-c stage=production] [-c gatewayIssuer=<iss>]
+```
+
+Then register the `BridgeUrl` output for the Client ID (#159) and smoke-test `/health`, since
+a revision can show Active while the app fails to start.
+
 ## What is not wired yet
 
-The relay depends on adapters owned by earlier iterations. They are interfaces in
-`src/ports.ts` and test doubles in `test/helpers.ts`; `src/server.ts` refuses to start
-until real ones are supplied.
+Until every adapter exists the deployed revision serves a 503 holding app, and `/health`
+names what is missing (`src/bootstrap.ts`). Interfaces are in `src/ports.ts`; test doubles
+in `test/helpers.ts`.
 
-| Port | Owner |
+| Port | Status |
 | --- | --- |
+| `VendorCredentials` | Done: `src/parameterStore.ts` |
+| `FacilityDirectory` | Done: `src/dynamoFacilities.ts`, against the Core devices table |
 | `DeviceAuthenticator` (signature, clock window, nonce, rate limits) | #154 |
-| `FacilityDirectory` (device registry, bridge links, data push tokens) | #153, #154 |
 | `Mailbox`, `Doorbell` (48-hour sealed mailbox, IoT Core) | #155 |
-| `VendorCredentials` | Done: `src/parameterStore.ts` reads two SSM Parameter Store parameters (SecureString for the secret). The Relay stack creates them after #153. |
 
 Still to confirm with NHA during sandbox registration (#152): the v3 certificate URL and
 issuer for callback JWTs, the ABHA host, and each allowlisted path.
@@ -45,12 +77,13 @@ issuer for callback JWTs, the ABHA host, and each allowlisted path.
 
 ```sh
 npm install
-npm test          # vitest
+npm test          # app, adapters and stack assertions
 npm run typecheck
-npm run build     # dist/ for the Web Function revision
+npm run synth -- -c zoneName=example.in
+npm start         # bundle and run locally on PORT or 127.0.0.1:8080
 ```
 
-Environment variables for `src/server.ts`: `ABDM_ENV` (`sandbox` or `production`),
-`ABDM_CLIENT_ID_PARAM` and `ABDM_CLIENT_SECRET_PARAM` (Parameter Store names),
-optional `ABDM_GATEWAY_BASE_URL`, `ABDM_ABHA_BASE_URL`, `ABDM_GATEWAY_CERTS_URL`,
-`ABDM_GATEWAY_ISSUER`, and `PORT`.
+Runtime environment variables (set by the stack): `ABDM_ENV` (`sandbox` or `production`),
+`ABDM_CLIENT_ID_PARAM`, `ABDM_CLIENT_SECRET_PARAM`, `DEVICES_TABLE`, optional
+`ABDM_GATEWAY_BASE_URL`, `ABDM_ABHA_BASE_URL`, `ABDM_GATEWAY_CERTS_URL`, `ABDM_GATEWAY_ISSUER`.
+The Web Function runtime supplies `AWS_LAMBDA_HTTP_ENDPOINT`, where the server listens.

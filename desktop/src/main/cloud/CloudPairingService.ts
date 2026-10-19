@@ -19,6 +19,8 @@ export const HFR_ID = /^IN\d{10}$/;
 const CODE = /^[0-9A-HJKMNP-TV-Z]{8}$/;
 /** The signing key is replaced after this long (the sealing key stays). */
 export const SIGNING_KEY_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+/** How long the relay keeps a pairing request open. */
+const REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface DoorbellIdentity {
     endpoint: string;
@@ -66,6 +68,8 @@ interface LoadedKeys {
     row: CloudDeviceRow;
     signing: crypto.KeyObject;
     sealing: crypto.KeyObject;
+    /** The confirmed signing key while a rotation waits for the relay. */
+    previous?: crypto.KeyObject;
 }
 
 const MESSAGES: Record<string, string> = {
@@ -110,13 +114,12 @@ export class CloudPairingService {
             label: row.label,
             keyFingerprint: keyFingerprint(row.signing_public)
         };
-        if (row.state === 'requested') {
-            if ((row.request_expires_at ?? 0) <= this.nowMs()) return { state: 'unpaired', configured, hfrId: row.hfr_id };
-            return { ...base, requestExpiresAt: row.request_expires_at ?? undefined };
-        }
+        // request_expires_at is kept on this computer's clock (see request()).
+        if (row.state === 'requested' && (row.request_expires_at ?? 0) <= this.nowMs()) return { state: 'unpaired', configured, hfrId: row.hfr_id };
         if (!this.keys()) {
             return { state: 'keys_unavailable', configured, hfrId: row.hfr_id, message: 'This computer cannot read its cloud keys (restored from another computer, or the system keyring changed). Pair it again.' };
         }
+        if (row.state === 'requested') return { ...base, requestExpiresAt: row.request_expires_at ?? undefined };
         return {
             ...base,
             deviceId: row.device_id ?? undefined,
@@ -130,11 +133,15 @@ export class CloudPairingService {
         return this.status().state === 'paired';
     }
 
-    /** For SignedCloudClient: the paired device's signing key. */
+    /**
+     * For SignedCloudClient: the paired device's signing key. While a
+     * rotation is unconfirmed this is still the old key, which the relay
+     * accepts until it registers the new one and for 10 minutes after.
+     */
     signingIdentity(): SigningIdentity | null {
         const keys = this.keys();
         if (!keys || keys.row.state !== 'paired' || !keys.row.device_id) return null;
-        return { deviceId: keys.row.device_id, hipId: keys.row.hfr_id, privateKey: keys.signing };
+        return { deviceId: keys.row.device_id, hipId: keys.row.hfr_id, privateKey: keys.previous ?? keys.signing };
     }
 
     /** For BookingInboxService: the X25519 key patients' browsers seal to. */
@@ -206,7 +213,10 @@ export class CloudPairingService {
             this.cache = {
                 row,
                 signing: unprotectPrivateKey(this.deps.keyStore, row.signing_private_protected, row.signing_public),
-                sealing: unprotectPrivateKey(this.deps.keyStore, row.sealing_private_protected, row.sealing_public)
+                sealing: unprotectPrivateKey(this.deps.keyStore, row.sealing_private_protected, row.sealing_public),
+                ...(row.previous_signing_public && row.previous_signing_private_protected
+                    ? { previous: unprotectPrivateKey(this.deps.keyStore, row.previous_signing_private_protected, row.previous_signing_public) }
+                    : {})
             };
             return this.cache;
         } catch {
@@ -231,7 +241,9 @@ export class CloudPairingService {
     /**
      * Sends a pairing request with fresh keys. A repeat for the same HFR ID
      * while the request is open reuses its keys, so the relay answers with
-     * the same request instead of `pending_exists`.
+     * the same request instead of `pending_exists`. The keys are saved
+     * before sending, so a request whose answer was lost is repeated with
+     * them; a refusal puts back what was there before.
      */
     async request(input: { hfrId: string; label: string }): Promise<PairingStatus> {
         const hfrId = String(input.hfrId || '').trim().toUpperCase();
@@ -259,16 +271,12 @@ export class CloudPairingService {
                 hfrId, signingPublicKey: signing.publicKey, sealingPublicKey: sealing.publicKey, label, appVersion: this.deps.appVersion, timestamp, signature
             });
         };
-        let response = await send();
-        if (this.deps.client.adjustClock(response)) response = await send();
-        if (response.status !== 202) throw failure(response);
-
         const now = this.nowMs();
-        this.save({
+        const requested = (requestId: string, expiresAt: number): CloudDeviceRow => ({
             state: 'requested',
             hfr_id: hfrId,
-            request_id: String(response.body?.requestId ?? ''),
-            request_expires_at: Number(response.body?.expiresAt ?? now),
+            request_id: requestId,
+            request_expires_at: expiresAt,
             device_id: null,
             clinic_id: null,
             data_push_url: null,
@@ -284,6 +292,24 @@ export class CloudPairingService {
             revoked_reason: null,
             updated_at: now
         });
+        if (!reuse) this.save(requested('', now + REQUEST_TTL_MS));
+
+        let response = await send();
+        if (this.deps.client.adjustClock(response)) response = await send();
+        if (response.status !== 202) {
+            if (!reuse) {
+                if (current) this.save(current);
+                else {
+                    this.deps.store.clearCloudDevice();
+                    this.cache = null;
+                }
+            }
+            throw failure(response);
+        }
+        // The relay's expiry is on its clock; keep it on this computer's, which may be off.
+        const expiresAt = Number(response.body?.expiresAt);
+        const localExpiry = Number.isFinite(expiresAt) ? expiresAt - (this.deps.client.now() - this.nowMs()) : now + REQUEST_TTL_MS;
+        this.save({ ...requested(String(response.body?.requestId ?? ''), localExpiry), updated_at: this.nowMs() });
         return this.changed();
     }
 

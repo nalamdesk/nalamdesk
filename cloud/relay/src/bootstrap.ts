@@ -1,6 +1,7 @@
 import { createDeviceAuthenticator, DynamoDeviceRegistry, DynamoNonceStore, IotDoorbell } from '@nalamdesk/cloud-shared';
 import { Hono } from 'hono';
 import { createRelayApp } from './app.js';
+import { DynamoCertificateLedger } from './certificateLedger.js';
 import { DynamoFacilityDirectory } from './dynamoFacilities.js';
 import { resolveEnvironment } from './environments.js';
 import { createGatewayJwtVerifier } from './gatewayJwt.js';
@@ -31,7 +32,7 @@ const OWNERS: Record<keyof Adapters, string> = {
     facilities: 'facility directory (DEVICES_TABLE)',
     mailbox: 'mailbox (MAILBOX_TABLE, MAILBOX_BUCKET)',
     doorbell: 'doorbell (IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX)',
-    inbox: 'inbox and IoT certificates (MAILBOX_TABLE, MAILBOX_BUCKET, IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX, IOT_POLICY_NAME)',
+    inbox: 'inbox and IoT certificates (MAILBOX_TABLE, MAILBOX_BUCKET, IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX, IOT_POLICY_NAME, DEVICES_TABLE)',
     credentials: 'vendor credentials (ABDM_CLIENT_ID_PARAM, ABDM_CLIENT_SECRET_PARAM)',
     pairing: 'pairing (PAIRING_TABLE, CLINIC_IDS_TABLE, PAIRING_PEPPER_PARAM, BRIDGE_URL, OPS_USER_POOL_ID, OPS_CLIENT_ID, OPS_AUTH_DOMAIN)'
 };
@@ -81,10 +82,11 @@ export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
     const { MAILBOX_TABLE, MAILBOX_BUCKET, IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX, IOT_POLICY_NAME } = env;
     const mailbox = MAILBOX_TABLE && MAILBOX_BUCKET ? new RelayMailbox({ table: MAILBOX_TABLE, bucket: MAILBOX_BUCKET }) : undefined;
     const doorbellReady = !!(IOT_DATA_ENDPOINT && DOORBELL_TOPIC_PREFIX);
-    const inbox: InboxRouteDeps | undefined = mailbox && doorbellReady && IOT_POLICY_NAME
+    const inbox: InboxRouteDeps | undefined = mailbox && doorbellReady && IOT_POLICY_NAME && env.DEVICES_TABLE
         ? {
             inbox: mailbox,
-            certificates: new IotDeviceCertificates(IOT_POLICY_NAME),
+            // Certificates are recorded on the device rows, so a revocation finds them all.
+            certificates: new IotDeviceCertificates(IOT_POLICY_NAME, new DynamoCertificateLedger(env.DEVICES_TABLE)),
             doorbell: { endpoint: IOT_DATA_ENDPOINT as string, topicPrefix: DOORBELL_TOPIC_PREFIX as string }
         }
         : undefined;

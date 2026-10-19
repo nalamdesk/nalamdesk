@@ -51,6 +51,17 @@ describe('DynamoMailbox', () => {
         expect((dynamo.sent[0] as QueryCommand).input).toMatchObject({ ConsistentRead: true, ExpressionAttributeValues: { ':c': { S: 'cln_1' } } });
     });
 
+    it('starts the listing at the 48-hour cut, so expired rows cannot fill the page', async () => {
+        const dynamo = client(() => ({ Items: [] }));
+        const mailbox = new DynamoMailbox({ table: 'mail', bucket: 'b', dynamo: dynamo as never, s3: client() as never, nowMs: () => NOW });
+        await mailbox.list('cln_1');
+        const query = (dynamo.sent[0] as QueryCommand).input;
+        expect(query.KeyConditionExpression).toBe('clinicId = :c AND itemId >= :from');
+        const from = query.ExpressionAttributeValues![':from']!.S as string;
+        expect(newMailboxItemId(NOW - MAILBOX_LIMITS.ttlMs - 1) < from).toBe(true);
+        expect(newMailboxItemId(NOW - MAILBOX_LIMITS.ttlMs + 1) > from).toBe(true);
+    });
+
     it('acknowledges only well-formed IDs, scoped to the clinic, and drops their S3 objects', async () => {
         const dynamo = client();
         const s3 = client();
@@ -60,6 +71,31 @@ describe('DynamoMailbox', () => {
         const batch = (dynamo.sent[0] as BatchWriteItemCommand).input.RequestItems!.mail!;
         expect(batch).toEqual([{ DeleteRequest: { Key: { clinicId: { S: 'cln_1' }, itemId: { S: id } } } }]);
         expect((s3.sent[0] as DeleteObjectsCommand).input.Delete!.Objects).toEqual([{ Key: `mailbox/cln_1/${id}` }]);
+    });
+
+    it('retries unprocessed deletes and keeps the S3 objects when rows remain', async () => {
+        let calls = 0;
+        const stuck = client((command) => {
+            if (!(command instanceof BatchWriteItemCommand)) return {};
+            calls++;
+            return { UnprocessedItems: command.input.RequestItems };
+        });
+        const s3 = client();
+        const mailbox = new DynamoMailbox({ table: 'mail', bucket: 'b', dynamo: stuck as never, s3: s3 as never });
+        await expect(mailbox.ack('cln_1', [newMailboxItemId(NOW)])).rejects.toThrow('mailbox_delete_incomplete');
+        expect(calls).toBe(5);
+        expect(s3.sent).toHaveLength(0);
+
+        let first = true;
+        const flaky = client((command) => {
+            if (!(command instanceof BatchWriteItemCommand) || !first) return {};
+            first = false;
+            return { UnprocessedItems: command.input.RequestItems };
+        });
+        const ok = new DynamoMailbox({ table: 'mail', bucket: 'b', dynamo: flaky as never, s3: s3 as never });
+        await ok.ack('cln_1', [newMailboxItemId(NOW)]);
+        expect(flaky.sent.filter((c) => c instanceof BatchWriteItemCommand)).toHaveLength(2);
+        expect(s3.sent).toHaveLength(1);
     });
 
     it('purges a clinic\'s mail stored before a replacement, and keeps what came after', async () => {

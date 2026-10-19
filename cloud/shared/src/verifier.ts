@@ -35,7 +35,7 @@ export interface DeviceRecord {
 }
 
 export interface DeviceRegistry {
-    /** `fresh` skips any cache, for a retry after a key rotation. */
+    /** `fresh` skips any cache and reads consistently: a retry after a key rotation, or a status check. */
     get(deviceId: string, options?: { fresh?: boolean }): Promise<DeviceRecord | null>;
 }
 

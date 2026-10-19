@@ -245,13 +245,17 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
     this.isRefreshing = true;
     try {
-      // Trigger immediate sync from server
-      await this.cloud.syncNow();
-      // Then load from local DB
+      // Fetch from the cloud first; requests already saved here still show when that fails.
+      try {
+        await this.cloud.syncNow();
+      } catch (e) {
+        console.error('Failed to sync requests', e);
+        this.toastService?.warning('Could not reach NalamDesk Cloud. Showing the requests already on this computer.', 'Not refreshed');
+      }
       const allRequests = await this.cloud.getAppointmentRequests();
       this.requests = (allRequests || []).filter((r: any) => r.status === 'pending');
     } catch (e) {
-      console.error('Failed to sync requests', e);
+      console.error('Failed to load requests', e);
     } finally {
       // ensure distinct animation time
       setTimeout(() => this.isRefreshing = false, 500);

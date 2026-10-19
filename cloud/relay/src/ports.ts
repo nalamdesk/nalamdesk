@@ -69,10 +69,26 @@ export interface Inbox {
 
 /** IoT Core client certificates for the doorbell (#155): one per device. */
 export interface DeviceCertificates {
-    /** Issues a certificate for the CSR and revokes any earlier one for the device. */
+    /**
+     * Issues a certificate for the CSR and revokes any earlier one for the
+     * device; refuses with `device_revoked` once the device is revoked.
+     */
     issue(device: { deviceId: string; clinicId: string }, csrPem: string): Promise<{ certificatePem: string }>;
     /** Revokes and deletes the device's certificates and its IoT thing. */
     revoke(deviceId: string): Promise<void>;
+}
+
+/**
+ * The certificates issued to each device, kept on its row (#155) so a
+ * revocation finds every one even while an issue is in flight.
+ */
+export interface CertificateLedger {
+    /** Records the certificate if the device is still active: the device's recorded set, or null once it is revoked. */
+    record(deviceId: string, certificateArn: string): Promise<string[] | null>;
+    /** The recorded certificates, read consistently. */
+    recorded(deviceId: string): Promise<string[]>;
+    /** Drops certificates that have been retired. */
+    forget(deviceId: string, certificateArns: string[]): Promise<void>;
 }
 
 /** Where a desktop connects for doorbell rings. */

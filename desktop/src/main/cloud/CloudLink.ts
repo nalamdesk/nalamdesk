@@ -8,7 +8,8 @@ import { Doorbell, type DoorbellDeps, type DoorbellState } from './Doorbell';
 import { MailboxReader, type ListedItem, type MailboxTransport } from './MailboxReader';
 import { SignedCloudClient, type Audience } from './SignedCloudClient';
 
-const ROTATION_CHECK_MS = 24 * 60 * 60 * 1000;
+// Hourly: cheap when nothing is due, and it retries an unfinished rotation soon.
+const ROTATION_CHECK_MS = 60 * 60 * 1000;
 // A sealed envelope is base64 JSON around base64 ciphertext, so the relay's
 // 5 MiB data push grows to about 8.9 MiB.
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;

@@ -32,12 +32,18 @@ async function relayWithPairing(options: { ipLimit?: number } = {}) {
     const limiter = new MemoryRateLimiter(options.ipLimit ?? 100);
     const codes: string[] = [];
     const revoked: string[] = [];
+    const cleanup = { failing: false };
     const service = new PairingService({
         store,
         ipLimiter: limiter,
         pepper: async () => Buffer.alloc(32, 9),
         bridgeUrl: 'https://abdm-sandbox.example.in',
-        lifecycle: { revoked: async (device) => { revoked.push(device.deviceId); } },
+        lifecycle: {
+            revoked: async (device) => {
+                if (cleanup.failing) throw new Error('iot down');
+                revoked.push(device.deviceId);
+            }
+        },
         nowMs: () => now,
         generateCode: () => { const c = ['K7QM3XRA', 'P2V9WN4D', 'H8JT6CZ1'][codes.length % 3]!; codes.push(c); return c; }
     });
@@ -107,7 +113,7 @@ async function relayWithPairing(options: { ipLimit?: number } = {}) {
     };
 
     return {
-        h, store, limiter, codes, revoked, opsToken, post, requestPairing, activate, ops, approve, pair, signedCall,
+        h, store, limiter, codes, revoked, cleanup, opsToken, post, requestPairing, activate, ops, approve, pair, signedCall,
         advance: (ms: number) => { now += ms; },
         now: () => now
     };
@@ -298,6 +304,37 @@ describe('ops console', () => {
         expect((await r.ops('POST', `/devices/${deviceId}/revoke`)).status).toBe(409);
         r.advance(31_000);
         expect((await r.signedCall(pc, deviceId)).status).toBe(401);
+    });
+
+    it('keeps a failed certificate cleanup pending and retries it', async () => {
+        const r = await relayWithPairing();
+        const { deviceId } = await r.pair(install());
+        r.cleanup.failing = true;
+        expect((await r.ops('POST', `/devices/${deviceId}/revoke`)).status).toBe(204);
+        expect(r.store.devices.get(deviceId)).toMatchObject({ status: 'revoked', cleanupPending: true });
+        expect(r.revoked).toEqual([]);
+
+        // Still failing: listing and revoking again try, and it stays pending.
+        await r.ops('GET', `/devices?hipId=${HFR}`);
+        expect((await r.ops('POST', `/devices/${deviceId}/revoke`)).status).toBe(503);
+        expect(r.store.devices.get(deviceId)!.cleanupPending).toBe(true);
+
+        r.cleanup.failing = false;
+        expect((await r.ops('POST', `/devices/${deviceId}/revoke`)).status).toBe(204);
+        expect(r.revoked).toEqual([deviceId]);
+        expect(r.store.devices.get(deviceId)!.cleanupPending).toBeUndefined();
+        expect((await r.ops('POST', `/devices/${deviceId}/revoke`)).status).toBe(409);
+    });
+
+    it('retries a pending cleanup when the devices are listed', async () => {
+        const r = await relayWithPairing();
+        const { deviceId } = await r.pair(install());
+        r.cleanup.failing = true;
+        await r.ops('POST', `/devices/${deviceId}/revoke`);
+        r.cleanup.failing = false;
+        const list = await (await r.ops('GET', `/devices?hipId=${HFR}`)).json() as { devices: Record<string, unknown>[] };
+        expect(r.revoked).toEqual([deviceId]);
+        expect(list.devices[0]).not.toHaveProperty('cleanupPending');
     });
 
     it('serves the console page with a strict CSP', async () => {

@@ -234,6 +234,43 @@ describe('pairing this computer', () => {
         expect(db.raw()!.signing_public).toBe(first);
     });
 
+    it('repeats a request whose answer was lost with the same keys', async () => {
+        const { pairing, cloud, db } = setup();
+        const real = cloud.fetchFn.getMockImplementation()!;
+        cloud.fetchFn.mockImplementationOnce(async (url: string, init: any) => {
+            await real(url, init); // the relay records it, then the answer is lost
+            throw new TypeError('fetch failed');
+        });
+        await expect(pairing.request({ hfrId: HFR, label: 'PC' })).rejects.toThrow('fetch failed');
+        expect(db.raw()!.signing_public).toBe(cloud.state.request!.signingPublicKey);
+        expect(await pairing.request({ hfrId: HFR, label: 'PC' })).toMatchObject({ state: 'requested' });
+        expect(db.raw()!.request_id).toBe('pr_abc');
+    });
+
+    it('puts back the earlier state when the cloud refuses a request', async () => {
+        const { pairing, cloud, db } = setup();
+        cloud.state.request = { hfrId: HFR, signingPublicKey: 'someone-else', sealingPublicKey: 'x', attempts: 0 };
+        await expect(pairing.request({ hfrId: HFR, label: 'PC' })).rejects.toMatchObject({ code: 'pending_exists' });
+        expect(db.raw()).toBeNull();
+    });
+
+    it('keeps a request open when the computer clock is a day ahead', async () => {
+        const { pairing, cloud, clock } = setup();
+        cloud.state.serverOffset = -(2 * 86_400_000);
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        const status = pairing.status();
+        expect(status.state).toBe('requested');
+        expect(status.requestExpiresAt).toBe(clock.now + 86_400_000);
+    });
+
+    it('offers to start over when an open request\'s keys cannot be read', async () => {
+        const { pairing, keys } = setup();
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        keys.mask = 0x11;
+        (pairing as any).cache = null;
+        expect(pairing.status().state).toBe('keys_unavailable');
+    });
+
     it('refuses a malformed HFR ID or code before calling the cloud', async () => {
         const { pairing, cloud } = setup();
         await expect(pairing.request({ hfrId: 'HIP-1', label: 'PC' })).rejects.toMatchObject({ code: 'bad_hfr_id' });
@@ -323,6 +360,23 @@ describe('signing key rotation', () => {
         expect(cloud.state.device!.key).toBe(after.signing_public);
         expect(after.previous_signing_public).toBeNull();
         expect(pairing.signingIdentity()).not.toBeNull();
+    });
+
+    it('keeps signing with the confirmed key until the relay takes the new one', async () => {
+        const { pairing, clock, cloud, db, link } = await paired();
+        const confirmed = db.raw()!.signing_public;
+        clock.now += SIGNING_KEY_MAX_AGE_MS + 1;
+        const real = cloud.fetchFn.getMockImplementation()!;
+        cloud.fetchFn.mockImplementationOnce(async () => { throw new TypeError('fetch failed'); });
+        await expect(pairing.rotateSigningKeyIfDue()).rejects.toThrow('fetch failed');
+        expect(db.raw()!.previous_signing_public).toBe(confirmed);
+        // Ordinary calls still work with the key the relay knows.
+        cloud.fetchFn.mockImplementation(real);
+        await link.booking.enableListing({ name: 'Arogya', city: 'Chennai' });
+        expect(await pairing.rotateSigningKeyIfDue()).toBe(true);
+        expect(cloud.state.device!.key).toBe(db.raw()!.signing_public);
+        await link.booking.enableListing({ name: 'Arogya', city: 'Chennai' });
+        link.stop();
     });
 
     it('finishes a rotation that was cut off after the relay accepted it', async () => {

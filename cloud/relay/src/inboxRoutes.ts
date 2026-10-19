@@ -91,6 +91,8 @@ export function registerInboxRoutes(app: Hono, deps: InboxRouteDeps, ctx: {
             return refuse(c, 400, 'bad_csr');
         }
         try {
+            // A revocation landing while this is in flight refuses it with
+            // device_revoked, or retires the certificate it issues.
             const { certificatePem } = await deps.certificates.issue({ deviceId: r.auth.deviceId, clinicId: r.auth.clinicId }, csr);
             r.done({ hipId: r.auth.hipId, status: 200 });
             return c.json({
@@ -101,8 +103,9 @@ export function registerInboxRoutes(app: Hono, deps: InboxRouteDeps, ctx: {
             });
         } catch (error) {
             if (error instanceof CertificateError) {
-                r.done({ hipId: r.auth.hipId, status: 400, code: error.code });
-                return refuse(c, 400, error.code);
+                const status = error.code === 'device_revoked' ? 401 : 400;
+                r.done({ hipId: r.auth.hipId, status, code: error.code });
+                return refuse(c, status, error.code);
             }
             r.done({ hipId: r.auth.hipId, status: 503, code: 'iot_unavailable' });
             return refuse(c, 503, 'iot_unavailable');

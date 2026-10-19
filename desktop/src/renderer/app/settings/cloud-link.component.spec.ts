@@ -21,7 +21,8 @@ describe('CloudLinkComponent', () => {
             forgetPairing: vi.fn(async () => status()),
             enableListing: vi.fn(async () => status({ state: 'paired', listingEnabled: true })),
             disableListing: vi.fn(async () => status({ state: 'paired' })),
-            onPairingChanged: vi.fn(() => () => undefined)
+            onPairingChanged: vi.fn(() => () => undefined),
+            syncNow: vi.fn(async () => ({ success: true, paired: true, saved: 0 }))
         };
         component = new CloudLinkComponent(cloud as CloudService, { run: (fn: () => void) => fn() } as any);
     });
@@ -79,6 +80,27 @@ describe('CloudLinkComponent', () => {
         const text = fixture.nativeElement.textContent as string;
         expect(text).toContain('ABCD-EFGH');
         expect(text).toContain('Pairing code');
+    });
+
+    it('says whether messages arrive live and checks the mailbox on request', async () => {
+        TestBed.configureTestingModule({ imports: [CloudLinkComponent], providers: [{ provide: CloudService, useValue: cloud }] });
+        const paired = { state: 'paired' as const, hfrId: 'IN2710000123', label: 'PC', pairedAt: 1 };
+        cloud.getStatus.mockResolvedValue(status({ ...paired, mailbox: { doorbell: 'connecting', lastCheckedAt: null } }));
+        const fixture = TestBed.createComponent(CloudLinkComponent);
+        await fixture.componentInstance.ngOnInit();
+        fixture.detectChanges();
+        expect(fixture.nativeElement.textContent).toContain('every 30 minutes');
+
+        cloud.getStatus.mockResolvedValue(status({ ...paired, mailbox: { doorbell: 'live', lastCheckedAt: Date.now() } }));
+        const button = [...fixture.nativeElement.querySelectorAll('button')].find((b: HTMLButtonElement) => b.textContent?.includes('Check now'));
+        button.click();
+        await vi.waitFor(() => expect(cloud.syncNow).toHaveBeenCalled());
+        await fixture.whenStable();
+        await vi.waitFor(() => {
+            fixture.detectChanges();
+            expect(fixture.nativeElement.textContent).toContain('arrive as they are sent');
+        });
+        expect(fixture.nativeElement.textContent).toContain('Last checked');
     });
 
     it('tells non-admins they cannot change pairing', async () => {

@@ -15,6 +15,8 @@ declare global {
         revokedReason?: string;
         keyFingerprint?: string;
         message?: string;
+        /** Mailbox and doorbell (#155), while paired. */
+        mailbox?: { doorbell: 'off' | 'connecting' | 'live'; lastCheckedAt: number | null };
     }
 
     interface Window {

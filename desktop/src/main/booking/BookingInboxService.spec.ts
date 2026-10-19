@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { BookingInboxService, BookingError, openSealed, parseBookingPayload, type CloudResponse, type MailboxEntry } from './BookingInboxService';
+import { openSealed } from '../cloud/mailboxSeal';
+import { BookingInboxService, BookingError, parseBookingPayload, type CloudResponse } from './BookingInboxService';
 
 vi.mock('electron-log', () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
@@ -28,8 +29,6 @@ function seal(plaintext: Buffer, recipientRaw: string, clinicId: string, type: s
 function setup() {
     const pair = crypto.generateKeyPairSync('x25519');
     const publicRaw = pair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
-    const inbox: MailboxEntry[] = [];
-    const acked: string[] = [];
     const sent: { method: string; path: string; body?: unknown }[] = [];
     let respond: (method: string, path: string) => CloudResponse = () => ({ status: 200, body: {} });
     const saved: any[] = [];
@@ -41,8 +40,6 @@ function setup() {
                 sent.push({ method, path, body });
                 return respond(method, path);
             },
-            fetchInbox: async () => inbox.filter((i) => !acked.includes(i.id)),
-            ack: async (ids) => { acked.push(...ids); }
         },
         key: { clinicId: () => CLINIC, publicKeyRaw: () => publicRaw, privateKey: () => pair.privateKey },
         store: {
@@ -58,55 +55,37 @@ function setup() {
         name: 'Asha  Raman', phone: '9876543210', reason: 'Fever', sentAt: '2026-10-19T06:00:00Z', ...overrides
     })), publicRaw, clinicId, 'booking-request');
     return {
-        service, inbox, acked, sent, saved, statuses, booking, publicRaw, pair,
+        service, sent, saved, statuses, booking, publicRaw, pair,
         respond: (fn: typeof respond) => { respond = fn; },
         failSaves: () => { saveFails = true; }
     };
 }
 
 describe('BookingInboxService', () => {
-    it('opens booking requests, saves them under their reference and acknowledges them', async () => {
+    it('opens a booking request and saves it under its reference', () => {
         const h = setup();
-        h.inbox.push({ id: 'm1', type: 'booking-request', sealed: h.booking() });
-        h.inbox.push({ id: 'm2', type: 'abdm-callback', sealed: 'not-ours' });
-        expect(await h.service.sync()).toBe(1);
+        expect(h.service.handle({ id: 'm1', type: 'booking-request', sealed: h.booking() })).toBe('saved');
         expect(h.saved).toEqual([{ id: REF, patient_name: 'Asha Raman', phone: '9876543210', date: '2026-10-20', time: '10:00', reason: 'Fever' }]);
-        // ABDM items are left for their own reader.
-        expect(h.acked).toEqual(['m1']);
     });
 
-    it('saves call-back requests with no slot', async () => {
+    it('saves call-back requests with no slot', () => {
         const h = setup();
-        h.inbox.push({ id: 'm1', type: 'booking-request', sealed: h.booking({ slotId: null, slot: null }) });
-        await h.service.sync();
+        h.service.handle({ id: 'm1', type: 'booking-request', sealed: h.booking({ slotId: null, slot: null }) });
         expect(h.saved[0]).toMatchObject({ id: REF, date: null, time: null });
     });
 
-    it('drops items that can never be opened or are for another clinic', async () => {
+    it('drops items that can never be opened or are for another clinic', () => {
         const h = setup();
-        h.inbox.push({ id: 'm1', type: 'booking-request', sealed: h.booking({}, 'clinic-2') });
-        h.inbox.push({ id: 'm2', type: 'booking-request', sealed: h.booking({ clinicId: 'clinic-2' }) });
-        h.inbox.push({ id: 'm3', type: 'booking-request', sealed: 'garbage' });
-        expect(await h.service.sync()).toBe(0);
+        for (const sealed of [h.booking({}, 'clinic-2'), h.booking({ clinicId: 'clinic-2' }), 'garbage']) {
+            expect(h.service.handle({ id: 'm1', type: 'booking-request', sealed })).toBe('dropped');
+        }
         expect(h.saved).toEqual([]);
-        expect(h.acked.sort()).toEqual(['m1', 'm2', 'm3']);
     });
 
-    it('keeps an item in the mailbox when saving fails, so the next fetch retries', async () => {
+    it('leaves an item in the mailbox when saving fails, so the next fetch retries', () => {
         const h = setup();
         h.failSaves();
-        h.inbox.push({ id: 'm1', type: 'booking-request', sealed: h.booking() });
-        expect(await h.service.sync()).toBe(0);
-        expect(h.acked).toEqual([]);
-    });
-
-    it('folds a doorbell that rings mid-fetch into one more pass', async () => {
-        const h = setup();
-        h.inbox.push({ id: 'm1', type: 'booking-request', sealed: h.booking() });
-        const first = h.service.sync();
-        h.inbox.push({ id: 'm2', type: 'booking-request', sealed: h.booking({ ref: 'ABCDEFGHJKMN' }) });
-        h.service.onDoorbell();
-        expect(await first).toBe(2);
+        expect(h.service.handle({ id: 'm1', type: 'booking-request', sealed: h.booking() })).toBe('retry');
     });
 
     it('lists the clinic with its sealing key and publishes slots', async () => {

@@ -1,5 +1,6 @@
 import { MIGRATIONS } from '../schema/migrations';
 import type { CloudDeviceRow } from '../cloud/DeviceIdentity';
+import type { AbdmInboxRow } from '../cloud/AbdmInbox';
 import * as catalog from '../catalog/catalogStore';
 import { createHash } from 'node:crypto';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
@@ -826,7 +827,8 @@ export class DatabaseService {
             'state', 'hfr_id', 'request_id', 'request_expires_at', 'device_id', 'clinic_id', 'data_push_url', 'label',
             'signing_public', 'signing_private_protected', 'signing_created_at', 'previous_signing_public',
             'previous_signing_private_protected', 'sealing_public', 'sealing_private_protected', 'paired_at',
-            'revoked_reason', 'updated_at'
+            'revoked_reason', 'updated_at', 'iot_private_protected', 'iot_public', 'iot_certificate_pem', 'iot_endpoint',
+            'iot_topic', 'iot_client_id'
         ] as const;
         const params: Record<string, unknown> = { id: 1 };
         for (const column of columns) params[column] = row[column] ?? null;
@@ -836,6 +838,12 @@ export class DatabaseService {
 
     clearCloudDevice() {
         this.db.prepare('DELETE FROM cloud_device').run();
+    }
+
+    // ABDM callbacks and data pushes opened from the cloud mailbox (#155).
+    saveAbdmInboxItem(row: AbdmInboxRow) {
+        this.db.prepare(`INSERT OR IGNORE INTO abdm_inbox(id, type, path, request_id, received_at, payload, created_at)
+            VALUES(@id, @type, @path, @request_id, @received_at, @payload, @created_at)`).run({ ...row, created_at: Date.now() });
     }
 
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL AND active != 0').get().count;

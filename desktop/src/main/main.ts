@@ -195,18 +195,19 @@ const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
 const provisioningService = new ProvisioningService(securityService, databaseService);
 const googleDriveService = new GoogleDriveService();
-// NalamDesk Cloud (#154): pairing, signed requests and the booking inbox.
+// NalamDesk Cloud (#154, #155): pairing, signed requests, the mailbox and its doorbell.
 const stampedIdentity = readBuildIdentityFile(buildIdentityPath(app.getAppPath()));
 const notifyRenderer = (channel: string, payload: unknown) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 };
-const cloudLink = new CloudLink({
+const cloudLink: CloudLink = new CloudLink({
     store: databaseService,
     keyStore: new ElectronSafeStorageDeviceKeyStore(),
     appVersion: app.getVersion(),
     baseUrl: (audience) => getCloudServiceUrl(audience, stampedIdentity),
     onNewRequests: (count) => notifyRenderer('cloud:newRequests', { count }),
-    onPairingChange: (status) => notifyRenderer('cloud:pairingChanged', status)
+    onPairingChange: (status) => notifyRenderer('cloud:pairingChanged', status),
+    onMailboxChange: () => notifyRenderer('cloud:pairingChanged', cloudStatus())
 });
 
 // Determine Static Path for ApiServer
@@ -1557,10 +1558,13 @@ const requireAdminUser = () => {
 const requirePaired = () => {
     if (!cloudLink.pairing.isPaired()) throw new Error('This computer is not paired with NalamDesk Cloud.');
 };
-const cloudStatus = () => ({
-    ...cloudLink.pairing.status(),
-    listingEnabled: !!databaseService.getSettings()?.cloud_enabled
-});
+function cloudStatus() {
+    return {
+        ...cloudLink.pairing.status(),
+        listingEnabled: !!databaseService.getSettings()?.cloud_enabled,
+        mailbox: cloudLink.mailboxStatus()
+    };
+}
 ipcMain.handle('cloud:getStatus', () => {
     requireUser();
     return cloudStatus();
@@ -1611,7 +1615,7 @@ ipcMain.handle('cloud:publishSlots', async (_, slots, dates) => {
 ipcMain.handle('cloud:syncNow', async () => {
     requireUser();
     if (!cloudLink.pairing.isPaired()) return { success: false, paired: false, saved: 0 };
-    const saved = await cloudLink.booking.sync();
+    const saved = await cloudLink.checkMailbox();
     return { success: true, paired: true, saved };
 });
 ipcMain.handle('cloud:getPublishedSlots', async (_, date) => {

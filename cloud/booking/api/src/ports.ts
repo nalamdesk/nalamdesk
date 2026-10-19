@@ -1,0 +1,132 @@
+// The booking API's collaborators. The stores are this stack's own DynamoDB
+// tables (src/dynamo.ts, with in-memory twins in src/memory.ts). The rest are
+// owned by earlier iterations of the cloud plan and are injected here, so the
+// booking logic can ship and be tested before those land:
+//   DeviceAuthenticator -> #154 (pairing and signed requests)
+//   Mailbox, Doorbell   -> #155 (48-hour sealed mailbox, IoT Core doorbell)
+// The shapes match cloud/relay/src/ports.ts so both apps share one adapter
+// once #153 moves them into a common package.
+
+export interface DesktopRequest {
+    method: string;
+    /** Path as the desktop signed it, without the query string. */
+    path: string;
+    headers: Headers;
+    body: Uint8Array;
+}
+
+export type DeviceAuthResult =
+    | { ok: true; deviceId: string; clinicId: string; hipId: string }
+    | { ok: false; status: number; code: string; serverTimeMs?: number };
+
+/** Verifies the X-ND-* signature headers, timestamp window, nonce replay and device status. */
+export interface DeviceAuthenticator {
+    authenticate(request: DesktopRequest): Promise<DeviceAuthResult>;
+}
+
+export type MailboxItemType = 'abdm-callback' | 'abdm-data-push' | 'booking-request';
+
+export interface MailboxItem {
+    clinicId: string;
+    type: MailboxItemType;
+    /** Sealed envelope; the cloud cannot open it. */
+    sealed: string;
+}
+
+export interface Mailbox {
+    /** Stores a sealed item for up to 48 hours; resolves with its item ID. */
+    put(item: MailboxItem): Promise<string>;
+}
+
+export interface Doorbell {
+    /** Publishes an empty "you have mail" message to the clinic's topic. */
+    ring(clinicId: string): Promise<void>;
+}
+
+// ---- This stack's own tables ----
+
+export interface ClinicListing {
+    name: string;
+    city: string;
+    specialty: string;
+    /** Clinic's X25519 sealing key, raw 32 bytes, base64. */
+    sealingPublicKey: string;
+}
+
+export interface Clinic extends ClinicListing {
+    clinicId: string;
+    listed: boolean;
+    /** Set from IoT Core connection events once #155 lands. */
+    online: boolean;
+    /** Last signed request from the clinic's desktop, epoch ms. */
+    lastSeenAt: number;
+}
+
+export interface ClinicStore {
+    get(clinicId: string): Promise<Clinic | null>;
+    /** Every listed clinic. The directory is small, so filtering happens in the app. */
+    listListed(): Promise<Clinic[]>;
+    upsertListing(clinicId: string, listing: ClinicListing, nowMs: number): Promise<void>;
+    unlist(clinicId: string, nowMs: number): Promise<void>;
+    touch(clinicId: string, nowMs: number): Promise<void>;
+    setPresence(clinicId: string, online: boolean, atMs: number): Promise<void>;
+}
+
+export type SlotState = 'available' | 'held' | 'booked';
+
+export interface Slot {
+    clinicId: string;
+    /** `YYYY-MM-DDTHH:MM`, derived from date and time, so a republish keeps holds. */
+    slotId: string;
+    date: string;
+    time: string;
+    state: SlotState;
+    /** Booking reference holding or owning the slot. */
+    ref?: string;
+    /** A hold past this time reads as available again. */
+    heldUntil?: number;
+}
+
+export interface SlotStore {
+    get(clinicId: string, slotId: string): Promise<Slot | null>;
+    listBetween(clinicId: string, fromDate: string, toDate: string): Promise<Slot[]>;
+    /**
+     * Replaces the open slots on the given dates. Held and booked slots are
+     * kept even when they are missing from the new list.
+     */
+    publish(clinicId: string, dates: string[], slots: { date: string; time: string }[], nowMs: number): Promise<void>;
+    /**
+     * Conditional write: succeeds only if the slot is available or its hold
+     * has lapsed. Exactly one of two concurrent holds wins.
+     */
+    hold(clinicId: string, slotId: string, ref: string, untilMs: number, nowMs: number): Promise<boolean>;
+    /** Held by `ref` -> booked. */
+    book(clinicId: string, slotId: string, ref: string): Promise<boolean>;
+    /** Held by `ref` -> available. */
+    release(clinicId: string, slotId: string, ref: string): Promise<boolean>;
+}
+
+export type BookingStatus = 'requested' | 'accepted' | 'declined';
+
+export interface Booking {
+    ref: string;
+    clinicId: string;
+    slotId: string | null;
+    status: BookingStatus;
+    /** HMAC of the browser's phone digest under a server pepper; never the number. Dropped once decided. */
+    phoneKey?: string;
+    createdAt: number;
+    /** Epoch ms; the record reads as gone afterwards and DynamoDB TTL removes it. */
+    expiresAt: number;
+}
+
+export interface BookingStore {
+    /** Conditional create; false if the reference is already taken. */
+    create(booking: Booking): Promise<boolean>;
+    get(ref: string): Promise<Booking | null>;
+    delete(ref: string): Promise<void>;
+    /** Requests still waiting for this phone at this clinic. */
+    countOpen(clinicId: string, phoneKey: string, nowMs: number): Promise<number>;
+    /** requested -> accepted/declined; false if it was already decided. */
+    decide(ref: string, status: Exclude<BookingStatus, 'requested'>): Promise<boolean>;
+}

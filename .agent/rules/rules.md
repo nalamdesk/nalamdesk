@@ -18,17 +18,11 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 
 ### ☁️ Cloud Platform
 - **Location**: `cloud/`
-- **Host**: AWS Lightsail (`ap-south-1`) + S3 + CloudFront.
+- **Host**: AWS `ap-south-1`, CDK, Lambda Web Functions behind CloudFront. Zero-knowledge: clinic data stays on the desktop.
 - **Logic**:
-  - `cloud/api`: Stateless Fastify API for syncing data between doctor's desktop and remote devices.
-  - `cloud/web`: Angular Web App hosted on S3 + CloudFront for patients/remote doctors.
-- **Infrastructure**:
-  - **Computing**: Lightsail Instance (Dockerized API).
-  - **Storage**: 
-    - `nalamdesk-web-*`: Private S3 for Frontend.
-    - `nalamdesk-docs-*`: Private S3 for Documentation.
-    - `nalamdesk-backups-*`: Private S3 for Encrypted DB Backups (Lifecycle: 30 days).
-  - **CDN**: CloudFront (Termination for HTTPS, caching).
+  - `cloud/core`: Shared resources (DNS zone, certificates, device registry, ops sign-in, code bucket, budget), published to Parameter Store.
+  - `cloud/relay`: ABDM relay. Holds the vendor credentials, forwards signed desktop calls, seals gateway callbacks to the clinic's key.
+- **Secrets**: Parameter Store SecureString, never Secrets Manager.
 
 ## 2. Directory Structure
 ```
@@ -41,16 +35,15 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 │   ├── package.json        # "nalamdesk-desktop"
 │   └── angular.json        # Angular Build Config
 ├── cloud/                  # The Remote Platform
-│   ├── api/                # Node.js/Fastify Backend (Stateless)
-│   ├── web/                # Cloud Web App
-│   ├── infrastructure/     # Terraform (main.tf)
+│   ├── core/               # Shared CDK stacks
+│   ├── relay/              # ABDM relay app + CDK stack
 │   └── documentation/      # Project Docs (MkDocs/Docusaurus)
 └── .agent/                 # Agent Rules & Context
 ```
 
 ## 3. Critical Rules ⚠️
 1.  **Process Hygiene**: Always KILL `node`, `git`, `npm` processes before performing directory operations on Windows to avoid file locks.
-2.  **Stateless Cloud**: The Cloud API (`cloud/api`) MUST NOT rely on local file storage. It uses ephemeral containers. State is in SQLite (Desktop) or Sync Payload.
+2.  **Stateless Cloud**: Cloud functions MUST NOT rely on local file storage. State is in SQLite (Desktop); the cloud holds only ciphertext and routing metadata.
 3.  **Dev vs Prod isolation** (defaults in repo-root `.env.development`; override via `.env.local`):
     - **DB**: `userData/nalamdesk.db` — prod `NalamDesk/`, dev `NalamDesk-Dev/` (not `desktop/nalamdesk.db`).
     - **Ports**: 3000 installed API · 3001 cloud API · 3002 dev API · 4200 ng serve. Dev and installed app may run together.
@@ -60,17 +53,16 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 ## 4. Commands
 - **Start Desktop**: `cd desktop && npm start`
 - **Build Desktop**: `cd desktop && npm run dist:win`
-- **Deploy Cloud**: `cd cloud/infrastructure && terraform apply`
+- **Deploy Cloud**: `cd cloud/core && npm run deploy`, then `cd cloud/relay && npm run deploy` (see each README)
 
 ## 5. Architecture Clarification (Desktop vs Cloud) 🌐
-- **Distinct Applications**: The `desktop` application (Electron) and `cloud/web` application are **distinct entities**.
+- **Distinct Applications**: The `desktop` application (Electron) and the `cloud/` services are **distinct entities**.
     - **Desktop**: Local-first, SQLite, Electron window uses IPC.
     - **LAN browser** (tablet/phone on clinic Wi‑Fi): hits Fastify on API port, JWT via `/api/auth/login` — not IPC.
-    - **Cloud Web**: Separate Angular app on S3, remote API, own auth.
 - **Authentication**:
     - **Desktop (Electron)**: Unlocks local SQLite via Master Password / Key Wrapping.
     - **LAN browser**: JWT from Fastify (same port as API).
-    - **Cloud Web**: Stateless JWT/API tokens (remote).
+    - **Cloud relay**: Per-device signatures; ABDM callbacks verified by gateway JWT.
     - **Do NOT conflate them**.
 
 ## 6. SonarQube Code Quality Standards 🔍

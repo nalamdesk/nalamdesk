@@ -36,6 +36,5 @@ Suite: `desktop/e2e/regression/` (real local Electron + real `ng serve` renderer
 
 - Packaged-installer flows (`electron-builder` artifacts) — not launched here.
 - Real cloud sync / Google Drive / ABDM network calls — IPC surface is
-  exercised, remote round-trips are not. Server-side slot persistence is
-  covered by `cloud/api/test/api.test.js`, not this suite.
+  exercised, remote round-trips are not.
 - Visual pixel diffs — live in `e2e/visual.spec.ts`, not this suite.

@@ -15,7 +15,7 @@ import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
 import { HiuService } from '../main/services/HiuService';
 import { AccessPolicy } from '../main/services/AccessPolicy';
 import { parseClinicalBundle } from '../shared/fhir/parser';
-import { FideliusService } from '../main/services/FideliusService';
+import { FideliusService, parseKeyMaterial } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
 
 loadDevelopmentEnv();
@@ -174,10 +174,7 @@ export class ApiServer {
                 if (typeof payload['recipient_key'] === 'string') {
                     const key = String(payload['recipient_key']).trim();
                     if (key) {
-                        if (Buffer.from(key, 'base64').length !== 32) {
-                            throw new Error('Recipient key must be a 32-byte X25519 public key.');
-                        }
-                        patch['abdm_recipient_key'] = key;
+                        patch['abdm_recipient_key'] = JSON.stringify(parseKeyMaterial(key));
                     }
                 }
                 if (typeof payload['callback_secret'] === 'string') {

@@ -1,6 +1,11 @@
 import * as crypto from 'node:crypto';
 import type { DeviceKeyStore } from './DeviceKeyStore';
-import { FideliusService, type FideliusEnvelope } from './FideliusService';
+import {
+    FideliusService,
+    toFideliusPublicKey,
+    type FideliusEnvelope,
+    type FideliusKeyMaterial
+} from './FideliusService';
 
 export interface HiuDeps {
     getSettings?: () => any;
@@ -49,13 +54,13 @@ const HIU_NOTIFY_KINDS = [
 ] as const;
 
 /**
- * HIU (Health Information User) identity: the clinic's own X25519 keypair
- * used to receive encrypted health records under patient consent (M3).
+ * HIU (Health Information User) identity: the clinic's own Curve25519
+ * keypair used to receive encrypted health records under patient consent (M3).
  *
  * The private half is generated once, wrapped by the OS keychain, and stored
  * as an opaque blob — the same contract as the ABDM client secret: it never
  * appears in generic settings reads, IPC getters, or LAN responses. Only
- * the public half (raw 32-byte base64) is shareable.
+ * the public half (Fidelius X.509 base64) is shareable.
  */
 export class HiuService {
     /** SQL-datetime expiry 30 days out (the issue's retention rule). */
@@ -70,7 +75,7 @@ export class HiuService {
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
 
-    /** Shareable HIU public key (raw base64), or null before first use. */
+    /** Shareable HIU public key (Fidelius X.509 base64), or null before first use. */
     getPublicKey(): string | null {
         try {
             return this.deps.getSettings?.()?.abdm_hiu_public_key || null;
@@ -81,7 +86,8 @@ export class HiuService {
 
     /**
      * Generates the HIU keypair on first use; later calls verify the stored
-     * halves still match (trial encrypt→decrypt) and return the public key.
+     * halves still match (public key recomputed from the private one) and
+     * return the public key.
      * A mismatch — edited public key, unrestorable private blob (e.g. after
      * a clean-machine restore), or torn write — regenerates a fresh pair
      * instead of advertising an undecryptable key. Throws
@@ -90,8 +96,15 @@ export class HiuService {
     ensureKeypair(): { publicKey: string } {
         const existing = this.getPublicKey();
         const protectedPrivate = this.deps.getHiuPrivateProtected?.() || null;
-        if (existing && protectedPrivate && this.keypairMatches(existing, protectedPrivate)) {
+        const derived = existing && protectedPrivate ? this.derivePublicKey(protectedPrivate) : null;
+        if (derived && derived.fidelius === existing) {
             return { publicKey: existing };
+        }
+        if (derived && derived.legacyRaw === existing) {
+            // Keys made before Fidelius interop stored the raw X25519 public
+            // half; same key, so re-encode it rather than rotating.
+            this.saveKeypair(derived.fidelius, protectedPrivate as string);
+            return { publicKey: derived.fidelius };
         }
         if ((existing || protectedPrivate) && !(existing && protectedPrivate)) {
             console.warn('[HIU] Incomplete stored keypair; generating a fresh one.');
@@ -101,39 +114,68 @@ export class HiuService {
         const store = this.deps.keyStore;
         if (!store) throw new Error('ENCRYPTION_UNAVAILABLE');
         const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519', {
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
             privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
         });
-        const publicRaw = crypto.createPublicKey(publicKey)
-            .export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
+        const publicFidelius = toFideliusPublicKey(publicKey);
         let wrapped: Buffer;
         try {
             wrapped = store.protect(Buffer.from(privateKey, 'utf8'));
         } catch (error) {
             throw new Error(`ENCRYPTION_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`);
         }
-        const protectedValue = wrapped.toString('base64');
-        if (this.deps.saveHiuKeypair) {
-            this.deps.saveHiuKeypair(publicRaw, protectedValue);
-        } else {
-            this.deps.saveHiuPrivateProtected?.(protectedValue);
-            this.deps.saveSettingsPatch?.({ abdm_hiu_public_key: publicRaw });
-        }
-        return { publicKey: publicRaw };
+        this.saveKeypair(publicFidelius, wrapped.toString('base64'));
+        return { publicKey: publicFidelius };
     }
 
-    /** Trial round trip proving a stored public/private pair belongs together. */
-    private keypairMatches(publicKey: string, protectedPrivate: string): boolean {
+    private saveKeypair(publicKey: string, protectedValue: string): void {
+        if (this.deps.saveHiuKeypair) {
+            this.deps.saveHiuKeypair(publicKey, protectedValue);
+        } else {
+            this.deps.saveHiuPrivateProtected?.(protectedValue);
+            this.deps.saveSettingsPatch?.({ abdm_hiu_public_key: publicKey });
+        }
+    }
+
+    /** Public half recomputed from the stored private key, in both encodings; null if unreadable. */
+    private derivePublicKey(protectedPrivate: string): { fidelius: string; legacyRaw: string } | null {
         try {
             const store = this.deps.keyStore;
-            if (!store) return false;
+            if (!store) return null;
             const privatePem = store.unprotect(Buffer.from(protectedPrivate, 'base64')).toString('utf8');
-            const probe = new FideliusService().encryptBundle({ hiu: 'probe' }, publicKey);
-            const back = new FideliusService().decryptEnvelope(probe, privatePem) as any;
-            return back?.hiu === 'probe';
+            const publicKey = crypto.createPublicKey(crypto.createPrivateKey(privatePem));
+            return {
+                fidelius: toFideliusPublicKey(publicKey),
+                legacyRaw: publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64')
+            };
         } catch {
-            return false;
+            return null;
         }
+    }
+
+    /**
+     * The HIU's ABDM key material. The nonce is derived from the private key
+     * so it needs no storage of its own; senders bring a fresh key and nonce
+     * every transfer, so the session key still never repeats.
+     */
+    keyMaterial(): FideliusKeyMaterial {
+        const { publicKey } = this.ensureKeypair();
+        return {
+            cryptoAlg: 'ECDH',
+            curve: 'Curve25519',
+            dhPublicKey: {
+                expiry: new Date(this.nowMs() + 24 * 60 * 60 * 1000).toISOString(),
+                parameters: 'Curve25519/32byte random key',
+                keyValue: publicKey
+            },
+            nonce: this.nonceFor(this.readPrivatePem())
+        };
+    }
+
+    private nonceFor(privatePem: string): string {
+        const d = crypto.createPrivateKey(privatePem).export({ format: 'jwk' }).d || '';
+        return crypto.createHmac('sha256', Buffer.from(d, 'base64url'))
+            .update('nalamdesk-hiu-nonce-v1')
+            .digest('base64');
     }
 
     /** Test seam for the inbound decrypt path PR2 builds on. */
@@ -144,12 +186,14 @@ export class HiuService {
     /** Decrypts one inbound record envelope with the HIU private key. */
     decryptRecord(envelope: FideliusEnvelope): unknown {
         if (!envelope || typeof envelope !== 'object') throw new Error('A record envelope is required.');
-        for (const field of ['ephemeralPublicKey', 'nonce', 'ciphertext', 'tag'] as const) {
-            if (!String((envelope as any)[field] || '').trim()) {
-                throw new Error(`Record envelope is missing ${field}.`);
-            }
+        if (!envelope.keyMaterial || typeof envelope.keyMaterial !== 'object') {
+            throw new Error('Record envelope is missing keyMaterial.');
         }
-        return new FideliusService().decryptEnvelope(envelope, this.readPrivatePem());
+        if (!String(envelope.encryptedData || '').trim()) {
+            throw new Error('Record envelope is missing encryptedData.');
+        }
+        const privatePem = this.readPrivatePem();
+        return new FideliusService().decryptEnvelope(envelope, privatePem, this.nonceFor(privatePem));
     }
 
     /**
@@ -250,9 +294,8 @@ export class HiuService {
         if (consent.status && consent.status !== 'granted') {
             throw new Error('Records can only be fetched for a granted consent.');
         }
-        const { publicKey } = this.ensureKeypair();
         const bundle = this.buildMockClinicalBundle(consent);
-        const envelope = new FideliusService().encryptBundle(bundle, publicKey);
+        const envelope = new FideliusService().encryptBundle(bundle, this.keyMaterial());
         const decrypted = this.decryptRecord(envelope);
         return store.storeFetchedRecord({
             consentId: Number(consent.id),

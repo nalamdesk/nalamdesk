@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import { app, BrowserWindow, shell } from 'electron';
 import * as crypto from 'node:crypto';
 import * as fs from 'fs';
+import { pipeline } from 'node:stream/promises';
 import { getApiPort } from '../../shared/runtime-config';
 
 function getRedirectUri(): string {
@@ -144,21 +145,12 @@ export class GoogleDriveService {
     async downloadFile(fileId: string, destPath: string): Promise<void> {
         if (!this.tokens) throw new Error('Not authenticated');
 
-        const dest = fs.createWriteStream(destPath);
         const res = await this.drive.files.get(
             { fileId, alt: 'media' },
             { responseType: 'stream' }
         );
-
-        return new Promise((resolve, reject) => {
-            res.data
-                .on('end', () => {
-                    resolve();
-                })
-                .on('error', (err: unknown) => {
-                    reject(err);
-                })
-                .pipe(dest);
-        });
+        // Settles only once the file is flushed and closed; on failure both
+        // streams are destroyed first, so no write lands after we return.
+        await pipeline(res.data, fs.createWriteStream(destPath));
     }
 }

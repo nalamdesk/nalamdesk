@@ -156,7 +156,6 @@ describe('GoogleDriveService', () => {
             };
             service.setCredentials({ access_token: 't' });
             await service.downloadFile('file9', dest);
-            await new Promise((r) => setTimeout(r, 100));
             expect(fs.readFileSync(dest, 'utf8')).toBe('chunk1chunk2');
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });

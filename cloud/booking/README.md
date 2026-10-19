@@ -36,7 +36,7 @@ The desktop side lives in `desktop/src/main/booking/BookingInboxService.ts` (#15
 **What the cloud keeps.** Clinics (name, city, specialty, public key, presence), slots
 (date, time, state, the holding reference) and a status record per request (reference, clinic,
 slot, status, and a keyed hash of a browser-side phone digest, dropped once the clinic decides).
-The sealed request itself goes to the mailbox (#155).
+The sealed request itself goes to the shared 48-hour mailbox.
 
 **Phone limit.** At most 2 open requests per phone per clinic. The browser sends
 `SHA-256("nalamdesk-booking-phone-v1|" + number)`; the API stores only an HMAC of that under a
@@ -63,13 +63,11 @@ self-hosted fonts; CSP `default-src 'none'` with only `'self'` sources (`infra/l
 HSTS, `X-Frame-Options: DENY`, no referrer. The patient still trusts the JavaScript NalamDesk
 serves; these make silent tampering hard, not impossible.
 
-## Not wired yet
+## Deploy notes
 
-| Piece | Waiting on |
-| --- | --- |
-| `Mailbox`, `Doorbell` (sealed store, IoT Core) and presence events | #155 |
-Until the adapters exist, `api/src/server.ts` serves a 503 holding app whose `/api/health` names
-what is missing. The desktop side is wired (#154): a paired computer signs its calls and
+The API puts each sealed request in the Core mailbox and rings the clinic's doorbell
+(`cloud/shared`, #155); until the Core names reach it, `api/src/server.ts` serves a 503 holding app
+whose `/api/health` names what is missing. A paired desktop signs its calls (#154) and
 `BookingInboxService` uses the X25519 key created at pairing.
 
 **CloudFront rate rule.** The Free flat-rate plan includes WAF rate limiting but is not set

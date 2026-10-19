@@ -7,6 +7,7 @@ import type { FetchFn, GatewaySession } from './gatewaySession.js';
 import type { GatewayJwtVerifier } from './gatewayJwt.js';
 import { stdoutLogger, type RelayLogEntry, type RelayLogger } from './log.js';
 import type { DeviceAuthenticator, Doorbell, Facility, FacilityDirectory, Mailbox, MailboxItemType } from './ports.js';
+import { registerInboxRoutes, type InboxRouteDeps } from './inboxRoutes.js';
 import { registerPairingRoutes, type PairingRouteDeps } from './pairingRoutes.js';
 import { seal } from './seal.js';
 
@@ -20,6 +21,8 @@ export interface RelayDeps {
     verifyGatewayJwt: GatewayJwtVerifier;
     /** Pairing, the ops console and key rotation (#154). */
     pairing?: PairingRouteDeps;
+    /** The desktop's mailbox and doorbell certificate endpoints (#155). */
+    inbox?: InboxRouteDeps;
     logger?: RelayLogger;
     fetchFn?: FetchFn;
     nowMs?: () => number;
@@ -224,6 +227,7 @@ export function createRelayApp(deps: RelayDeps): Hono {
     });
 
     if (deps.pairing) registerPairingRoutes(app, deps.pairing, { devices: deps.devices, log, nowMs });
+    if (deps.inbox) registerInboxRoutes(app, deps.inbox, { devices: deps.devices, log, nowMs });
 
     app.notFound((c) => refuse(c, 404, 'not_found'));
     app.onError((_error, c) => refuse(c, 500, 'internal_error'));

@@ -180,6 +180,20 @@ export class BookingStack extends cdk.Stack {
             actions: ['dynamodb:PutItem'],
             resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: noncesTable })]
         }));
+        // Sealed booking requests go to the clinic's 48-hour mailbox, then
+        // the doorbell rings (#155). Put only: the desktop reads through the relay.
+        const mailboxTable = core('mailbox-table-name');
+        const mailboxBucket = s3.Bucket.fromBucketName(this, 'MailboxBucket', core('mailbox-bucket-name'));
+        const doorbellTopicPrefix = core('doorbell-topic-prefix');
+        role.addToPolicy(new iam.PolicyStatement({
+            actions: ['dynamodb:PutItem'],
+            resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: mailboxTable })]
+        }));
+        role.addToPolicy(new iam.PolicyStatement({ actions: ['s3:PutObject'], resources: [mailboxBucket.arnForObjects('mailbox/*')] }));
+        role.addToPolicy(new iam.PolicyStatement({
+            actions: ['iot:Publish'],
+            resources: [this.formatArn({ service: 'iot', resource: 'topic', resourceName: `${doorbellTopicPrefix}/*` })]
+        }));
 
         // Each build is uploaded once to the Core code bucket, named by its
         // content hash; the revision pins that object's version, so a new
@@ -215,7 +229,11 @@ export class BookingStack extends cdk.Stack {
                     BOOKING_REQUESTS_TABLE: bookings.tableName,
                     BOOKING_PHONE_PEPPER_PARAM: phonePepper,
                     DEVICES_TABLE: devicesTable,
-                    NONCES_TABLE: noncesTable
+                    NONCES_TABLE: noncesTable,
+                    MAILBOX_TABLE: mailboxTable,
+                    MAILBOX_BUCKET: mailboxBucket.bucketName,
+                    IOT_DATA_ENDPOINT: core('iot-data-endpoint'),
+                    DOORBELL_TOPIC_PREFIX: doorbellTopicPrefix
                 },
                 telemetryConfig: { loggingConfig: { logGroup: logGroup.logGroupName, applicationLogLevel: 'INFO', systemLogLevel: 'WARN' } }
             }

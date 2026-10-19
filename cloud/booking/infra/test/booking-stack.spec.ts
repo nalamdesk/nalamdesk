@@ -112,11 +112,28 @@ describe('BookingStack', () => {
         const statements = Object.values(t.findResources('AWS::IAM::Policy'))
             .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
         const get = statements.find((s: any) => s.Action === 'dynamodb:GetItem');
-        const put = statements.find((s: any) => s.Action === 'dynamodb:PutItem');
+        const put = statements.find((s: any) => s.Action === 'dynamodb:PutItem' && JSON.stringify(s.Resource).includes('noncestablename'));
         expect(JSON.stringify(get.Resource)).toContain('devicestablename');
-        expect(JSON.stringify(put.Resource)).toContain('noncestablename');
+        expect(put).toBeDefined();
         t.hasResourceProperties('AWS::Lambda::WebFunctionRevision', {
             ServiceConfig: { EnvironmentVariables: { DEVICES_TABLE: { Ref: Match.stringLikeRegexp('devicestablename') }, NONCES_TABLE: { Ref: Match.stringLikeRegexp('noncestablename') } } }
+        });
+    });
+
+    it('lets the API put sealed requests in the mailbox and ring clinic doorbells, and nothing more', () => {
+        const statements = Object.values(t.findResources('AWS::IAM::Policy'))
+            .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+        const on = (fragment: string) => statements.filter((s: any) => JSON.stringify(s.Resource).includes(fragment)).flatMap((s: any) => [s.Action].flat());
+        expect(on('mailboxtablename')).toEqual(['dynamodb:PutItem']);
+        expect(on('/mailbox/*')).toEqual(['s3:PutObject']);
+        const publish = statements.find((s: any) => s.Action === 'iot:Publish');
+        expect(JSON.stringify(publish.Resource)).toContain(':topic/');
+        t.hasResourceProperties('AWS::Lambda::WebFunctionRevision', {
+            ServiceConfig: Match.objectLike({
+                EnvironmentVariables: Match.objectLike({
+                    MAILBOX_TABLE: Match.anyValue(), MAILBOX_BUCKET: Match.anyValue(), IOT_DATA_ENDPOINT: Match.anyValue(), DOORBELL_TOPIC_PREFIX: Match.anyValue()
+                })
+            })
         });
     });
 

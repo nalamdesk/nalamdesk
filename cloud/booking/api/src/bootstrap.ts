@@ -1,4 +1,4 @@
-import { createDeviceAuthenticator, DynamoDeviceRegistry, DynamoNonceStore } from '@nalamdesk/cloud-shared';
+import { createDeviceAuthenticator, DynamoDeviceRegistry, DynamoMailbox, DynamoNonceStore, IotDoorbell } from '@nalamdesk/cloud-shared';
 import { Hono } from 'hono';
 import { createBookingApp, type BookingDeps } from './app.js';
 import type { DeviceAuthenticator, Doorbell, Mailbox } from './ports.js';
@@ -19,17 +19,26 @@ export function deviceAuthenticatorFromEnv(env: NodeJS.ProcessEnv): DeviceAuthen
     });
 }
 
+/** Every adapter the environment names: the verifier, the mailbox and the doorbell (#155). */
+export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
+    return {
+        devices: deviceAuthenticatorFromEnv(env),
+        mailbox: env.MAILBOX_TABLE && env.MAILBOX_BUCKET ? new DynamoMailbox({ table: env.MAILBOX_TABLE, bucket: env.MAILBOX_BUCKET }) : undefined,
+        doorbell: env.IOT_DATA_ENDPOINT && env.DOORBELL_TOPIC_PREFIX ? new IotDoorbell(env.IOT_DATA_ENDPOINT, env.DOORBELL_TOPIC_PREFIX) : undefined
+    };
+}
+
 /**
  * The booking app when every adapter exists; otherwise a holding app that
  * answers 503 on every route and names what is missing on /api/health, so
  * the API never accepts a booking it cannot deliver or a clinic call it
- * cannot verify. The mailbox and doorbell arrive with #155.
+ * cannot verify.
  */
 export function buildServerApp(base: Omit<BookingDeps, 'devices' | 'mailbox' | 'doorbell'>, adapters: Adapters): { app: Hono; missing: string[] } {
     const missing = [
         adapters.devices ? null : 'device authenticator (DEVICES_TABLE, NONCES_TABLE)',
-        adapters.mailbox ? null : 'mailbox (#155)',
-        adapters.doorbell ? null : 'doorbell (#155)'
+        adapters.mailbox ? null : 'mailbox (MAILBOX_TABLE, MAILBOX_BUCKET)',
+        adapters.doorbell ? null : 'doorbell (IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX)'
     ].filter((name): name is string => name !== null);
     if (adapters.devices && adapters.mailbox && adapters.doorbell) {
         return { app: createBookingApp({ ...base, devices: adapters.devices, mailbox: adapters.mailbox, doorbell: adapters.doorbell }), missing };

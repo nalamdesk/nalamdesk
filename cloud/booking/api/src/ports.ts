@@ -1,10 +1,8 @@
 // The booking API's collaborators. The stores are this stack's own DynamoDB
-// tables (src/dynamo.ts, with in-memory twins in src/memory.ts). The rest are
-// owned by earlier iterations of the cloud plan and are injected here, so the
-// booking logic can ship and be tested before those land:
-//   DeviceAuthenticator -> #154 (cloud/shared, against the Core devices and nonces tables)
-//   Mailbox, Doorbell   -> #155 (48-hour sealed mailbox, IoT Core doorbell)
-// The shapes match cloud/relay/src/ports.ts so both apps share one adapter.
+// tables (src/dynamo.ts, with in-memory twins in src/memory.ts). The rest
+// come from cloud/shared and work on Core resources:
+//   DeviceAuthenticator -> #154 (the Core devices and nonces tables)
+//   Mailbox, Doorbell   -> #155 (DynamoMailbox and IotDoorbell)
 
 /** Verifies the X-ND-* signature headers, timestamp window, nonce replay and device status (cloud/shared). */
 export type { DesktopRequest, DeviceAuthenticator, DeviceAuthResult } from '@nalamdesk/cloud-shared';

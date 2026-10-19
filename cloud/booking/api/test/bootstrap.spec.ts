@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildServerApp, deviceAuthenticatorFromEnv, listenAddress } from '../src/bootstrap.js';
+import { adaptersFromEnv, buildServerApp, deviceAuthenticatorFromEnv, listenAddress } from '../src/bootstrap.js';
 import { MemoryBookingStore, MemoryClinicStore, MemorySlotStore } from '../src/memory.js';
 
 const base = { clinics: new MemoryClinicStore(), slots: new MemorySlotStore(), bookings: new MemoryBookingStore(), phonePepper: Buffer.alloc(32, 1) };
@@ -7,7 +7,7 @@ const base = { clinics: new MemoryClinicStore(), slots: new MemorySlotStore(), b
 describe('bootstrap', () => {
     it('serves a 503 holding app naming what is missing until every adapter exists', async () => {
         const { app, missing } = buildServerApp(base, {});
-        expect(missing).toEqual(['device authenticator (DEVICES_TABLE, NONCES_TABLE)', 'mailbox (#155)', 'doorbell (#155)']);
+        expect(missing).toEqual(['device authenticator (DEVICES_TABLE, NONCES_TABLE)', 'mailbox (MAILBOX_TABLE, MAILBOX_BUCKET)', 'doorbell (IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX)']);
         const health = await app.request('/api/health');
         expect(health.status).toBe(503);
         expect(await health.json()).toEqual({ ok: false, missing });
@@ -18,6 +18,16 @@ describe('bootstrap', () => {
     it('builds the signed-request verifier from the Core table names', () => {
         expect(deviceAuthenticatorFromEnv({ DEVICES_TABLE: 'd', NONCES_TABLE: 'n' })).toBeDefined();
         expect(deviceAuthenticatorFromEnv({ DEVICES_TABLE: 'd' })).toBeUndefined();
+    });
+
+    it('builds the mailbox and doorbell from the Core names', () => {
+        const adapters = adaptersFromEnv({
+            DEVICES_TABLE: 'd', NONCES_TABLE: 'n', MAILBOX_TABLE: 'm', MAILBOX_BUCKET: 'b',
+            IOT_DATA_ENDPOINT: 'x-ats.iot.ap-south-1.amazonaws.com', DOORBELL_TOPIC_PREFIX: 'nalamdesk/sandbox/clinic'
+        });
+        expect(buildServerApp(base, adapters).missing).toEqual([]);
+        expect(adaptersFromEnv({ MAILBOX_TABLE: 'm' }).mailbox).toBeUndefined();
+        expect(adaptersFromEnv({ IOT_DATA_ENDPOINT: 'x' }).doorbell).toBeUndefined();
     });
 
     it('serves the booking app once the adapters are wired', async () => {

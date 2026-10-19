@@ -3,7 +3,7 @@
 // before those land:
 //   DeviceAuthenticator  -> #154 (cloud/shared, against the Core devices and nonces tables)
 //   FacilityDirectory    -> #153 / #154 (device registry, bridge links)
-//   Mailbox, Doorbell    -> #155 (48-hour sealed mailbox, IoT Core doorbell)
+//   Mailbox, Inbox, Doorbell, DeviceCertificates -> #155 (48-hour sealed mailbox, IoT Core doorbell)
 //   VendorCredentials    -> SSM Parameter Store (src/parameterStore.ts)
 
 /**
@@ -45,6 +45,42 @@ export interface MailboxItem {
 export interface Mailbox {
     /** Stores a sealed item for up to 48 hours; resolves with its item ID. */
     put(item: MailboxItem): Promise<string>;
+}
+
+/** One mailbox item as the desktop receives it. */
+export interface InboxItem {
+    id: string;
+    /** The relay's own types, and booking requests the booking API puts in the same mailbox. */
+    type: MailboxItemType | 'booking-request';
+    createdAt: number;
+    /** Sealed envelope, for items kept inline. */
+    sealed?: string;
+    /** Short-lived download link for the sealed envelope, for large items. */
+    url?: string;
+}
+
+/** The desktop's side of the mailbox (#155): list, acknowledge, and purge on revocation. */
+export interface Inbox {
+    list(clinicId: string): Promise<{ items: InboxItem[]; more: boolean }>;
+    ack(clinicId: string, ids: string[]): Promise<void>;
+    /** Drops mail stored before `beforeMs`, which only a replaced key could open. */
+    purge(clinicId: string, beforeMs: number): Promise<number>;
+}
+
+/** IoT Core client certificates for the doorbell (#155): one per device. */
+export interface DeviceCertificates {
+    /** Issues a certificate for the CSR and revokes any earlier one for the device. */
+    issue(device: { deviceId: string; clinicId: string }, csrPem: string): Promise<{ certificatePem: string }>;
+    /** Revokes and deletes the device's certificates and its IoT thing. */
+    revoke(deviceId: string): Promise<void>;
+}
+
+/** Where a desktop connects for doorbell rings. */
+export interface DoorbellConnection {
+    /** IoT data endpoint host. */
+    endpoint: string;
+    /** `nalamdesk/<stage>/clinic`; the clinic's topic is `<prefix>/<clinicId>/mail`. */
+    topicPrefix: string;
 }
 
 export interface Doorbell {

@@ -97,8 +97,41 @@ describe('Core stacks', () => {
         });
     });
 
+    it('keeps mailbox items for 48 hours at most', () => {
+        core.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+            KeySchema: [{ AttributeName: 'clinicId', KeyType: 'HASH' }, { AttributeName: 'itemId', KeyType: 'RANGE' }],
+            TimeToLiveSpecification: { AttributeName: 'expiresAt', Enabled: true }
+        });
+        core.hasResourceProperties('AWS::S3::Bucket', {
+            LifecycleConfiguration: { Rules: [Match.objectLike({ Prefix: 'mailbox/', ExpirationInDays: 2, Status: 'Enabled' })] },
+            PublicAccessBlockConfiguration: Match.objectLike({ BlockPublicAcls: true, RestrictPublicBuckets: true })
+        });
+    });
+
+    it('lets a desktop connect only as itself and receive only its clinic doorbell', () => {
+        const policies = core.findResources('AWS::IoT::Policy');
+        expect(Object.keys(policies)).toHaveLength(1);
+        const [policy] = Object.values(policies) as any[];
+        expect(policy.Properties.PolicyName).toBe('nalamdesk-sandbox-device');
+        const statements = policy.Properties.PolicyDocument.Statement;
+        expect(statements.map((s: any) => s.Action)).toEqual(['iot:Connect', 'iot:Subscribe', 'iot:Receive']);
+        expect(JSON.stringify(statements[0])).toContain('client/${iot:Connection.Thing.ThingName}');
+        expect(statements[0].Condition).toEqual({ Bool: { 'iot:Connection.Thing.IsAttached': 'true' } });
+        expect(JSON.stringify(statements[1])).toContain('topicfilter/nalamdesk/sandbox/clinic/${iot:Connection.Thing.Attributes[clinicId]}/mail');
+        expect(JSON.stringify(statements[2])).toContain('topic/nalamdesk/sandbox/clinic/${iot:Connection.Thing.Attributes[clinicId]}/mail');
+        expect(JSON.stringify(policy)).not.toContain('iot:Publish');
+    });
+
+    it('records device presence and alarms on refused device logins', () => {
+        const rules = JSON.stringify(core.findResources('AWS::IoT::TopicRule'));
+        expect(rules).toContain("FROM '$aws/events/presence/+/+'");
+        core.hasResourceProperties('AWS::CloudWatch::Alarm', { Namespace: 'AWS/IoT', MetricName: 'Connect.AuthNError' });
+        core.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'ops@example.in' });
+    });
+
     it('publishes the shared names in Parameter Store', () => {
-        for (const name of ['devices-table-name', 'code-bucket-name', 'hosted-zone-id', 'bridge-certificate-arn', 'bridge-domain', 'clinic-ids-table-name', 'ops-client-id', 'ops-auth-domain']) {
+        for (const name of ['devices-table-name', 'code-bucket-name', 'hosted-zone-id', 'bridge-certificate-arn', 'bridge-domain', 'clinic-ids-table-name', 'ops-client-id', 'ops-auth-domain',
+            'mailbox-table-name', 'mailbox-bucket-name', 'iot-data-endpoint', 'iot-policy-name', 'doorbell-topic-prefix', 'device-presence-table-name']) {
             core.hasResourceProperties('AWS::SSM::Parameter', { Name: `/nalamdesk/sandbox/core/${name}` });
         }
     });

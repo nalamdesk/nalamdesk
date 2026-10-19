@@ -21,7 +21,13 @@ export type CoreParamName =
     | 'booking-certificate-arn'
     | 'ops-user-pool-id'
     | 'ops-client-id'
-    | 'ops-auth-domain';
+    | 'ops-auth-domain'
+    | 'mailbox-table-name'
+    | 'mailbox-bucket-name'
+    | 'iot-data-endpoint'
+    | 'iot-policy-name'
+    | 'doorbell-topic-prefix'
+    | 'device-presence-table-name';
 
 export function parseStage(value: unknown): Stage {
     if (value === undefined || value === 'sandbox') return 'sandbox';

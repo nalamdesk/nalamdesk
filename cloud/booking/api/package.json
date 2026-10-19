@@ -1,0 +1,33 @@
+{
+  "name": "@nalamdesk/booking-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public online booking API: clinic directory, published slots, sealed booking requests the cloud cannot read.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/server.js",
+    "dev": "tsx src/dev.ts",
+    "bundle": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node24 --outfile=bundle/index.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1152.0",
+    "@aws-sdk/client-ssm": "^3.1152.0",
+    "@aws-sdk/lib-dynamodb": "^3.1152.0",
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

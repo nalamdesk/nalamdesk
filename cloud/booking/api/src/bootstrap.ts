@@ -1,3 +1,4 @@
+import { createDeviceAuthenticator, DynamoDeviceRegistry, DynamoNonceStore } from '@nalamdesk/cloud-shared';
 import { Hono } from 'hono';
 import { createBookingApp, type BookingDeps } from './app.js';
 import type { DeviceAuthenticator, Doorbell, Mailbox } from './ports.js';
@@ -8,16 +9,25 @@ export interface Adapters {
     doorbell?: Doorbell;
 }
 
+/** The signed-request verifier (#154), from the Core table names. */
+export function deviceAuthenticatorFromEnv(env: NodeJS.ProcessEnv): DeviceAuthenticator | undefined {
+    if (!env.DEVICES_TABLE || !env.NONCES_TABLE) return undefined;
+    return createDeviceAuthenticator({
+        audience: 'booking',
+        devices: new DynamoDeviceRegistry(env.DEVICES_TABLE),
+        nonces: new DynamoNonceStore(env.NONCES_TABLE)
+    });
+}
+
 /**
  * The booking app when every adapter exists; otherwise a holding app that
  * answers 503 on every route and names what is missing on /api/health, so
  * the API never accepts a booking it cannot deliver or a clinic call it
- * cannot verify. The device authenticator arrives with #154, the mailbox
- * and doorbell with #155.
+ * cannot verify. The mailbox and doorbell arrive with #155.
  */
 export function buildServerApp(base: Omit<BookingDeps, 'devices' | 'mailbox' | 'doorbell'>, adapters: Adapters): { app: Hono; missing: string[] } {
     const missing = [
-        adapters.devices ? null : 'device authenticator (#154)',
+        adapters.devices ? null : 'device authenticator (DEVICES_TABLE, NONCES_TABLE)',
         adapters.mailbox ? null : 'mailbox (#155)',
         adapters.doorbell ? null : 'doorbell (#155)'
     ].filter((name): name is string => name !== null);

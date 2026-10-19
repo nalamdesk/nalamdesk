@@ -9,16 +9,18 @@ describe('bootstrap', () => {
         expect(listenAddress({ PORT: '3005' })).toEqual({ hostname: '127.0.0.1', port: 3005 });
     });
 
-    it('wires facilities and credentials from the environment', () => {
-        const adapters = adaptersFromEnv({ DEVICES_TABLE: 't', ABDM_CLIENT_ID_PARAM: '/a', ABDM_CLIENT_SECRET_PARAM: '/b' });
+    it('wires devices, facilities and credentials from the environment', () => {
+        const adapters = adaptersFromEnv({ DEVICES_TABLE: 't', NONCES_TABLE: 'n', ABDM_CLIENT_ID_PARAM: '/a', ABDM_CLIENT_SECRET_PARAM: '/b' });
+        expect(adapters.devices).toBeDefined();
         expect(adapters.facilities).toBeDefined();
+        expect(adaptersFromEnv({ DEVICES_TABLE: 't' }).devices).toBeUndefined();
         expect(adapters.credentials).toBeDefined();
         expect(adaptersFromEnv({}).credentials).toBeUndefined();
     });
 
     it('serves a 503 holding app that names what is missing', async () => {
-        const { app, missing } = buildServerApp({}, adaptersFromEnv({ DEVICES_TABLE: 't', ABDM_CLIENT_ID_PARAM: '/a', ABDM_CLIENT_SECRET_PARAM: '/b' }));
-        expect(missing).toEqual(['device authenticator (#154)', 'mailbox (#155)', 'doorbell (#155)']);
+        const { app, missing } = buildServerApp({}, adaptersFromEnv({ DEVICES_TABLE: 't', NONCES_TABLE: 'n', ABDM_CLIENT_ID_PARAM: '/a', ABDM_CLIENT_SECRET_PARAM: '/b' }));
+        expect(missing).toEqual(['mailbox (#155)', 'doorbell (#155)']);
         const health = await app.request('/health');
         expect(health.status).toBe(503);
         expect(await health.json()).toEqual({ ok: false, missing });

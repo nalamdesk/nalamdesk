@@ -248,7 +248,8 @@ export function createBookingApp(deps: BookingDeps): Hono {
         const started = nowMs();
         noStore(c);
         const body = new Uint8Array(await c.req.arrayBuffer());
-        const auth = await deps.devices.authenticate({ method: c.req.method, path: c.req.path, headers: c.req.raw.headers, body });
+        const query = new URL(c.req.url).search.slice(1);
+        const auth = await deps.devices.authenticate({ method: c.req.method, path: c.req.path, query, headers: c.req.raw.headers, body });
         if (!auth.ok) {
             timed({ route: 'clinic', path: '/api/clinic/*', status: auth.status, code: auth.code }, started);
             return refuse(c, auth.status, auth.code, auth.serverTimeMs ? { serverTime: auth.serverTimeMs } : {});

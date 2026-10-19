@@ -2,27 +2,12 @@
 // tables (src/dynamo.ts, with in-memory twins in src/memory.ts). The rest are
 // owned by earlier iterations of the cloud plan and are injected here, so the
 // booking logic can ship and be tested before those land:
-//   DeviceAuthenticator -> #154 (pairing and signed requests)
+//   DeviceAuthenticator -> #154 (cloud/shared, against the Core devices and nonces tables)
 //   Mailbox, Doorbell   -> #155 (48-hour sealed mailbox, IoT Core doorbell)
-// The shapes match cloud/relay/src/ports.ts so both apps share one adapter
-// once #153 moves them into a common package.
+// The shapes match cloud/relay/src/ports.ts so both apps share one adapter.
 
-export interface DesktopRequest {
-    method: string;
-    /** Path as the desktop signed it, without the query string. */
-    path: string;
-    headers: Headers;
-    body: Uint8Array;
-}
-
-export type DeviceAuthResult =
-    | { ok: true; deviceId: string; clinicId: string; hipId: string }
-    | { ok: false; status: number; code: string; serverTimeMs?: number };
-
-/** Verifies the X-ND-* signature headers, timestamp window, nonce replay and device status. */
-export interface DeviceAuthenticator {
-    authenticate(request: DesktopRequest): Promise<DeviceAuthResult>;
-}
+/** Verifies the X-ND-* signature headers, timestamp window, nonce replay and device status (cloud/shared). */
+export type { DesktopRequest, DeviceAuthenticator, DeviceAuthResult } from '@nalamdesk/cloud-shared';
 
 export type MailboxItemType = 'abdm-callback' | 'abdm-data-push' | 'booking-request';
 

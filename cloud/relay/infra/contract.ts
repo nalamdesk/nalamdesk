@@ -4,6 +4,7 @@ export type Stage = 'sandbox' | 'production';
 
 export type CoreParamName =
     | 'devices-table-name'
+    | 'nonces-table-name'
     | 'code-bucket-name'
     | 'hosted-zone-id'
     | 'bridge-certificate-arn';

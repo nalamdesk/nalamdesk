@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildServerApp, listenAddress } from '../src/bootstrap.js';
+import { buildServerApp, deviceAuthenticatorFromEnv, listenAddress } from '../src/bootstrap.js';
 import { MemoryBookingStore, MemoryClinicStore, MemorySlotStore } from '../src/memory.js';
 
 const base = { clinics: new MemoryClinicStore(), slots: new MemorySlotStore(), bookings: new MemoryBookingStore(), phonePepper: Buffer.alloc(32, 1) };
@@ -7,12 +7,17 @@ const base = { clinics: new MemoryClinicStore(), slots: new MemorySlotStore(), b
 describe('bootstrap', () => {
     it('serves a 503 holding app naming what is missing until every adapter exists', async () => {
         const { app, missing } = buildServerApp(base, {});
-        expect(missing).toEqual(['device authenticator (#154)', 'mailbox (#155)', 'doorbell (#155)']);
+        expect(missing).toEqual(['device authenticator (DEVICES_TABLE, NONCES_TABLE)', 'mailbox (#155)', 'doorbell (#155)']);
         const health = await app.request('/api/health');
         expect(health.status).toBe(503);
         expect(await health.json()).toEqual({ ok: false, missing });
         expect((await app.request('/api/clinics')).status).toBe(503);
         expect((await app.request('/api/book', { method: 'POST' })).status).toBe(503);
+    });
+
+    it('builds the signed-request verifier from the Core table names', () => {
+        expect(deviceAuthenticatorFromEnv({ DEVICES_TABLE: 'd', NONCES_TABLE: 'n' })).toBeDefined();
+        expect(deviceAuthenticatorFromEnv({ DEVICES_TABLE: 'd' })).toBeUndefined();
     });
 
     it('serves the booking app once the adapters are wired', async () => {

@@ -1,31 +1,18 @@
 // The relay's collaborators. Each one is owned by an earlier iteration of the
 // cloud plan and is injected here, so the relay logic can ship and be tested
 // before those land:
-//   DeviceAuthenticator  -> #154 (pairing and signed requests)
+//   DeviceAuthenticator  -> #154 (cloud/shared, against the Core devices and nonces tables)
 //   FacilityDirectory    -> #153 / #154 (device registry, bridge links)
 //   Mailbox, Doorbell    -> #155 (48-hour sealed mailbox, IoT Core doorbell)
 //   VendorCredentials    -> SSM Parameter Store (src/parameterStore.ts)
 
-export interface DesktopRequest {
-    method: string;
-    /** Path as the desktop signed it, without the query string. */
-    path: string;
-    headers: Headers;
-    body: Uint8Array;
-}
-
-export type DeviceAuthResult =
-    | { ok: true; deviceId: string; clinicId: string; hipId: string }
-    | { ok: false; status: number; code: string; serverTimeMs?: number };
-
 /**
  * Verifies the X-ND-* signature headers, timestamp window, nonce replay,
- * device status and rate limits. The relay itself still checks X-HIP-ID
- * against the returned facility and the path against its own allowlist.
+ * device status and rate limits (cloud/shared, shared with the booking
+ * API). The relay itself still checks X-HIP-ID against the returned
+ * facility and the path against its own allowlist.
  */
-export interface DeviceAuthenticator {
-    authenticate(request: DesktopRequest): Promise<DeviceAuthResult>;
-}
+export type { DesktopRequest, DeviceAuthenticator, DeviceAuthResult } from '@nalamdesk/cloud-shared';
 
 export interface Facility {
     clinicId: string;

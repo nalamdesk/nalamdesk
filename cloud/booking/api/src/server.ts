@@ -1,11 +1,11 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { serve } from '@hono/node-server';
-import { buildServerApp, listenAddress, type Adapters } from './bootstrap.js';
+import { buildServerApp, deviceAuthenticatorFromEnv, listenAddress, type Adapters } from './bootstrap.js';
 import { documentClient, DynamoBookingStore, DynamoClinicStore, DynamoSlotStore } from './dynamo.js';
 
 // Entry point for the Web Function, bundled to one CommonJS index.js by
-// infra/bundle.ts. The device authenticator, mailbox and doorbell adapters
-// arrive with #154 and #155; until then it serves a 503 holding app.
+// infra/bundle.ts. The mailbox and doorbell adapters arrive with #155;
+// until then it serves a 503 holding app.
 
 function required(name: string): string {
     const value = process.env[name];
@@ -14,7 +14,7 @@ function required(name: string): string {
 }
 
 async function main() {
-    const adapters: Adapters = {};
+    const adapters: Adapters = { devices: deviceAuthenticatorFromEnv(process.env) };
     const db = documentClient(process.env.AWS_REGION);
     // The phone pepper is a SecureString in Parameter Store (as the relay keeps
     // its vendor secret), read once at start-up so it never sits in the

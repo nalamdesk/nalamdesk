@@ -51,6 +51,7 @@ export class RelayStack extends Stack {
         const functionName = `nalamdesk-abdm-relay-${stage}`;
         const bridgeDomain = stageDomain(stage, 'abdm', props.zoneName);
         const devicesTableName = core('devices-table-name');
+        const noncesTableName = core('nonces-table-name');
         const codeBucket = Bucket.fromBucketName(this, 'CodeBucket', core('code-bucket-name'));
 
         const logGroup = new LogGroup(this, 'Logs', {
@@ -79,6 +80,12 @@ export class RelayStack extends Stack {
         role.addToPolicy(new PolicyStatement({
             actions: ['dynamodb:Query'],
             resources: [`${devicesTableArn}/index/byHipId`, `${devicesTableArn}/index/byDataPushToken`]
+        }));
+        // Signed desktop requests: read the device by ID, record each nonce.
+        role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [devicesTableArn] }));
+        role.addToPolicy(new PolicyStatement({
+            actions: ['dynamodb:PutItem'],
+            resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: noncesTableName })]
         }));
 
         // Each build is uploaded once, named by its content hash, at the
@@ -117,6 +124,7 @@ export class RelayStack extends Stack {
                     ABDM_CLIENT_ID_PARAM: relayParam(stage, 'abdm-client-id'),
                     ABDM_CLIENT_SECRET_PARAM: relayParam(stage, 'abdm-client-secret'),
                     DEVICES_TABLE: devicesTableName,
+                    NONCES_TABLE: noncesTableName,
                     ...(props.gatewayIssuer ? { ABDM_GATEWAY_ISSUER: props.gatewayIssuer } : {})
                 },
                 telemetryConfig: {

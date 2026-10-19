@@ -72,7 +72,8 @@ export function createRelayApp(deps: RelayDeps): Hono {
         // Unauthenticated paths are caller-chosen, so only a bounded prefix is logged.
         const loggedPath = path.slice(0, 120);
         const body = new Uint8Array(await c.req.arrayBuffer());
-        const auth = await deps.devices.authenticate({ method: c.req.method, path, headers: c.req.raw.headers, body });
+        const query = new URL(c.req.url).search.slice(1);
+        const auth = await deps.devices.authenticate({ method: c.req.method, path, query, headers: c.req.raw.headers, body });
         if (!auth.ok) {
             timed({ route: 'proxy', path: loggedPath, status: auth.status, code: auth.code }, started);
             return refuse(c, auth.status, auth.code, auth.serverTimeMs ? { serverTime: auth.serverTimeMs } : {});
@@ -88,7 +89,7 @@ export function createRelayApp(deps: RelayDeps): Hono {
         }
 
         const base = resolved.upstream === 'abha' ? deps.env.abhaBaseUrl : deps.env.gatewayBaseUrl;
-        const search = c.req.method === 'GET' ? new URL(c.req.url).search : '';
+        const search = c.req.method === 'GET' && query ? `?${query}` : '';
         const target = `${base}${resolved.upstreamPath}${search}`;
         const send = async (token: string) => {
             const headers = new Headers();

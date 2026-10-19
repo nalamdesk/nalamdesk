@@ -1,7 +1,8 @@
 // Names the Core stack publishes in Parameter Store (ap-south-1) so the
 // Relay and Booking CDK apps can find shared resources without
 // CloudFormation exports tying their lifecycles together. The Relay app
-// keeps a copy of this list in cloud/relay/infra/contract.ts; keep the two
+// keeps a copy of this list in cloud/relay/infra/contract.ts and the
+// Booking app in cloud/booking/infra/lib/contract.ts; keep them
 // in step.
 export type Stage = 'sandbox' | 'production';
 

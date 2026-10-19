@@ -36,7 +36,7 @@ until real ones are supplied.
 | `DeviceAuthenticator` (signature, clock window, nonce, rate limits) | #154 |
 | `FacilityDirectory` (device registry, bridge links, data push tokens) | #153, #154 |
 | `Mailbox`, `Doorbell` (48-hour sealed mailbox, IoT Core) | #155 |
-| `VendorCredentials` (Secrets Manager) | Relay CDK stack, after #153 |
+| `VendorCredentials` | Done: `src/parameterStore.ts` reads two SSM Parameter Store parameters (SecureString for the secret). The Relay stack creates them after #153. |
 
 Still to confirm with NHA during sandbox registration (#152): the v3 certificate URL and
 issuer for callback JWTs, the ABHA host, and each allowlisted path.
@@ -51,5 +51,6 @@ npm run build     # dist/ for the Web Function revision
 ```
 
 Environment variables for `src/server.ts`: `ABDM_ENV` (`sandbox` or `production`),
+`ABDM_CLIENT_ID_PARAM` and `ABDM_CLIENT_SECRET_PARAM` (Parameter Store names),
 optional `ABDM_GATEWAY_BASE_URL`, `ABDM_ABHA_BASE_URL`, `ABDM_GATEWAY_CERTS_URL`,
 `ABDM_GATEWAY_ISSUER`, and `PORT`.

@@ -4,7 +4,7 @@
 //   DeviceAuthenticator  -> #154 (pairing and signed requests)
 //   FacilityDirectory    -> #153 / #154 (device registry, bridge links)
 //   Mailbox, Doorbell    -> #155 (48-hour sealed mailbox, IoT Core doorbell)
-//   VendorCredentials    -> this stack's Secrets Manager secret
+//   VendorCredentials    -> SSM Parameter Store (src/parameterStore.ts)
 
 export interface DesktopRequest {
     method: string;
@@ -66,6 +66,6 @@ export interface Doorbell {
 }
 
 export interface VendorCredentials {
-    /** Reads the vendor Client ID and secret (from Secrets Manager in AWS). */
+    /** Reads the vendor Client ID and secret (from Parameter Store in AWS). */
     load(): Promise<{ clientId: string; clientSecret: string }>;
 }

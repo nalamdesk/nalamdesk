@@ -40,7 +40,8 @@ run the same vectors.
    correct its offset and retry once.
 3. Device row by ID (cached 30 seconds), `active`, else `401 device_unknown` or `device_revoked`.
 4. Signature, with the current key or, until `previousKeyValidUntil`, the key before the last
-   rotation, else `401 bad_signature`.
+   rotation. If it fails, the device row is read once more past the cache, in case the key was
+   rotated through another environment. Else `401 bad_signature`.
 5. Per-device rate limit, in memory per environment (20 a second, burst 60), else `429 rate_limited`.
 6. Nonce: a conditional put of `<deviceId>#<nonce>` with a 5-minute TTL, else `401 replay`.
 

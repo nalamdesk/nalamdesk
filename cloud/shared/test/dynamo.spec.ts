@@ -30,6 +30,8 @@ describe('DynamoDeviceRegistry', () => {
         now = 30_000;
         await registry.get('dev_0123456789');
         expect(sent).toHaveLength(2);
+        await registry.get('dev_0123456789', { fresh: true });
+        expect(sent).toHaveLength(3);
     });
 
     it('maps the rotation overlap and rejects incomplete rows', async () => {

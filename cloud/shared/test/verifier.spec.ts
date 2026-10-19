@@ -150,6 +150,30 @@ describe('device authenticator', () => {
         expect(await request()).toMatchObject({ ok: true });
     });
 
+    it('re-reads the device once when a cached row predates a key rotation', async () => {
+        const rotated = keyPair();
+        const stale = keyPair();
+        const reads: boolean[] = [];
+        const auth = createDeviceAuthenticator({
+            audience: 'relay',
+            devices: {
+                get: async (deviceId, options) => {
+                    reads.push(!!options?.fresh);
+                    return { deviceId, clinicId: 'cln_1', hipId: 'IN2710000123', status: 'active', signingPublicKey: options?.fresh ? rotated.raw : stale.raw };
+                }
+            },
+            nonces: { claim: async () => true },
+            nowMs: () => NOW
+        });
+        const send = (privateKey: crypto.KeyObject) => {
+            const headers = signRequest({ privateKey, deviceId: 'dev_0123456789', audience: 'relay', method: 'GET', path: '/x', nowMs: NOW });
+            return auth.authenticate({ method: 'GET', path: '/x', query: '', headers: new Headers(headers), body: new Uint8Array() });
+        };
+        expect(await send(rotated.privateKey)).toMatchObject({ ok: true });
+        expect(reads).toEqual([false, true]);
+        expect(await send(keyPair().privateKey)).toMatchObject({ code: 'bad_signature' });
+    });
+
     it('rate limits per device', async () => {
         const { request } = harness({ limiter: new TokenBucketLimiter(1, 2) });
         expect(await request()).toMatchObject({ ok: true });

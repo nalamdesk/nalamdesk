@@ -35,9 +35,9 @@ export class DynamoDeviceRegistry implements DeviceRegistry {
         this.nowMs = options.nowMs ?? Date.now;
     }
 
-    async get(deviceId: string): Promise<DeviceRecord | null> {
+    async get(deviceId: string, options: { fresh?: boolean } = {}): Promise<DeviceRecord | null> {
         const hit = this.cache.get(deviceId);
-        if (hit && this.nowMs() - hit.at < VERIFIER_LIMITS.deviceCacheMs) return hit.value;
+        if (!options.fresh && hit && this.nowMs() - hit.at < VERIFIER_LIMITS.deviceCacheMs) return hit.value;
         const result = await this.client.send(new GetItemCommand({ TableName: this.tableName, Key: { deviceId: { S: deviceId } } }));
         const value = toDeviceRecord(result.Item);
         if (this.cache.size > 5000) this.cache.clear();

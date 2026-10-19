@@ -35,7 +35,8 @@ export interface DeviceRecord {
 }
 
 export interface DeviceRegistry {
-    get(deviceId: string): Promise<DeviceRecord | null>;
+    /** `fresh` skips any cache, for a retry after a key rotation. */
+    get(deviceId: string, options?: { fresh?: boolean }): Promise<DeviceRecord | null>;
 }
 
 export interface NonceStore {
@@ -128,7 +129,7 @@ export function createDeviceAuthenticator(options: AuthenticatorOptions): Device
             const now = nowMs();
             if (Math.abs(now - Number(timestamp)) > VERIFIER_LIMITS.clockWindowMs) return fail(401, 'clock_skew', now);
 
-            const device = await options.devices.get(deviceId);
+            let device = await options.devices.get(deviceId);
             if (!device) return fail(401, 'device_unknown');
             if (device.status !== 'active') return fail(401, 'device_revoked');
 
@@ -142,9 +143,19 @@ export function createDeviceAuthenticator(options: AuthenticatorOptions): Device
                 nonce,
                 hipId: header('x-hip-id')
             };
-            let valid = verifyCanonical(publicKey(device.signingPublicKey), fields, signature);
-            if (!valid && device.previousSigningPublicKey && (device.previousKeyValidUntil ?? 0) > now) {
-                valid = verifyCanonical(publicKey(device.previousSigningPublicKey), fields, signature);
+            const signedBy = (record: DeviceRecord) =>
+                verifyCanonical(publicKey(record.signingPublicKey), fields, signature) ||
+                (!!record.previousSigningPublicKey && (record.previousKeyValidUntil ?? 0) > now &&
+                    verifyCanonical(publicKey(record.previousSigningPublicKey), fields, signature));
+            let valid = signedBy(device);
+            if (!valid) {
+                // A cached row may predate a key rotation done through another
+                // environment; read it once more before refusing.
+                const fresh = await options.devices.get(deviceId, { fresh: true });
+                if (fresh && fresh.status === 'active' && fresh.signingPublicKey !== device.signingPublicKey) {
+                    device = fresh;
+                    valid = signedBy(device);
+                }
             }
             if (!valid) return fail(401, 'bad_signature');
 

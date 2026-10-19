@@ -62,6 +62,11 @@ export function newMailboxItemId(nowMs: number): string {
 
 export const mailboxObjectKey = (clinicId: string, itemId: string) => `mailbox/${clinicId}/${itemId}`;
 
+/** Lowest item ID that can be stored at or after `ms`: IDs sort by time. */
+const itemIdFloor = (ms: number) => `m${Math.max(0, Math.floor(ms)).toString(36).padStart(9, '0')}`;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function toStored(item: Item): StoredMailboxItem | null {
     const itemId = item.itemId?.S;
     const clinicId = item.clinicId?.S;
@@ -124,12 +129,18 @@ export class DynamoMailbox {
      * limits. `more` says another listing would return further items.
      */
     async list(clinicId: string): Promise<{ items: StoredMailboxItem[]; more: boolean }> {
-        const nowSeconds = Math.floor(this.nowMs() / 1000);
+        const now = this.nowMs();
+        // The key condition starts at the 48-hour cut, so expired rows still
+        // waiting for TTL deletion never use up the page's Limit.
         const result = await this.dynamo.send(new QueryCommand({
             TableName: this.options.table,
-            KeyConditionExpression: 'clinicId = :c',
+            KeyConditionExpression: 'clinicId = :c AND itemId >= :from',
             FilterExpression: 'expiresAt > :now',
-            ExpressionAttributeValues: { ':c': { S: clinicId }, ':now': { N: String(nowSeconds) } },
+            ExpressionAttributeValues: {
+                ':c': { S: clinicId },
+                ':from': { S: itemIdFloor(now - MAILBOX_LIMITS.ttlMs) },
+                ':now': { N: String(Math.floor(now / 1000)) }
+            },
             ConsistentRead: true,
             Limit: MAILBOX_LIMITS.listMaxItems + 1
         }));
@@ -150,7 +161,11 @@ export class DynamoMailbox {
         return { items, more };
     }
 
-    /** Deletes the clinic's items with these IDs (and their S3 objects). Unknown IDs are ignored. */
+    /**
+     * Deletes the clinic's items with these IDs (and their S3 objects).
+     * Unknown IDs are ignored. Throws if a row could not be deleted, before
+     * any S3 object goes, so no row is left pointing at a missing object.
+     */
     async ack(clinicId: string, itemIds: string[]): Promise<void> {
         const ids = [...new Set(itemIds.filter(isMailboxItemId))];
         for (let i = 0; i < ids.length; i += 25) {
@@ -170,7 +185,7 @@ export class DynamoMailbox {
      * replacement was sealed to the new key and stays.
      */
     async purge(clinicId: string, beforeMs: number): Promise<number> {
-        const cut = `m${Math.floor(beforeMs).toString(36).padStart(9, '0')}`;
+        const cut = itemIdFloor(beforeMs);
         let removed = 0;
         let startKey: Item | undefined;
         do {
@@ -205,10 +220,12 @@ export class DynamoMailbox {
         let requests: Record<string, any[]> = {
             [this.options.table]: ids.map((id) => ({ DeleteRequest: { Key: { clinicId: { S: clinicId }, itemId: { S: id } } } }))
         };
-        // Unprocessed deletes are retried a few times; whatever remains expires with the TTL.
-        for (let attempt = 0; attempt < 4 && Object.keys(requests).length; attempt++) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+            if (attempt > 0) await sleep(50 * 2 ** attempt);
             const result = await this.dynamo.send(new BatchWriteItemCommand({ RequestItems: requests }));
             requests = (result.UnprocessedItems ?? {}) as Record<string, any[]>;
+            if (!Object.values(requests).some((list) => list?.length)) return;
         }
+        throw new Error('mailbox_delete_incomplete');
     }
 }

@@ -80,6 +80,17 @@ describe('DynamoPairingStore', () => {
         });
     });
 
+    it('marks a revocation\'s cleanup pending in the same write, and clears it after', async () => {
+        const { sent, client } = recorder();
+        const store = new DynamoPairingStore(tables, { client });
+        expect(await store.revoke('dev_a', 'ops', 'staff', 9)).toBe(true);
+        expect((sent[0] as UpdateItemCommand).input.UpdateExpression).toContain('cleanupPending = :pending');
+        await store.cleanupDone('dev_a');
+        expect((sent[1] as UpdateItemCommand).input).toMatchObject({ Key: { deviceId: { S: 'dev_a' } }, UpdateExpression: 'REMOVE cleanupPending' });
+        expect(toDevice({ deviceId: { S: 'd' }, clinicId: { S: 'c' }, hipId: { S: 'h' }, signingPublicKey: { S: 'k' }, cleanupPending: { BOOL: true } }))
+            .toMatchObject({ cleanupPending: true });
+    });
+
     it('maps device rows', () => {
         expect(toDevice({ deviceId: { S: 'd' } })).toBeNull();
         expect(toDevice({

@@ -75,7 +75,10 @@ They set a password and an authenticator app on first sign-in at `https://<bridg
   an attribute and one certificate made from a CSR, so the private key stays on the computer. The
   Core device policy lets it connect only with its thing name as client ID and subscribe only to
   its own clinic's topic; it cannot publish. A new certificate retires the old one, and
-  revocation revokes and deletes them.
+  revocation revokes and deletes them. Until that cleanup (and the mail purge) succeeds, the
+  device row carries `cleanupPending`, set in the same write that revoked it; listing the HFR
+  ID's devices, a later activation, or revoking again retries it. A certificate issued while a
+  revocation was in flight is taken back: the status is read again after attaching it.
 
 ## Sealing format
 

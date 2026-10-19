@@ -32,16 +32,20 @@ async function signedInbox() {
         purge: vi.fn(async () => 0)
     };
     const certificates = { issue: vi.fn(async () => ({ certificatePem: 'PEM' })), revoke: vi.fn(async () => undefined) };
+    const status = { current: 'active' as 'active' | 'revoked' | null };
     const h = await harness({
         devices, nowMs: () => now,
-        inbox: { inbox, certificates, doorbell: { endpoint: 'x-ats.iot.ap-south-1.amazonaws.com', topicPrefix: 'nalamdesk/sandbox/clinic' } }
+        inbox: {
+            inbox, certificates, doorbell: { endpoint: 'x-ats.iot.ap-south-1.amazonaws.com', topicPrefix: 'nalamdesk/sandbox/clinic' },
+            deviceStatus: async () => status.current
+        }
     });
     const call = (method: 'GET' | 'POST', path: string, body?: unknown) => {
         const bytes = body === undefined ? undefined : new TextEncoder().encode(JSON.stringify(body));
         const headers = signRequest({ privateKey, deviceId: 'dev_clinic1_main', audience: 'relay', method, path, body: bytes, nowMs: now });
         return h.app.request(path, { method, headers: { 'content-type': 'application/json', ...headers }, body: bytes ? Buffer.from(bytes) : undefined });
     };
-    return { h, call, inbox, certificates, stored };
+    return { h, call, inbox, certificates, stored, status };
 }
 
 describe('the desktop\'s mailbox endpoints', () => {
@@ -80,6 +84,18 @@ describe('the desktop\'s mailbox endpoints', () => {
         });
         expect(certificates.issue).toHaveBeenCalledWith({ deviceId: 'dev_clinic1_main', clinicId: CLINIC_ID }, CSR);
         expect((await call('POST', '/device/iot-certificate', { csr: 'not a csr' })).status).toBe(400);
+    });
+
+    it('takes the new certificate back when the device was revoked while it was issued', async () => {
+        const { call, certificates, status } = await signedInbox();
+        certificates.issue.mockImplementationOnce(async () => {
+            status.current = 'revoked';
+            return { certificatePem: 'PEM' };
+        });
+        const response = await call('POST', '/device/iot-certificate', { csr: CSR });
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: 'device_revoked' });
+        expect(certificates.revoke).toHaveBeenCalledWith('dev_clinic1_main');
     });
 });
 

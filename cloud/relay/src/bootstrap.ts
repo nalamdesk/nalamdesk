@@ -31,7 +31,7 @@ const OWNERS: Record<keyof Adapters, string> = {
     facilities: 'facility directory (DEVICES_TABLE)',
     mailbox: 'mailbox (MAILBOX_TABLE, MAILBOX_BUCKET)',
     doorbell: 'doorbell (IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX)',
-    inbox: 'inbox and IoT certificates (MAILBOX_TABLE, MAILBOX_BUCKET, IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX, IOT_POLICY_NAME)',
+    inbox: 'inbox and IoT certificates (MAILBOX_TABLE, MAILBOX_BUCKET, IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX, IOT_POLICY_NAME, DEVICES_TABLE)',
     credentials: 'vendor credentials (ABDM_CLIENT_ID_PARAM, ABDM_CLIENT_SECRET_PARAM)',
     pairing: 'pairing (PAIRING_TABLE, CLINIC_IDS_TABLE, PAIRING_PEPPER_PARAM, BRIDGE_URL, OPS_USER_POOL_ID, OPS_CLIENT_ID, OPS_AUTH_DOMAIN)'
 };
@@ -81,11 +81,13 @@ export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
     const { MAILBOX_TABLE, MAILBOX_BUCKET, IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX, IOT_POLICY_NAME } = env;
     const mailbox = MAILBOX_TABLE && MAILBOX_BUCKET ? new RelayMailbox({ table: MAILBOX_TABLE, bucket: MAILBOX_BUCKET }) : undefined;
     const doorbellReady = !!(IOT_DATA_ENDPOINT && DOORBELL_TOPIC_PREFIX);
-    const inbox: InboxRouteDeps | undefined = mailbox && doorbellReady && IOT_POLICY_NAME
+    const statusRegistry = env.DEVICES_TABLE ? new DynamoDeviceRegistry(env.DEVICES_TABLE) : undefined;
+    const inbox: InboxRouteDeps | undefined = mailbox && doorbellReady && IOT_POLICY_NAME && statusRegistry
         ? {
             inbox: mailbox,
             certificates: new IotDeviceCertificates(IOT_POLICY_NAME),
-            doorbell: { endpoint: IOT_DATA_ENDPOINT as string, topicPrefix: DOORBELL_TOPIC_PREFIX as string }
+            doorbell: { endpoint: IOT_DATA_ENDPOINT as string, topicPrefix: DOORBELL_TOPIC_PREFIX as string },
+            deviceStatus: async (deviceId) => (await statusRegistry.get(deviceId, { fresh: true }))?.status ?? null
         }
         : undefined;
     return {

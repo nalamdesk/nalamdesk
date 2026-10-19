@@ -7,6 +7,7 @@ on:
       - master
     paths:
       - 'cloud/booking/**'
+      - 'cloud/shared/**'
       - '.github/workflows/booking-ci.yml'
 
 concurrency:

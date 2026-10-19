@@ -25,7 +25,9 @@ export function bundleApi(): string {
         sourcemap: false,
         legalComments: 'none',
         logLevel: 'warning',
-        nodePaths: [join(booking, 'api', 'node_modules')]
+        nodePaths: [join(booking, 'api', 'node_modules')],
+        // cloud/shared is a file: link; resolve its imports from api/node_modules.
+        preserveSymlinks: true
     });
     // Pin CommonJS so no surrounding package.json can make Node read it as ESM.
     writeFileSync(join(outDir, 'package.json'), '{"type":"commonjs"}\n');

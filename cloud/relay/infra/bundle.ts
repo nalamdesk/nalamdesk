@@ -23,7 +23,9 @@ export function bundleRelay(): string {
         minify: true,
         sourcemap: false,
         legalComments: 'none',
-        logLevel: 'warning'
+        logLevel: 'warning',
+        // cloud/shared is a file: link; resolve its imports from this package.
+        preserveSymlinks: true
     });
     // Pin CommonJS so no surrounding package.json can make Node read it as ESM.
     writeFileSync(join(outDir, 'package.json'), '{"type":"commonjs"}\n');

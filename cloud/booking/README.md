@@ -29,7 +29,7 @@ The desktop side lives in `desktop/src/main/booking/BookingInboxService.ts` (#15
 | `GET /api/slots/:clinicId` | Public | Open slots for the next 14 days (IST). Cached 30 s. |
 | `POST /api/book` | Public | `{clinicId, ref, slotId \| null, phoneDigest, sealed}`. Conditional slot hold, sealed item to the mailbox, doorbell. Rate-limited at the edge. |
 | `GET /api/booking/:ref` | Public | `Requested`, `Accepted` or `Declined`, and the clinic name. Nothing else. |
-| `PUT/DELETE /api/clinic/listing` | Paired desktop | Signed. Turns the listing on with name, city, specialty and sealing key, or off. |
+| `PUT/DELETE /api/clinic/listing` | Paired desktop | Signed (`cloud/shared`, audience `booking`). Turns the listing on with name, city, specialty and sealing key, or off. |
 | `PUT/GET /api/clinic/slots` | Paired desktop | Signed. Replaces open slots on given dates; held and booked slots stay. |
 | `POST /api/clinic/bookings/:ref/decision` | Paired desktop | Signed. `accepted` books the slot, `declined` releases it. |
 
@@ -67,7 +67,6 @@ serves; these make silent tampering hard, not impossible.
 
 | Piece | Waiting on |
 | --- | --- |
-| `DeviceAuthenticator` (signed clinic routes) | #154 |
 | `Mailbox`, `Doorbell` (sealed store, IoT Core) and presence events | #155 |
 | Desktop transport and the pairing-time X25519 key for `BookingInboxService` | #154, #155 |
 Until the adapters exist, `api/src/server.ts` serves a 503 holding app whose `/api/health` names

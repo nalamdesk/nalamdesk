@@ -63,6 +63,33 @@ jobs:
         env:
           CDK_DEFAULT_ACCOUNT: '123456789012'
 
+  # Code shared by the relay and booking API (cloud/shared): signed requests.
+  shared-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cloud/shared
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: cloud/shared/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Unit Tests
+        run: npm test
+
   # Core CDK stacks (cloud/core): typecheck, assertions, synth.
   core-check:
     if: github.event_name == 'pull_request'

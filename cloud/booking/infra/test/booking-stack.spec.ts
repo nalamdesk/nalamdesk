@@ -108,6 +108,18 @@ describe('BookingStack', () => {
         });
     });
 
+    it('lets the API read devices by ID and record nonces, from the Core tables', () => {
+        const statements = Object.values(t.findResources('AWS::IAM::Policy'))
+            .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+        const get = statements.find((s: any) => s.Action === 'dynamodb:GetItem');
+        const put = statements.find((s: any) => s.Action === 'dynamodb:PutItem');
+        expect(JSON.stringify(get.Resource)).toContain('devicestablename');
+        expect(JSON.stringify(put.Resource)).toContain('noncestablename');
+        t.hasResourceProperties('AWS::Lambda::WebFunctionRevision', {
+            ServiceConfig: { EnvironmentVariables: { DEVICES_TABLE: { Ref: Match.stringLikeRegexp('devicestablename') }, NONCES_TABLE: { Ref: Match.stringLikeRegexp('noncestablename') } } }
+        });
+    });
+
     it('gives the API role table and pepper-parameter access only', () => {
         const policies = JSON.stringify(t.findResources('AWS::IAM::Policy'));
         expect(policies).toContain('dynamodb:PutItem');

@@ -1,3 +1,4 @@
+import { createDeviceAuthenticator, DynamoDeviceRegistry, DynamoNonceStore } from '@nalamdesk/cloud-shared';
 import { Hono } from 'hono';
 import { createRelayApp } from './app.js';
 import { DynamoFacilityDirectory } from './dynamoFacilities.js';
@@ -17,7 +18,7 @@ export interface Adapters {
 
 // Which issue supplies each adapter that is not wired from the environment yet.
 const OWNERS: Record<keyof Adapters, string> = {
-    devices: 'device authenticator (#154)',
+    devices: 'device authenticator (DEVICES_TABLE, NONCES_TABLE)',
     facilities: 'facility directory (DEVICES_TABLE)',
     mailbox: 'mailbox (#155)',
     doorbell: 'doorbell (#155)',
@@ -27,6 +28,13 @@ const OWNERS: Record<keyof Adapters, string> = {
 /** Adapters that can be built from environment variables alone. */
 export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
     return {
+        devices: env.DEVICES_TABLE && env.NONCES_TABLE
+            ? createDeviceAuthenticator({
+                audience: 'relay',
+                devices: new DynamoDeviceRegistry(env.DEVICES_TABLE),
+                nonces: new DynamoNonceStore(env.NONCES_TABLE)
+            })
+            : undefined,
         facilities: env.DEVICES_TABLE ? new DynamoFacilityDirectory(env.DEVICES_TABLE) : undefined,
         credentials: env.ABDM_CLIENT_ID_PARAM && env.ABDM_CLIENT_SECRET_PARAM
             ? new ParameterStoreCredentials({

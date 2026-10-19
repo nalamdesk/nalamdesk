@@ -12,7 +12,7 @@ Function (Node 24, arm64) and on a local Node server.
 
 | Route | Caller | What happens |
 | --- | --- | --- |
-| `GET/POST /abdm/abha/...`, `/abdm/gateway/...` | Paired desktop | Device signature checked, `X-HIP-ID` must be the device's facility, path must be on the allowlist (`src/allowlist.ts`). The relay adds `Authorization`, `X-CM-ID` and `X-HIP-ID`/`X-HIU-ID`, forwards, and streams the response back. The vendor token never leaves the relay. |
+| `GET/POST /abdm/abha/...`, `/abdm/gateway/...` | Paired desktop | Device signature checked (see `cloud/shared`), `X-HIP-ID` must be the device's facility, path must be on the allowlist (`src/allowlist.ts`). The relay adds `Authorization`, `X-CM-ID` and `X-HIP-ID`/`X-HIU-ID`, forwards, and streams the response back. The vendor token never leaves the relay. |
 | `POST /api/v3/...` | ABDM gateway | The callback JWT is verified against the gateway's published keys, the facility must be linked to the bridge, then headers and body are sealed to the clinic's X25519 key, stored in the mailbox, and the doorbell rings. `202` is sent only after the store succeeds, because ABDM does not resend an acknowledged callback. |
 | `POST /hiu/data-push/:token` | An HIP | Fidelius ciphertext for an HIU request, routed by the opaque token in the clinic's data push URL and sealed byte for byte. |
 | `GET /health` | Load balancer | Liveness. |
@@ -33,7 +33,7 @@ mailbox reader (#155) must match `open()` in the same file.
 | --- | --- |
 | `AWS::Lambda::WebFunction`, `WebFunctionRevision`, `WebFunctionEndpoint` | Node 24, HomeRegion endpoint with `IamAuth`, `MaxEnvironments` 2, 64 concurrent requests per environment, 30-second timeout, 100 requests a second |
 | Code upload | `infra/bundle.ts` bundles `src/server.ts` to one `index.js`; it is uploaded to the Core code bucket and pinned by S3 version |
-| IAM execution role | Reads the two Parameter Store values (with `kms:Decrypt` only via SSM), queries the device registry indexes, writes its log group |
+| IAM execution role | Reads the two Parameter Store values (with `kms:Decrypt` only via SSM), queries the device registry indexes, reads devices by ID, writes nonces, writes its log group |
 | CloudWatch log group | `/aws/lambda/web/nalamdesk-abdm-relay-<stage>`, 30-day retention |
 | CloudFront distribution | On `abdm.<zone>` (production) or `abdm-sandbox.<zone>`, TLS 1.2+, no caching, origin access control that signs every request (`always-amz-auth`, so ABDM's own `Authorization` JWT still reaches the relay) |
 | `AWS::Lambda::ResourcePolicy` | Only that distribution may invoke the endpoint |
@@ -67,7 +67,7 @@ in `test/helpers.ts`.
 | --- | --- |
 | `VendorCredentials` | Done: `src/parameterStore.ts` |
 | `FacilityDirectory` | Done: `src/dynamoFacilities.ts`, against the Core devices table |
-| `DeviceAuthenticator` (signature, clock window, nonce, rate limits) | #154 |
+| `DeviceAuthenticator` (signature, clock window, nonce, rate limits) | Done: `cloud/shared`, against the Core devices and nonces tables |
 | `Mailbox`, `Doorbell` (48-hour sealed mailbox, IoT Core) | #155 |
 
 Still to confirm with NHA during sandbox registration (#152): the v3 certificate URL and
@@ -84,6 +84,6 @@ npm start         # bundle and run locally on PORT or 127.0.0.1:8080
 ```
 
 Runtime environment variables (set by the stack): `ABDM_ENV` (`sandbox` or `production`),
-`ABDM_CLIENT_ID_PARAM`, `ABDM_CLIENT_SECRET_PARAM`, `DEVICES_TABLE`, optional
+`ABDM_CLIENT_ID_PARAM`, `ABDM_CLIENT_SECRET_PARAM`, `DEVICES_TABLE`, `NONCES_TABLE`, optional
 `ABDM_GATEWAY_BASE_URL`, `ABDM_ABHA_BASE_URL`, `ABDM_GATEWAY_CERTS_URL`, `ABDM_GATEWAY_ISSUER`.
 The Web Function runtime supplies `AWS_LAMBDA_HTTP_ENDPOINT`, where the server listens.

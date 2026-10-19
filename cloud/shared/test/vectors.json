@@ -1,0 +1,34 @@
+{
+  "seedHex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "publicKeyRaw": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "cases": [
+    {
+      "name": "relay GET with query and X-HIP-ID",
+      "audience": "relay",
+      "method": "GET",
+      "path": "/abdm/abha/v3/profile/account",
+      "query": "abhaNumber=91-1234&x=1",
+      "body": "",
+      "timestamp": "1792400000000",
+      "nonce": "AAECAwQFBgcICQoLDA0ODw",
+      "hipId": "IN2710000123",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "nalamdesk-req-v1\nrelay\nGET\n/abdm/abha/v3/profile/account?abhaNumber=91-1234&x=1\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n1792400000000\nAAECAwQFBgcICQoLDA0ODw\nIN2710000123",
+      "signature": "rk5wpEdAdpZSOxXxZJKHIZc6VUZhs9kqGom3vRpw2UrZqEzdopk5X_uHa2GF2jMnxVDXSr7KdhugdPfdug9HCw"
+    },
+    {
+      "name": "booking PUT with JSON body",
+      "audience": "booking",
+      "method": "PUT",
+      "path": "/api/clinic/listing",
+      "query": "",
+      "body": "{\"name\":\"Arogya Clinic\",\"city\":\"Chennai\"}",
+      "timestamp": "1792400001234",
+      "nonce": "EBESExQVFhcYGRobHB0eHw",
+      "hipId": "",
+      "bodySha256": "7963c51a3892ffb118367b33609ffd679bd2f51f604a05c8e6ab1512797bbaac",
+      "canonical": "nalamdesk-req-v1\nbooking\nPUT\n/api/clinic/listing\n7963c51a3892ffb118367b33609ffd679bd2f51f604a05c8e6ab1512797bbaac\n1792400001234\nEBESExQVFhcYGRobHB0eHw\n",
+      "signature": "rZrKkDXAVA994LTygwpt5DAt2sMJHgfxirxqTHlSQhuWrhMWG4EBLhvyxrQ3cNwdUXqh6tuKvbj-SH7d4eGmDg"
+    }
+  ]
+}

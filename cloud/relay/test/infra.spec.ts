@@ -95,9 +95,16 @@ describe('Relay stack', () => {
         expect(text.toLowerCase()).not.toContain('secretsmanager');
     });
 
-    it('only queries the device registry indexes', () => {
+    it('queries the device indexes, reads devices by ID and writes only nonces', () => {
         expect(text).toContain('dynamodb:Query');
-        expect(text).not.toMatch(/dynamodb:(PutItem|UpdateItem|DeleteItem|Scan)/);
+        expect(text).toContain('dynamodb:GetItem');
+        expect(text).toContain('/nalamdesk/sandbox/core/nonces-table-name');
+        expect(text).not.toMatch(/dynamodb:(UpdateItem|DeleteItem|Scan|\*)/);
+        const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+            .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+        const put = statements.find((s: any) => s.Action === 'dynamodb:PutItem');
+        expect(JSON.stringify(put.Resource)).toContain('noncestablename');
+        expect(JSON.stringify(put.Resource)).not.toContain('devicestablename');
     });
 });
 

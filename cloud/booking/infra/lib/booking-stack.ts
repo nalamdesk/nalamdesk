@@ -169,6 +169,17 @@ export class BookingStack extends cdk.Stack {
             conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } }
         }));
         logGroup.grantWrite(role);
+        // Signed clinic requests (#154): read the device by ID, record each nonce.
+        const devicesTable = core('devices-table-name');
+        const noncesTable = core('nonces-table-name');
+        role.addToPolicy(new iam.PolicyStatement({
+            actions: ['dynamodb:GetItem'],
+            resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: devicesTable })]
+        }));
+        role.addToPolicy(new iam.PolicyStatement({
+            actions: ['dynamodb:PutItem'],
+            resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: noncesTable })]
+        }));
 
         // Each build is uploaded once to the Core code bucket, named by its
         // content hash; the revision pins that object's version, so a new
@@ -202,7 +213,9 @@ export class BookingStack extends cdk.Stack {
                     BOOKING_CLINICS_TABLE: clinics.tableName,
                     BOOKING_SLOTS_TABLE: slots.tableName,
                     BOOKING_REQUESTS_TABLE: bookings.tableName,
-                    BOOKING_PHONE_PEPPER_PARAM: phonePepper
+                    BOOKING_PHONE_PEPPER_PARAM: phonePepper,
+                    DEVICES_TABLE: devicesTable,
+                    NONCES_TABLE: noncesTable
                 },
                 telemetryConfig: { loggingConfig: { logGroup: logGroup.logGroupName, applicationLogLevel: 'INFO', systemLogLevel: 'WARN' } }
             }

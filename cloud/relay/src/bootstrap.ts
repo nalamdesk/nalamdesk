@@ -1,6 +1,7 @@
 import { createDeviceAuthenticator, DynamoDeviceRegistry, DynamoNonceStore, IotDoorbell } from '@nalamdesk/cloud-shared';
 import { Hono } from 'hono';
 import { createRelayApp } from './app.js';
+import { DynamoCertificateLedger } from './certificateLedger.js';
 import { DynamoFacilityDirectory } from './dynamoFacilities.js';
 import { resolveEnvironment } from './environments.js';
 import { createGatewayJwtVerifier } from './gatewayJwt.js';
@@ -81,13 +82,12 @@ export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
     const { MAILBOX_TABLE, MAILBOX_BUCKET, IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX, IOT_POLICY_NAME } = env;
     const mailbox = MAILBOX_TABLE && MAILBOX_BUCKET ? new RelayMailbox({ table: MAILBOX_TABLE, bucket: MAILBOX_BUCKET }) : undefined;
     const doorbellReady = !!(IOT_DATA_ENDPOINT && DOORBELL_TOPIC_PREFIX);
-    const statusRegistry = env.DEVICES_TABLE ? new DynamoDeviceRegistry(env.DEVICES_TABLE) : undefined;
-    const inbox: InboxRouteDeps | undefined = mailbox && doorbellReady && IOT_POLICY_NAME && statusRegistry
+    const inbox: InboxRouteDeps | undefined = mailbox && doorbellReady && IOT_POLICY_NAME && env.DEVICES_TABLE
         ? {
             inbox: mailbox,
-            certificates: new IotDeviceCertificates(IOT_POLICY_NAME),
-            doorbell: { endpoint: IOT_DATA_ENDPOINT as string, topicPrefix: DOORBELL_TOPIC_PREFIX as string },
-            deviceStatus: async (deviceId) => (await statusRegistry.get(deviceId, { fresh: true }))?.status ?? null
+            // Certificates are recorded on the device rows, so a revocation finds them all.
+            certificates: new IotDeviceCertificates(IOT_POLICY_NAME, new DynamoCertificateLedger(env.DEVICES_TABLE)),
+            doorbell: { endpoint: IOT_DATA_ENDPOINT as string, topicPrefix: DOORBELL_TOPIC_PREFIX as string }
         }
         : undefined;
     return {

@@ -9,8 +9,6 @@ export interface InboxRouteDeps {
     inbox: Inbox;
     certificates: DeviceCertificates;
     doorbell: DoorbellConnection;
-    /** The device's current status, read consistently (no cache). */
-    deviceStatus: (deviceId: string) => Promise<'active' | 'revoked' | null>;
 }
 
 const CSR = /^-----BEGIN CERTIFICATE REQUEST-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE REQUEST-----\r?\n?$/;
@@ -93,15 +91,9 @@ export function registerInboxRoutes(app: Hono, deps: InboxRouteDeps, ctx: {
             return refuse(c, 400, 'bad_csr');
         }
         try {
+            // A revocation landing while this is in flight refuses it with
+            // device_revoked, or retires the certificate it issues.
             const { certificatePem } = await deps.certificates.issue({ deviceId: r.auth.deviceId, clinicId: r.auth.clinicId }, csr);
-            // A revocation can land while this request is in flight, after
-            // its own certificate cleanup ran: look again now that the new
-            // certificate is attached, and take it back if so.
-            if ((await deps.deviceStatus(r.auth.deviceId)) !== 'active') {
-                await deps.certificates.revoke(r.auth.deviceId);
-                r.done({ hipId: r.auth.hipId, status: 401, code: 'device_revoked' });
-                return refuse(c, 401, 'device_revoked');
-            }
             r.done({ hipId: r.auth.hipId, status: 200 });
             return c.json({
                 certificatePem,
@@ -111,8 +103,9 @@ export function registerInboxRoutes(app: Hono, deps: InboxRouteDeps, ctx: {
             });
         } catch (error) {
             if (error instanceof CertificateError) {
-                r.done({ hipId: r.auth.hipId, status: 400, code: error.code });
-                return refuse(c, 400, error.code);
+                const status = error.code === 'device_revoked' ? 401 : 400;
+                r.done({ hipId: r.auth.hipId, status, code: error.code });
+                return refuse(c, status, error.code);
             }
             r.done({ hipId: r.auth.hipId, status: 503, code: 'iot_unavailable' });
             return refuse(c, 503, 'iot_unavailable');

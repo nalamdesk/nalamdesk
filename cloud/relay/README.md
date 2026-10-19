@@ -77,8 +77,11 @@ They set a password and an authenticator app on first sign-in at `https://<bridg
   its own clinic's topic; it cannot publish. A new certificate retires the old one, and
   revocation revokes and deletes them. Until that cleanup (and the mail purge) succeeds, the
   device row carries `cleanupPending`, set in the same write that revoked it; listing the HFR
-  ID's devices, a later activation, or revoking again retries it. A certificate issued while a
-  revocation was in flight is taken back: the status is read again after attaching it.
+  ID's devices, a later activation, or revoking again retries it. Each certificate is recorded in
+  the device row's `iotCertArns` set, on condition that the device is still active, before it
+  is attached; revocation reads that set consistently after marking the device revoked. A
+  certificate request racing a revocation therefore either fails with `device_revoked` or has
+  its certificate retired by the revocation.
 
 ## Sealing format
 

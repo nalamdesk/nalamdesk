@@ -93,7 +93,8 @@ export class RelayStack extends Stack {
         const tableArn = (name: string) => this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: name });
         // Signed desktop requests read devices by ID and record nonces;
         // pairing creates and revokes devices, rotates keys and counts
-        // pairing requests per IP in the nonces table (#154).
+        // pairing requests per IP in the nonces table (#154); device rows
+        // also record each device's IoT certificates (#155).
         role.addToPolicy(new PolicyStatement({
             actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
             resources: [devicesTableArn]

@@ -5,7 +5,8 @@ import { CloudPairingService, type PairingStatus } from './CloudPairingService';
 import type { CloudDeviceStore } from './DeviceIdentity';
 import { SignedCloudClient, type Audience } from './SignedCloudClient';
 
-const ROTATION_CHECK_MS = 24 * 60 * 60 * 1000;
+// Hourly: cheap when nothing is due, and it retries an unfinished rotation soon.
+const ROTATION_CHECK_MS = 60 * 60 * 1000;
 
 /**
  * The booking API over signed requests, and the shared mailbox on the relay.

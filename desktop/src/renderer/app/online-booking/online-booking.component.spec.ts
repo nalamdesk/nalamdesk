@@ -48,6 +48,15 @@ describe('OnlineBookingComponent', () => {
         expect(component.requests.length).toBe(1);
     });
 
+    it('still lists saved requests when the cloud refresh fails', async () => {
+        await fixture.whenStable();
+        mockCloudService.syncNow.mockReturnValueOnce(Promise.reject(new Error('offline')));
+        component.requests = [];
+        component.isRefreshing = false;
+        await component.loadRequests();
+        expect(component.requests.length).toBe(1);
+    });
+
     it('should toggle time slots', () => {
         const time = '10:00';
         component.toggleTime(time);

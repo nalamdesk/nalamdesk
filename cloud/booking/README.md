@@ -1,4 +1,6 @@
-# Online booking
+# Online booking (NalamBook)
+
+NalamBook, "by NalamDesk", is the patient-facing name of this site; clinics keep using NalamDesk.
 
 The public booking stack from the cloud relay plan (Milestone G, iteration 3: #156, #157, #158).
 Patients find a clinic, pick a time or ask for a call back, and send their name, phone and

@@ -1,5 +1,5 @@
 ---
-name: NalamDesk Booking
+name: NalamBook
 description: Public clinic booking site — calm, legible, one clear action per screen.
 colors:
   primary: "#1659c7"
@@ -84,9 +84,10 @@ components:
     padding: "10px 12px"
 ---
 
-# Design System: NalamDesk Booking
+# Design System: NalamBook
 
-> Scope: the public booking site in `cloud/booking/web`. The desktop console has its own
+> Scope: NalamBook, the public booking site in `cloud/booking/web`. The wordmark is
+> "NalamBook" in Newsreader with a small "by NalamDesk" beside it, so clinic staff recognise it. The desktop console has its own
 > `desktop/DESIGN.md`; the two share the trust-blue lineage, not the rest.
 
 ## Overview

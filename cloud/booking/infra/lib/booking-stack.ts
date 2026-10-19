@@ -241,7 +241,7 @@ export class BookingStack extends cdk.Stack {
         }
 
         this.distribution = new cloudfront.Distribution(this, 'Distribution', {
-            comment: 'NalamDesk online booking',
+            comment: 'NalamBook (NalamDesk online booking)',
             defaultRootObject: 'index.html',
             httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
             priceClass: cloudfront.PriceClass.PRICE_CLASS_200,

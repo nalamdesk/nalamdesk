@@ -378,7 +378,7 @@ function DetailsStep(props: {
                             aria-describedby={consentError ? `${ids.consent}-error` : undefined}
                         />
                         <label htmlFor={ids.consent} className="text-[0.9375rem] text-ink-soft">
-                            I agree to share these details with {clinic.name} so they can contact me. They are locked on this device so only the clinic can read them; NalamDesk forwards only the locked copy and deletes it after 48 hours if the clinic has not collected it.
+                            I agree to share these details with {clinic.name} so they can contact me. They are locked on this device so only the clinic can read them; NalamBook forwards only the locked copy and deletes it after 48 hours if the clinic has not collected it.
                         </label>
                     </div>
                     {consentError && <p id={`${ids.consent}-error`} className="mt-1 text-sm text-danger">{consentError}</p>}

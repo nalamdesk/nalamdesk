@@ -107,7 +107,7 @@ describe('Relay stack', () => {
         expect(on('devicestablename')).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:Query', 'dynamodb:UpdateItem']);
         expect(on('noncestablename')).toEqual(['dynamodb:PutItem', 'dynamodb:UpdateItem']);
         expect(on('pairingtablename')).toEqual(['dynamodb:DeleteItem', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Scan', 'dynamodb:UpdateItem']);
-        expect(on('clinicidstablename')).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
+        expect(on('clinicidstablename')).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem']);
     });
 
     it('reads the pairing pepper from Parameter Store and passes pairing and ops names to the function', () => {

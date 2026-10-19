@@ -37,16 +37,20 @@ describe('DynamoPairingStore', () => {
 
     it('activates in one transaction: new device, old devices revoked, request deleted on its code hash', async () => {
         const { sent, client } = recorder();
-        expect(await new DynamoPairingStore(tables, { client }).activate(device, ['dev_old'], { hfrId: 'IN2710000123', requestId: 'pr_abc', codeHash: 'h' }, 7)).toBe(true);
+        expect(await new DynamoPairingStore(tables, { client }).activate(device, ['dev_old'], { hfrId: 'IN2710000123', requestId: 'pr_abc', codeHash: 'h' }, 7, 'dev_old')).toBe(true);
         const items = (sent[0] as TransactWriteItemsCommand).input.TransactItems!;
-        expect(items).toHaveLength(3);
+        expect(items).toHaveLength(4);
         expect(items[0]!.Put).toMatchObject({ TableName: 'devices', ConditionExpression: 'attribute_not_exists(deviceId)' });
         expect(items[0]!.Put!.Item).toMatchObject({ status: { S: 'active' }, linkedToBridge: { BOOL: true }, dataPushToken: { S: 'tok' } });
         expect(items[1]!.Update).toMatchObject({ TableName: 'devices', Key: { deviceId: { S: 'dev_old' } }, ConditionExpression: '#status = :active' });
-        expect(items[2]!.Delete).toMatchObject({ TableName: 'pairing', ConditionExpression: 'requestId = :id AND codeHash = :hash AND #status = :approved' });
+        expect(items[2]!.Update).toMatchObject({
+            TableName: 'clinic-ids', UpdateExpression: 'SET activeDeviceId = :new',
+            ConditionExpression: 'attribute_exists(clinicId) AND activeDeviceId = :expected', ExpressionAttributeValues: { ':expected': { S: 'dev_old' } }
+        });
+        expect(items[3]!.Delete).toMatchObject({ TableName: 'pairing', ConditionExpression: 'requestId = :id AND codeHash = :hash AND #status = :approved' });
 
         const raced = recorder(() => { throw new TransactionCanceledException({ message: 'x', $metadata: {} }); });
-        expect(await new DynamoPairingStore(tables, { client: raced.client }).activate(device, [], { hfrId: 'IN2710000123', requestId: 'pr_abc', codeHash: 'h' }, 7)).toBe(false);
+        expect(await new DynamoPairingStore(tables, { client: raced.client }).activate(device, [], { hfrId: 'IN2710000123', requestId: 'pr_abc', codeHash: 'h' }, 7, null)).toBe(false);
     });
 
     it('keeps one clinic ID per HFR ID, and reads the winner after a race', async () => {

@@ -98,7 +98,8 @@ export class RelayStack extends Stack {
             actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Scan'],
             resources: [tableArn(pairingTableName)]
         }));
-        role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], resources: [tableArn(clinicIdsTableName)] }));
+        // The clinic row also names the active device; activation updates it in its transaction.
+        role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'], resources: [tableArn(clinicIdsTableName)] }));
 
         // Each build is uploaded once, named by its content hash, at the
         // bucket root (objectKeys reports keys without a prefix). The

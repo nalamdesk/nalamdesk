@@ -318,6 +318,19 @@ describe('ops console', () => {
     });
 });
 
+describe('the active device per HFR ID', () => {
+    it('revokes the device the clinic row names even when the HIP ID index has not caught up', async () => {
+        const r = await relayWithPairing();
+        const first = install('Old PC');
+        const { deviceId: oldId } = await r.pair(first);
+        r.store.devicesFor = async () => [];
+        const { deviceId: newId } = await r.pair(install('New PC'));
+        expect(r.store.devices.get(oldId)).toMatchObject({ status: 'revoked', revokedReason: 'replaced' });
+        expect(r.store.activeDevice.get(HFR)).toBe(newId);
+        expect(r.revoked).toEqual([oldId]);
+    });
+});
+
 describe('a lost activation answer', () => {
     it('gives the same install the same device again, and nobody else anything', async () => {
         const r = await relayWithPairing();

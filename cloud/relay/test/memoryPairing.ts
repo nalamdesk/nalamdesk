@@ -48,6 +48,12 @@ export class MemoryPairingStore implements PairingStore {
         return this.clinicIds.get(hipId)!;
     }
 
+    readonly activeDevice = new Map<string, string>();
+
+    async activeDeviceFor(hipId: string) {
+        return this.activeDevice.get(hipId) ?? null;
+    }
+
     async devicesFor(hipId: string) {
         return [...this.devices.values()].filter((d) => d.hipId === hipId).map((d) => ({ ...d }));
     }
@@ -57,13 +63,15 @@ export class MemoryPairingStore implements PairingStore {
         return d ? { ...d } : null;
     }
 
-    async activate(device: Device, revokeDeviceIds: string[], request: { hfrId: string; requestId: string; codeHash: string }, nowMs: number) {
+    async activate(device: Device, revokeDeviceIds: string[], request: { hfrId: string; requestId: string; codeHash: string }, nowMs: number, expectedActive: string | null) {
         const r = this.requests.get(request.hfrId);
         if (this.devices.has(device.deviceId)) return false;
+        if (!this.clinicIds.has(device.hipId) || (this.activeDevice.get(device.hipId) ?? null) !== expectedActive) return false;
         if (!r || r.requestId !== request.requestId || r.codeHash !== request.codeHash || r.status !== 'approved') return false;
         if (revokeDeviceIds.some((id) => this.devices.get(id)?.status !== 'active')) return false;
         this.devices.set(device.deviceId, { ...device });
         for (const id of revokeDeviceIds) Object.assign(this.devices.get(id)!, { status: 'revoked', revokedAt: nowMs, revokedReason: 'replaced' });
+        this.activeDevice.set(device.hipId, device.deviceId);
         this.requests.delete(request.hfrId);
         return true;
     }

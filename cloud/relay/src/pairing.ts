@@ -95,13 +95,18 @@ export interface PairingStore {
     recordFailedAttempt(hfrId: string, requestId: string): Promise<number>;
     /** The clinic ID for an HFR ID, created on first use and kept across replacements. */
     clinicIdFor(hipId: string): Promise<string>;
+    /** The device the HFR ID's clinic row names as active, read consistently. */
+    activeDeviceFor(hipId: string): Promise<string | null>;
     devicesFor(hipId: string): Promise<Device[]>;
     getDevice(deviceId: string): Promise<Device | null>;
     /**
-     * One transaction: create the device, revoke the listed devices and
-     * delete the request (only if it still carries this code hash).
+     * One transaction: create the device, revoke the listed devices, point
+     * the clinic row at the new device (only if it still names
+     * `expectedActive`) and delete the request (only if it still carries
+     * this code hash).
      */
-    activate(device: Device, revokeDeviceIds: string[], request: { hfrId: string; requestId: string; codeHash: string }, nowMs: number): Promise<boolean>;
+    activate(device: Device, revokeDeviceIds: string[], request: { hfrId: string; requestId: string; codeHash: string }, nowMs: number,
+        expectedActive: string | null): Promise<boolean>;
     revoke(deviceId: string, reason: 'ops', by: string, nowMs: number): Promise<boolean>;
     /** Swaps the signing key if it is still `oldKey`, keeping the old one until validUntil. */
     rotateKey(deviceId: string, oldKey: string, newKey: string, validUntil: number, nowMs: number): Promise<boolean>;
@@ -322,7 +327,7 @@ export class PairingService {
         }
 
         const clinicId = await this.options.store.clinicIdFor(hfrId);
-        const previous = (await this.options.store.devicesFor(hfrId)).filter((d) => d.status === 'active');
+        const { expectedActive, devices: previous } = await this.activeDevices(hfrId);
         const device: Device = {
             deviceId: randomId('dev', 16),
             clinicId,
@@ -341,7 +346,7 @@ export class PairingService {
         };
         const committed = await this.options.store.activate(device, previous.map((d) => d.deviceId), {
             hfrId, requestId: request.requestId, codeHash: request.codeHash
-        }, now);
+        }, now, expectedActive);
         if (!committed) return refuse(409, 'conflict');
         for (const old of previous) {
             await this.lifecycle.revoked({ ...old, status: 'revoked', revokedAt: now, revokedReason: 'replaced' }).catch(() => undefined);
@@ -359,12 +364,26 @@ export class PairingService {
     }
 
     /**
+     * Active devices for an HFR ID. The clinic row names the current one and
+     * is read consistently, so a device paired a moment ago is never missed;
+     * the HIP ID index adds any older row still marked active.
+     */
+    private async activeDevices(hfrId: string): Promise<{ expectedActive: string | null; devices: Device[] }> {
+        const expectedActive = await this.options.store.activeDeviceFor(hfrId);
+        const indexed = await this.options.store.devicesFor(hfrId);
+        const ids = new Set(indexed.map((d) => d.deviceId));
+        const named = expectedActive && !ids.has(expectedActive) ? await this.options.store.getDevice(expectedActive) : null;
+        const devices = [...indexed, ...(named ? [named] : [])].filter((d) => d.status === 'active');
+        return { expectedActive, devices };
+    }
+
+    /**
      * A retried activation whose first answer was lost: the request is gone,
      * but the install that now owns the active device proves it with the same
      * signed message and gets the same answer. Nothing new is created.
      */
     private async alreadyActivated(hfrId: string, code: string, body: Record<string, unknown>): Promise<PairingResult<ActivatedDevice> | null> {
-        const devices = (await this.options.store.devicesFor(hfrId)).filter((d) => d.status === 'active');
+        const { devices } = await this.activeDevices(hfrId);
         for (const device of devices) {
             const message = pairingMessages.activate({
                 hfrId, code, signingPublicKey: device.signingPublicKey, sealingPublicKey: device.sealingPublicKey, timestamp: body.timestamp as string

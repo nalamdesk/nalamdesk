@@ -39,7 +39,8 @@ Logs hold metadata only (route, path, facility, status, timing); see `src/log.ts
    `nalamdesk-pair-activate-v1|hfrId|code|signingKey|sealingKey|timestamp` (the code as 8 characters,
    upper case, no dash). The signature is checked before the code, so only that install can spend
    attempts; 5 wrong codes void the request. One transaction creates the device, revokes any other
-   active device for the HFR ID, and deletes the request. The clinic ID stays the same for the HFR ID.
+   active device for the HFR ID, points the clinic ID row at the new device (so two activations
+   cannot both win), and deletes the request. The clinic ID stays the same for the HFR ID.
    If the answer is lost, the same signed activation returns the same device again.
 
 The answer carries the device ID, clinic ID and the clinic's HIU data push URL. Timestamps must be

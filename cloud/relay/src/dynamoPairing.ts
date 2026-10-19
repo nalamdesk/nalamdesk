@@ -212,15 +212,27 @@ export class DynamoPairingStore implements PairingStore {
         }
     }
 
+    async activeDeviceFor(hipId: string): Promise<string | null> {
+        const result = await this.client.send(new GetItemCommand({ TableName: this.tables.clinicIds, Key: { hipId: s(hipId) }, ConsistentRead: true }));
+        return result.Item?.activeDeviceId?.S ?? null;
+    }
+
     async devicesFor(hipId: string): Promise<Device[]> {
-        const result = await this.client.send(new QueryCommand({
-            TableName: this.tables.devices,
-            IndexName: 'byHipId',
-            KeyConditionExpression: 'hipId = :hip',
-            ExpressionAttributeValues: { ':hip': s(hipId) }
-        }));
+        const ids: string[] = [];
+        let startKey: Record<string, AttributeValue> | undefined;
+        do {
+            const page = await this.client.send(new QueryCommand({
+                TableName: this.tables.devices,
+                IndexName: 'byHipId',
+                KeyConditionExpression: 'hipId = :hip',
+                ExpressionAttributeValues: { ':hip': s(hipId) },
+                ExclusiveStartKey: startKey
+            }));
+            ids.push(...(page.Items ?? []).map((item) => item.deviceId?.S).filter((id): id is string => !!id));
+            startKey = page.LastEvaluatedKey;
+        } while (startKey);
         // The index is eventually consistent; read each row from the table.
-        const ids = (result.Items ?? []).map((item) => item.deviceId?.S).filter((id): id is string => !!id);
+        // The clinic row's activeDeviceId covers a device it has not caught up with.
         const devices = await Promise.all(ids.map((id) => this.getDevice(id)));
         return devices.filter((d): d is Device => d !== null);
     }
@@ -230,7 +242,8 @@ export class DynamoPairingStore implements PairingStore {
         return toDevice(result.Item);
     }
 
-    async activate(device: Device, revokeDeviceIds: string[], request: { hfrId: string; requestId: string; codeHash: string }, nowMs: number): Promise<boolean> {
+    async activate(device: Device, revokeDeviceIds: string[], request: { hfrId: string; requestId: string; codeHash: string }, nowMs: number,
+        expectedActive: string | null): Promise<boolean> {
         try {
             await this.client.send(new TransactWriteItemsCommand({
                 TransactItems: [
@@ -251,6 +264,18 @@ export class DynamoPairingStore implements PairingStore {
                             ExpressionAttributeValues: { ':revoked': s('revoked'), ':now': n(nowMs), ':replaced': s('replaced'), ':active': s('active') }
                         }
                     })),
+                    {
+                        // A concurrent activation for the same HFR ID changes this first and fails the other.
+                        Update: {
+                            TableName: this.tables.clinicIds,
+                            Key: { hipId: s(device.hipId) },
+                            UpdateExpression: 'SET activeDeviceId = :new',
+                            ConditionExpression: expectedActive
+                                ? 'attribute_exists(clinicId) AND activeDeviceId = :expected'
+                                : 'attribute_exists(clinicId) AND attribute_not_exists(activeDeviceId)',
+                            ExpressionAttributeValues: { ':new': s(device.deviceId), ...(expectedActive ? { ':expected': s(expectedActive) } : {}) }
+                        }
+                    },
                     {
                         Delete: {
                             TableName: this.tables.pairing,

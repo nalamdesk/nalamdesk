@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "start": "node dist/server.js",
+    "start": "tsx src/server.ts",
     "dev": "tsx src/dev.ts",
     "bundle": "esbuild src/server.ts --bundle --preserve-symlinks --platform=node --format=cjs --target=node24 --outfile=bundle/index.js"
   },

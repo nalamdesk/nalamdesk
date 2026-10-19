@@ -1,7 +1,8 @@
 import { CfnOutput, Fn, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 import {
-    AllowedMethods, CachePolicy, CfnOriginAccessControl, Distribution, HttpVersion,
+    AllowedMethods, CachePolicy, CfnOriginAccessControl, Distribution, FunctionCode, FunctionEventType, FunctionRuntime, HttpVersion,
+    Function as CloudFrontFunction,
     OriginProtocolPolicy, OriginRequestPolicy, PriceClass, SecurityPolicyProtocol, ViewerProtocolPolicy
 } from 'aws-cdk-lib/aws-cloudfront';
 import { HttpOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -52,6 +53,8 @@ export class RelayStack extends Stack {
         const bridgeDomain = stageDomain(stage, 'abdm', props.zoneName);
         const devicesTableName = core('devices-table-name');
         const noncesTableName = core('nonces-table-name');
+        const pairingTableName = core('pairing-table-name');
+        const clinicIdsTableName = core('clinic-ids-table-name');
         const codeBucket = Bucket.fromBucketName(this, 'CodeBucket', core('code-bucket-name'));
 
         const logGroup = new LogGroup(this, 'Logs', {
@@ -67,7 +70,7 @@ export class RelayStack extends Stack {
         logGroup.grantWrite(role);
         role.addToPolicy(new PolicyStatement({
             actions: ['ssm:GetParameters'],
-            resources: (['abdm-client-id', 'abdm-client-secret'] as const).map((name) =>
+            resources: (['abdm-client-id', 'abdm-client-secret', 'pairing-pepper'] as const).map((name) =>
                 this.formatArn({ service: 'ssm', resource: 'parameter', resourceName: relayParam(stage, name).slice(1) }))
         }));
         // SecureString with the AWS managed aws/ssm key, only through SSM.
@@ -81,12 +84,21 @@ export class RelayStack extends Stack {
             actions: ['dynamodb:Query'],
             resources: [`${devicesTableArn}/index/byHipId`, `${devicesTableArn}/index/byDataPushToken`]
         }));
-        // Signed desktop requests: read the device by ID, record each nonce.
-        role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [devicesTableArn] }));
+        const tableArn = (name: string) => this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: name });
+        // Signed desktop requests read devices by ID and record nonces;
+        // pairing creates and revokes devices, rotates keys and counts
+        // pairing requests per IP in the nonces table (#154).
         role.addToPolicy(new PolicyStatement({
-            actions: ['dynamodb:PutItem'],
-            resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: noncesTableName })]
+            actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
+            resources: [devicesTableArn]
         }));
+        role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [`${devicesTableArn}/index/byHipId`] }));
+        role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'], resources: [tableArn(noncesTableName)] }));
+        role.addToPolicy(new PolicyStatement({
+            actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Scan'],
+            resources: [tableArn(pairingTableName)]
+        }));
+        role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], resources: [tableArn(clinicIdsTableName)] }));
 
         // Each build is uploaded once, named by its content hash, at the
         // bucket root (objectKeys reports keys without a prefix). The
@@ -125,6 +137,13 @@ export class RelayStack extends Stack {
                     ABDM_CLIENT_SECRET_PARAM: relayParam(stage, 'abdm-client-secret'),
                     DEVICES_TABLE: devicesTableName,
                     NONCES_TABLE: noncesTableName,
+                    PAIRING_TABLE: pairingTableName,
+                    CLINIC_IDS_TABLE: clinicIdsTableName,
+                    PAIRING_PEPPER_PARAM: relayParam(stage, 'pairing-pepper'),
+                    BRIDGE_URL: `https://${bridgeDomain}`,
+                    OPS_USER_POOL_ID: core('ops-user-pool-id'),
+                    OPS_CLIENT_ID: core('ops-client-id'),
+                    OPS_AUTH_DOMAIN: core('ops-auth-domain'),
                     ...(props.gatewayIssuer ? { ABDM_GATEWAY_ISSUER: props.gatewayIssuer } : {})
                 },
                 telemetryConfig: {
@@ -159,6 +178,19 @@ export class RelayStack extends Stack {
             }
         });
 
+        // Writes the viewer's IP into x-nd-viewer-ip on every request,
+        // replacing anything the client sent; pairing rate limits use it.
+        const viewerIp = new CloudFrontFunction(this, 'ViewerIp', {
+            functionName: `${functionName}-viewer-ip`,
+            runtime: FunctionRuntime.JS_2_0,
+            code: FunctionCode.fromInline([
+                'function handler(event) {',
+                "  event.request.headers['x-nd-viewer-ip'] = { value: event.viewer.ip };",
+                '  return event.request;',
+                '}'
+            ].join('\n'))
+        });
+
         const distribution = new Distribution(this, 'Distribution', {
             comment: `NalamDesk ABDM bridge (${stage})`,
             domainNames: [bridgeDomain],
@@ -176,7 +208,8 @@ export class RelayStack extends Stack {
                 cachePolicy: CachePolicy.CACHING_DISABLED,
                 // Lambda routes on Host, so the viewer's Host must not reach it.
                 originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-                compress: false
+                compress: false,
+                functionAssociations: [{ function: viewerIp, eventType: FunctionEventType.VIEWER_REQUEST }]
             }
         });
         const cfnDistribution = distribution.node.defaultChild as import('aws-cdk-lib/aws-cloudfront').CfnDistribution;
@@ -207,11 +240,12 @@ export class RelayStack extends Stack {
         new AaaaRecord(this, 'BridgeAaaa', { zone, recordName: bridgeDomain, target });
 
         new CfnOutput(this, 'BridgeUrl', { value: `https://${bridgeDomain}`, description: 'Register this as the bridge URL for the ABDM Client ID' });
+        new CfnOutput(this, 'OpsConsoleUrl', { value: `https://${bridgeDomain}/ops/` });
         new CfnOutput(this, 'EndpointDomain', { value: endpoint.attrDomainName });
         new CfnOutput(this, 'DistributionId', { value: distribution.distributionId });
         new CfnOutput(this, 'CredentialParameters', {
-            value: `${relayParam(stage, 'abdm-client-id')} ${relayParam(stage, 'abdm-client-secret')}`,
-            description: 'Create both before first use: aws ssm put-parameter --type SecureString'
+            value: `${relayParam(stage, 'abdm-client-id')} ${relayParam(stage, 'abdm-client-secret')} ${relayParam(stage, 'pairing-pepper')}`,
+            description: 'Create all three before first use: aws ssm put-parameter --type SecureString'
         });
     }
 }

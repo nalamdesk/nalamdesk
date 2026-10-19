@@ -7,6 +7,7 @@ import type { FetchFn, GatewaySession } from './gatewaySession.js';
 import type { GatewayJwtVerifier } from './gatewayJwt.js';
 import { stdoutLogger, type RelayLogEntry, type RelayLogger } from './log.js';
 import type { DeviceAuthenticator, Doorbell, Facility, FacilityDirectory, Mailbox, MailboxItemType } from './ports.js';
+import { registerPairingRoutes, type PairingRouteDeps } from './pairingRoutes.js';
 import { seal } from './seal.js';
 
 export interface RelayDeps {
@@ -17,6 +18,8 @@ export interface RelayDeps {
     mailbox: Mailbox;
     doorbell: Doorbell;
     verifyGatewayJwt: GatewayJwtVerifier;
+    /** Pairing, the ops console and key rotation (#154). */
+    pairing?: PairingRouteDeps;
     logger?: RelayLogger;
     fetchFn?: FetchFn;
     nowMs?: () => number;
@@ -219,6 +222,8 @@ export function createRelayApp(deps: RelayDeps): Hono {
         timed({ route: 'data-push', path: '/hiu/data-push', hipId: facility.hipId, status: 202 }, started);
         return c.body(null, 202);
     });
+
+    if (deps.pairing) registerPairingRoutes(app, deps.pairing, { devices: deps.devices, log, nowMs });
 
     app.notFound((c) => refuse(c, 404, 'not_found'));
     app.onError((_error, c) => refuse(c, 500, 'internal_error'));

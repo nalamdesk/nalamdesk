@@ -5,7 +5,11 @@ import { DynamoFacilityDirectory } from './dynamoFacilities.js';
 import { resolveEnvironment } from './environments.js';
 import { createGatewayJwtVerifier } from './gatewayJwt.js';
 import { GatewaySession } from './gatewaySession.js';
-import { ParameterStoreCredentials } from './parameterStore.js';
+import { DynamoPairingRateLimiter, DynamoPairingStore } from './dynamoPairing.js';
+import { createOpsTokenVerifier } from './opsAuth.js';
+import { PairingService } from './pairing.js';
+import type { PairingRouteDeps } from './pairingRoutes.js';
+import { ParameterStoreCredentials, ParameterStoreSecret } from './parameterStore.js';
 import type { DeviceAuthenticator, Doorbell, FacilityDirectory, Mailbox, VendorCredentials } from './ports.js';
 
 export interface Adapters {
@@ -14,6 +18,7 @@ export interface Adapters {
     mailbox?: Mailbox;
     doorbell?: Doorbell;
     credentials?: VendorCredentials;
+    pairing?: PairingRouteDeps;
 }
 
 // Which issue supplies each adapter that is not wired from the environment yet.
@@ -22,12 +27,34 @@ const OWNERS: Record<keyof Adapters, string> = {
     facilities: 'facility directory (DEVICES_TABLE)',
     mailbox: 'mailbox (#155)',
     doorbell: 'doorbell (#155)',
-    credentials: 'vendor credentials (ABDM_CLIENT_ID_PARAM, ABDM_CLIENT_SECRET_PARAM)'
+    credentials: 'vendor credentials (ABDM_CLIENT_ID_PARAM, ABDM_CLIENT_SECRET_PARAM)',
+    pairing: 'pairing (PAIRING_TABLE, CLINIC_IDS_TABLE, PAIRING_PEPPER_PARAM, BRIDGE_URL, OPS_USER_POOL_ID, OPS_CLIENT_ID, OPS_AUTH_DOMAIN)'
 };
+
+/** Pairing and the ops console, when every name they need is set. */
+export function pairingFromEnv(env: NodeJS.ProcessEnv): PairingRouteDeps | undefined {
+    const { DEVICES_TABLE, NONCES_TABLE, PAIRING_TABLE, CLINIC_IDS_TABLE, PAIRING_PEPPER_PARAM, BRIDGE_URL,
+        OPS_USER_POOL_ID, OPS_CLIENT_ID, OPS_AUTH_DOMAIN } = env;
+    const region = env.AWS_REGION || 'ap-south-1';
+    if (!DEVICES_TABLE || !NONCES_TABLE || !PAIRING_TABLE || !CLINIC_IDS_TABLE || !PAIRING_PEPPER_PARAM || !BRIDGE_URL ||
+        !OPS_USER_POOL_ID || !OPS_CLIENT_ID || !OPS_AUTH_DOMAIN) return undefined;
+    const pepper = new ParameterStoreSecret(PAIRING_PEPPER_PARAM);
+    return {
+        service: new PairingService({
+            store: new DynamoPairingStore({ devices: DEVICES_TABLE, pairing: PAIRING_TABLE, clinicIds: CLINIC_IDS_TABLE }),
+            ipLimiter: new DynamoPairingRateLimiter(NONCES_TABLE),
+            pepper: () => pepper.load(),
+            bridgeUrl: BRIDGE_URL.replace(/\/+$/, '')
+        }),
+        verifyOps: createOpsTokenVerifier({ region, userPoolId: OPS_USER_POOL_ID, clientId: OPS_CLIENT_ID }),
+        console: { authDomain: OPS_AUTH_DOMAIN, clientId: OPS_CLIENT_ID }
+    };
+}
 
 /** Adapters that can be built from environment variables alone. */
 export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
     return {
+        pairing: pairingFromEnv(env),
         devices: env.DEVICES_TABLE && env.NONCES_TABLE
             ? createDeviceAuthenticator({
                 audience: 'relay',
@@ -72,6 +99,7 @@ export function buildServerApp(env: NodeJS.ProcessEnv, adapters: Adapters): { ap
         facilities: adapters.facilities!,
         mailbox: adapters.mailbox!,
         doorbell: adapters.doorbell!,
+        pairing: adapters.pairing,
         verifyGatewayJwt: createGatewayJwtVerifier({
             certsUrl: config.gatewayCertsUrl,
             issuer: env.ABDM_GATEWAY_ISSUER || undefined

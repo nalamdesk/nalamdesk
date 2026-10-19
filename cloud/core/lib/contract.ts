@@ -12,13 +12,16 @@ export type CoreParamName =
     | 'devices-table-name'
     | 'pairing-table-name'
     | 'nonces-table-name'
+    | 'clinic-ids-table-name'
     | 'code-bucket-name'
     | 'hosted-zone-id'
     | 'bridge-domain'
     | 'bridge-certificate-arn'
     | 'booking-domain'
     | 'booking-certificate-arn'
-    | 'ops-user-pool-id';
+    | 'ops-user-pool-id'
+    | 'ops-client-id'
+    | 'ops-auth-domain';
 
 export function parseStage(value: unknown): Stage {
     if (value === undefined || value === 'sandbox') return 'sandbox';

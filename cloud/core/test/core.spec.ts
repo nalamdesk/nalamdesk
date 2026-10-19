@@ -61,6 +61,25 @@ describe('Core stacks', () => {
         core.hasResourceProperties('AWS::Cognito::UserPoolGroup', { GroupName: 'ops' });
     });
 
+    it('keeps one clinic ID per HFR ID, retained', () => {
+        core.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+            KeySchema: [{ AttributeName: 'hipId', KeyType: 'HASH' }],
+            Replicas: [Match.objectLike({ DeletionProtectionEnabled: true })]
+        });
+    });
+
+    it('gives the ops console a public PKCE client and a managed login domain', () => {
+        core.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+            GenerateSecret: false,
+            AllowedOAuthFlows: ['code'],
+            AllowedOAuthScopes: ['openid'],
+            CallbackURLs: ['https://abdm-sandbox.example.in/ops/'],
+            SupportedIdentityProviders: ['COGNITO'],
+            PreventUserExistenceErrors: 'ENABLED'
+        });
+        core.hasResourceProperties('AWS::Cognito::UserPoolDomain', { Domain: 'nalamdesk-ops-sandbox' });
+    });
+
     it('makes a versioned, SSE-S3, private code bucket that Lambda can read', () => {
         core.hasResourceProperties('AWS::S3::Bucket', {
             VersioningConfiguration: { Status: 'Enabled' },
@@ -79,7 +98,7 @@ describe('Core stacks', () => {
     });
 
     it('publishes the shared names in Parameter Store', () => {
-        for (const name of ['devices-table-name', 'code-bucket-name', 'hosted-zone-id', 'bridge-certificate-arn', 'bridge-domain']) {
+        for (const name of ['devices-table-name', 'code-bucket-name', 'hosted-zone-id', 'bridge-certificate-arn', 'bridge-domain', 'clinic-ids-table-name', 'ops-client-id', 'ops-auth-domain']) {
             core.hasResourceProperties('AWS::SSM::Parameter', { Name: `/nalamdesk/sandbox/core/${name}` });
         }
     });

@@ -3,7 +3,7 @@ import { parseStage, stageDomain } from '../lib/contract.js';
 import { CoreEdgeStack } from '../lib/edge-stack.js';
 import { CoreStack } from '../lib/core-stack.js';
 
-// cdk deploy --all -c zoneName=example.in -c budgetEmail=ops@example.in [-c stage=production] [-c hostedZoneId=Z123]
+// cdk deploy --all -c zoneName=example.in -c budgetEmail=ops@example.in [-c stage=production] [-c hostedZoneId=Z123] [-c opsDomainPrefix=...]
 const app = new App();
 const stage = parseStage(app.node.tryGetContext('stage'));
 const zoneName = app.node.tryGetContext('zoneName');
@@ -33,7 +33,8 @@ new CoreStack(app, `NalamdeskCore-${stage}`, {
     bridgeCertificate: edge.bridgeCertificate,
     bookingDomain,
     bookingCertificate: edge.bookingCertificate,
-    budgetEmail
+    budgetEmail,
+    opsDomainPrefix: app.node.tryGetContext('opsDomainPrefix')
 });
 
 Tags.of(app).add('project', 'nalamdesk');

@@ -2,7 +2,7 @@
 // a token can never be added by accident: route, path template, facility,
 // status and timing. CloudWatch keeps these for 30 days (set on the stack).
 export interface RelayLogEntry {
-    route: 'proxy' | 'callback' | 'data-push' | 'health';
+    route: 'proxy' | 'callback' | 'data-push' | 'health' | 'pairing' | 'ops' | 'device';
     /** Upstream or callback path; data-push tokens are never logged. */
     path: string;
     hipId?: string;
@@ -10,6 +10,8 @@ export interface RelayLogEntry {
     ms: number;
     /** Short machine code for refusals, such as `path_not_allowed`. */
     code?: string;
+    /** Ops console user (Cognito sub) for approvals, rejections and revocations. */
+    actor?: string;
 }
 
 export type RelayLogger = (entry: RelayLogEntry) => void;

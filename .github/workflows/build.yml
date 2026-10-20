@@ -105,7 +105,7 @@ jobs:
     runs-on: >-
       ${{ matrix.os == 'macos-latest' && 'macos-latest'
       || needs.runner.outputs.hosted == 'true' && matrix.os
-      || matrix.os == 'windows-latest' && (vars.CI_RUNNER_WINDOWS && fromJSON(vars.CI_RUNNER_WINDOWS) || 'windows-latest')
+      || matrix.os == 'windows-latest' && fromJSON(vars.CI_RUNNER_WINDOWS)
       || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
@@ -114,7 +114,9 @@ jobs:
       # One OS failing must not cancel the others mid-upload.
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.runner.outputs.hosted == 'true' && '["windows-latest","ubuntu-latest","macos-latest"]' || '["windows-latest","ubuntu-latest"]') }}
+        # Without a Windows runner, release Linux only rather than queue a
+        # leg that can never start and keep the draft from publishing.
+        os: ${{ fromJSON(needs.runner.outputs.hosted == 'true' && '["windows-latest","ubuntu-latest","macos-latest"]' || vars.CI_RUNNER_WINDOWS && '["windows-latest","ubuntu-latest"]' || '["ubuntu-latest"]') }}
 
     steps:
       - name: Checkout code

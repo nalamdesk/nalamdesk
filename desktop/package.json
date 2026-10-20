@@ -52,7 +52,7 @@
         "provider": "github",
         "owner": "sankara-sabapathy",
         "repo": "nalamdesk-releases",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ],
     "win": {

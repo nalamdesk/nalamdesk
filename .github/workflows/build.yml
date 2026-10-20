@@ -74,6 +74,26 @@ jobs:
           
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
 
+      # One draft release up front, so the per-OS legs below upload into it
+      # instead of racing to create it. publish-release makes it live once
+      # every leg has uploaded, so clinics never see a half-filled release.
+      - name: Create draft release in nalamdesk-releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          NEW_TAG: ${{ steps.bump.outputs.new_tag }}
+        run: |
+          node -e '
+            const tag = process.env.NEW_TAG;
+            fetch("https://api.github.com/repos/sankara-sabapathy/nalamdesk-releases/releases", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" },
+              body: JSON.stringify({ tag_name: tag, name: tag, draft: true })
+            }).then(async (res) => {
+              if (!res.ok) { console.error(res.status, await res.text()); process.exit(1); }
+              console.log(`Draft release ${tag} created`);
+            });
+          '
+
   build-and-release:
     needs: [runner, bump-version]
     if: ${{ !cancelled() && needs.bump-version.result == 'success' }}
@@ -142,3 +162,33 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:mac -- --publish always
+
+  publish-release:
+    needs: [runner, bump-version, build-and-release]
+    if: ${{ !cancelled() && needs.build-and-release.result == 'success' }}
+    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          NEW_TAG: ${{ needs.bump-version.outputs.new_tag }}
+        run: |
+          node -e '
+            const api = "https://api.github.com/repos/sankara-sabapathy/nalamdesk-releases/releases";
+            const headers = { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" };
+            (async () => {
+              const releases = await (await fetch(`${api}?per_page=20`, { headers })).json();
+              const draft = releases.find((r) => r.tag_name === process.env.NEW_TAG && r.draft);
+              if (!draft) { console.error(`No draft release for ${process.env.NEW_TAG}`); process.exit(1); }
+              const res = await fetch(`${api}/${draft.id}`, {
+                method: "PATCH", headers, body: JSON.stringify({ draft: false, make_latest: "true" })
+              });
+              if (!res.ok) { console.error(res.status, await res.text()); process.exit(1); }
+              console.log(`Published ${process.env.NEW_TAG}`);
+            })();
+          '

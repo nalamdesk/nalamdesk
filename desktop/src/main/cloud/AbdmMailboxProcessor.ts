@@ -1,6 +1,6 @@
 import log from 'electron-log';
 import type { FideliusEnvelope } from '../services/FideliusService';
-import { HiuService } from '../services/HiuService';
+import { HiuService, type HiuTransfer } from '../services/HiuService';
 import type { AbdmInboxRow } from './AbdmInbox';
 import type { AbdmRelaySend } from './SignedCloudClient';
 
@@ -53,6 +53,12 @@ export interface AbdmMailboxProcessorDeps {
     hiu: {
         handleNotify(kind: string, payload: any): unknown;
         decryptRecord(envelope: FideliusEnvelope): unknown;
+        // Live HIU through the relay (#164); absent in mock-only setups.
+        applyCallback?(path: string | null, body: any): { followUp?: () => Promise<void> } | null;
+        acknowledgeNotify?(callbackRequestId: string | null, artefactIds: string[]): Promise<void>;
+        fetchArtefactDetails?(consentId: number): Promise<void>;
+        transferFor?(transactionId: string, page?: { pageNumber?: unknown; pageCount?: unknown }): HiuTransfer | null;
+        completeTransfer?(transfer: HiuTransfer, careContextRefs: Array<string | null>, ok: boolean, transactionId: string): (() => Promise<void>) | null;
     };
     /** Sends a signed gateway call through the relay; null when this computer is not paired. */
     relay: () => AbdmRelaySend | null;
@@ -138,6 +144,8 @@ export class AbdmMailboxProcessor {
             }
             if (item.path === SHARE_PATH) return this.applyShare(item, body);
             if (item.path === HIU_CONSENT_NOTIFY_PATH) return this.applyConsentNotify(item, body);
+            const hiu = this.deps.hiu.applyCallback?.(item.path, body);
+            if (hiu) return { status: 'processed', reply: hiu.followUp };
             this.deps.store.receiveInboxCallback(kindFor(item.path), body, undefined, item.request_id ?? undefined);
             return { status: 'processed' };
         } catch (error) {
@@ -175,39 +183,71 @@ export class AbdmMailboxProcessor {
         const status = String(notification.status ?? '').toUpperCase();
         const kind = CONSENT_KINDS[status] ?? 'consent-notify';
         const artefacts = Array.isArray(notification.consentArtefacts) ? notification.consentArtefacts : [];
-        const payload = { requestId, status, consentHandle: typeof artefacts[0]?.id === 'string' ? artefacts[0].id : null };
+        const artefactIds: string[] = artefacts
+            .map((artefact: any) => (typeof artefact?.id === 'string' ? artefact.id.trim() : ''))
+            .filter(Boolean)
+            .slice(0, 50);
+        const payload = { requestId, status, consentHandle: artefactIds[0] ?? null, artefactIds };
         this.deps.store.receiveInboxCallback(kind, payload, undefined, requestId);
         // Bookkeeping applies automatically; a notification for a request this
         // computer does not know stays in the inbox for the desk.
+        let consentId: number | null = null;
         if (kind !== 'consent-notify') {
             try {
-                this.deps.hiu.handleNotify(kind, payload);
+                const handled = this.deps.hiu.handleNotify(kind, payload) as { consentId?: number } | undefined;
+                consentId = typeof handled?.consentId === 'number' ? handled.consentId : null;
             } catch (error) {
                 log.warn(`[ABDM mailbox] Consent notification kept for review: ${(error as Error).message}`);
             }
         }
-        return { status: 'processed' };
+        // The consent manager expects an acknowledgement for the artefacts it
+        // sent; a grant then needs each artefact's details before a fetch.
+        const { acknowledgeNotify, fetchArtefactDetails } = this.deps.hiu;
+        if (artefactIds.length === 0 || !acknowledgeNotify) return { status: 'processed' };
+        return {
+            status: 'processed',
+            reply: async () => {
+                await acknowledgeNotify.call(this.deps.hiu, item.request_id, artefactIds);
+                if (kind === 'consent-granted' && consentId != null && fetchArtefactDetails) {
+                    await fetchArtefactDetails.call(this.deps.hiu, consentId);
+                }
+            }
+        };
     }
 
     private applyDataPush(item: AbdmMailboxItem): Outcome {
         const body = JSON.parse(item.payload);
+        const transactionId = String(body?.transactionId ?? '').trim();
+        // A push for a records request this computer sent through the relay.
+        const transfer = transactionId ? this.deps.hiu.transferFor?.(transactionId, body) ?? null : null;
         const requestId = String(body?.requestId ?? body?.gatewayRequestId ?? body?.transactionId ?? '').trim();
         // Consent-gated storage: unknown, missing or not granted requests never keep clinical data.
-        const consent = requestId ? this.deps.store.getConsentByRequestId(requestId) : null;
+        const consent = transfer ? transfer.consent : requestId ? this.deps.store.getConsentByRequestId(requestId) : null;
         if (!consent || consent.status !== 'granted') throw new Error('Push requires a matching granted consent.');
         const envelopes = envelopesOf(body);
-        if (envelopes.length === 0) throw new Error('No record envelopes in this push.');
-        if (envelopes.length > MAX_RECORDS_PER_PUSH) throw new Error('Too many records in one push.');
-        const expiresAt = HiuService.retentionExpiry(this.nowMs());
-        const rows = envelopes.map((envelope) => ({
-            consentId: Number(consent.id),
-            patientId: consent.patient_id ?? null,
-            careContextRef: envelope.careContextRef,
-            bundleJson: JSON.stringify(this.deps.hiu.decryptRecord(envelope.envelope)),
-            expiresAt
-        }));
-        this.deps.store.storeFetchedRecordBatch(rows);
-        return { status: 'processed' };
+        const refs = envelopes.map((envelope) => envelope.careContextRef);
+        try {
+            if (envelopes.length === 0) throw new Error('No record envelopes in this push.');
+            if (envelopes.length > MAX_RECORDS_PER_PUSH) throw new Error('Too many records in one push.');
+            const expiresAt = earliest(HiuService.retentionExpiry(this.nowMs()), transfer?.dataEraseAt ?? null);
+            const rows = envelopes.map((envelope) => ({
+                consentId: Number(consent.id),
+                patientId: consent.patient_id ?? null,
+                careContextRef: envelope.careContextRef,
+                bundleJson: JSON.stringify(this.deps.hiu.decryptRecord(envelope.envelope)),
+                expiresAt
+            }));
+            this.deps.store.storeFetchedRecordBatch(rows);
+        } catch (error) {
+            if (!transfer) throw error;
+            log.warn(`[ABDM mailbox] Could not keep a data push: ${(error as Error).message}`);
+            return { status: 'failed', reply: this.transferReply(transfer, refs, false, transactionId) };
+        }
+        return { status: 'processed', reply: transfer ? this.transferReply(transfer, refs, true, transactionId) : undefined };
+    }
+
+    private transferReply(transfer: HiuTransfer, refs: Array<string | null>, ok: boolean, transactionId: string): (() => Promise<void>) | undefined {
+        return this.deps.hiu.completeTransfer?.(transfer, refs, ok, transactionId) ?? undefined;
     }
 
     private async reply(body: unknown): Promise<void> {
@@ -222,6 +262,14 @@ export class AbdmMailboxProcessor {
     private nowMs(): number {
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
+}
+
+/** The earlier of two SQL datetimes or ISO times, as a SQL datetime. */
+function earliest(retention: string, eraseAt: string | null): string {
+    const erase = eraseAt ? Date.parse(eraseAt) : Number.NaN;
+    if (!Number.isFinite(erase)) return retention;
+    const keep = Date.parse(`${retention.replace(' ', 'T')}Z`);
+    return erase < keep ? new Date(erase).toISOString().slice(0, 19).replace('T', ' ') : retention;
 }
 
 const CONSENT_KINDS: Record<string, string> = {

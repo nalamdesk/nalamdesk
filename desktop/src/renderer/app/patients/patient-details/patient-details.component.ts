@@ -440,6 +440,7 @@ import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patie
                             <div class="min-w-0">
                                 <div class="font-mono font-semibold text-gray-800 truncate">{{ c.abha_address }}</div>
                                 <div class="text-gray-500 truncate">{{ consentTypesText(c) }}{{ c.date_from ? ' • ' + c.date_from + ' → ' + (c.date_to || 'now') : '' }}</div>
+                                <div *ngIf="c.status === 'failed' && c.error" class="text-red-600 truncate">{{ c.error }}</div>
                             </div>
                             <div class="flex items-center gap-2 shrink-0">
                                 <span class="px-2 py-0.5 rounded uppercase text-[10px] font-bold" [ngClass]="consentChipClass(c.status)">{{ c.status }}</span>
@@ -483,6 +484,7 @@ import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patie
                         </div>
                     </div>
                     <p *ngIf="externalError" class="text-xs text-red-600">{{ externalError }}</p>
+                    <p *ngIf="externalNotice" class="text-xs text-gray-600">{{ externalNotice }}</p>
                 </div>
 
              </div>
@@ -1015,6 +1017,7 @@ export class PatientDetailsComponent implements OnInit {
     externalConsents: any[] = [];
     loadingExternal = false;
     externalError = '';
+    externalNotice = '';
     showConsentForm = false;
     consentBusy = false;
     consentError = '';
@@ -1023,7 +1026,8 @@ export class PatientDetailsComponent implements OnInit {
     consentChipClass(status: unknown): string {
         switch (String(status || '').toLowerCase()) {
             case 'granted': return 'bg-green-100 text-green-700';
-            case 'denied': return 'bg-red-100 text-red-700';
+            case 'denied':
+            case 'failed': return 'bg-red-100 text-red-700';
             case 'expired': return 'bg-gray-100 text-gray-500';
             default: return 'bg-amber-100 text-amber-800';
         }
@@ -1108,8 +1112,13 @@ export class PatientDetailsComponent implements OnInit {
 
     async fetchExternal(consentId: number): Promise<void> {
         this.externalError = '';
+        this.externalNotice = '';
         try {
-            await this.dataService.invoke('abdmHiuFetchRecords', { consentId });
+            const result: any = await this.dataService.invoke('abdmHiuFetchRecords', { consentId });
+            // Through ABDM, each facility sends its records later.
+            if (typeof result?.requested === 'number') {
+                this.externalNotice = `Asked ${result.requested} ${result.requested === 1 ? 'facility' : 'facilities'} for records. They appear here as they arrive.`;
+            }
             await this.loadExternal();
         } catch (e) {
             this.externalError = e instanceof Error ? e.message : 'Could not fetch records.';

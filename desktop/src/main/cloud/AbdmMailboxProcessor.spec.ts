@@ -132,7 +132,7 @@ describe('AbdmMailboxProcessor', () => {
 
             expect(await processor.drain()).toEqual({ processed: 1, failed: 0 });
 
-            const payload = { requestId: 'consent-1', status: 'GRANTED', consentHandle: 'artefact-1' };
+            const payload = { requestId: 'consent-1', status: 'GRANTED', consentHandle: 'artefact-1', artefactIds: ['artefact-1'] };
             expect(store.receiveInboxCallback).toHaveBeenCalledWith('consent-granted', payload, undefined, 'consent-1');
             expect(hiu.handleNotify).toHaveBeenCalledWith('consent-granted', payload);
         });
@@ -149,7 +149,7 @@ describe('AbdmMailboxProcessor', () => {
             await processor.drain();
 
             expect(hiu.handleNotify.mock.calls.map((call: any[]) => call[0])).toEqual(['consent-denied', 'consent-expired', 'consent-expired']);
-            expect(store.receiveInboxCallback).toHaveBeenLastCalledWith('consent-notify', { requestId: 'consent-1', status: 'PAUSED', consentHandle: null }, undefined, 'consent-1');
+            expect(store.receiveInboxCallback).toHaveBeenLastCalledWith('consent-notify', { requestId: 'consent-1', status: 'PAUSED', consentHandle: null, artefactIds: [] }, undefined, 'consent-1');
         });
 
         it('keeps a notice for an unknown request for the desk', async () => {
@@ -224,6 +224,100 @@ describe('AbdmMailboxProcessor', () => {
 
             expect(await processor.drain()).toEqual({ processed: 0, failed: 6 });
             expect(store.storeFetchedRecordBatch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('live HIU (#164)', () => {
+        const keyMaterial = { cryptoAlg: 'ECDH', curve: 'Curve25519', nonce: 'n' };
+        const transfer = (overrides: Record<string, unknown> = {}) => ({
+            artefactId: 'art-1', consent: { id: 7, status: 'granted', patient_id: 3 }, dataEraseAt: '2026-10-25T00:00:00Z', lastPage: true, ...overrides
+        });
+
+        it('hands HIU callbacks to the HIU and sends its follow-up after the work', async () => {
+            const followUp = vi.fn(async () => undefined);
+            const applyCallback = vi.fn((path: string) => (path === '/api/v3/hiu/consent/request/on-init' ? { followUp } : null));
+            const { processor, store } = setup([
+                callback('m1', '/api/v3/hiu/consent/request/on-init', { consentRequest: { id: 'cm-1' } }),
+                callback('m2', '/api/v3/hip/other', {})
+            ], { hiu: { applyCallback } });
+
+            expect(await processor.drain()).toEqual({ processed: 2, failed: 0 });
+            expect(applyCallback).toHaveBeenCalledWith('/api/v3/hiu/consent/request/on-init', { consentRequest: { id: 'cm-1' } });
+            expect(followUp).toHaveBeenCalledOnce();
+            expect(store.receiveInboxCallback).toHaveBeenCalledTimes(1);
+        });
+
+        it('acknowledges a grant and then asks for its artefacts', async () => {
+            const acknowledgeNotify = vi.fn(async () => undefined);
+            const fetchArtefactDetails = vi.fn(async () => undefined);
+            const body = { notification: { consentRequestId: 'consent-1', status: 'GRANTED', consentArtefacts: [{ id: 'art-1' }, { id: 'art-2' }, {}] } };
+            const { processor } = setup([callback('m1', HIU_CONSENT_NOTIFY_PATH, body, 'cb-1')], {
+                hiu: { handleNotify: vi.fn(() => ({ handled: true, consentId: 7 })), acknowledgeNotify, fetchArtefactDetails }
+            });
+
+            await processor.drain();
+
+            expect(acknowledgeNotify).toHaveBeenCalledWith('cb-1', ['art-1', 'art-2']);
+            expect(fetchArtefactDetails).toHaveBeenCalledWith(7);
+        });
+
+        it('acknowledges a revocation without fetching, and nothing without artefacts', async () => {
+            const acknowledgeNotify = vi.fn(async () => undefined);
+            const fetchArtefactDetails = vi.fn(async () => undefined);
+            const { processor } = setup([
+                callback('m1', HIU_CONSENT_NOTIFY_PATH, { notification: { consentRequestId: 'consent-1', status: 'REVOKED', consentArtefacts: [{ id: 'art-1' }] } }),
+                callback('m2', HIU_CONSENT_NOTIFY_PATH, { notification: { consentRequestId: 'consent-1', status: 'DENIED' } })
+            ], { hiu: { handleNotify: vi.fn(() => ({ handled: true, consentId: 7 })), acknowledgeNotify, fetchArtefactDetails } });
+
+            await processor.drain();
+
+            expect(acknowledgeNotify).toHaveBeenCalledTimes(1);
+            expect(fetchArtefactDetails).not.toHaveBeenCalled();
+        });
+
+        it('caches a push for its transfer, never past the consent erase date, and notifies the consent manager', async () => {
+            const notify = vi.fn(async () => undefined);
+            const transferFor = vi.fn(() => transfer());
+            const completeTransfer = vi.fn(() => notify);
+            const body = { transactionId: 'txn-1', pageNumber: 1, pageCount: 1, keyMaterial, entries: [{ content: 'a', careContextReference: 'cc-1' }] };
+            const { processor, store } = setup([push('d1', body)], { hiu: { transferFor, completeTransfer } });
+
+            expect(await processor.drain()).toEqual({ processed: 1, failed: 0 });
+
+            expect(transferFor).toHaveBeenCalledWith('txn-1', body);
+            expect(store.getConsentByRequestId).not.toHaveBeenCalled();
+            expect(store.storeFetchedRecordBatch.mock.calls[0][0][0]).toMatchObject({ consentId: 7, careContextRef: 'cc-1', expiresAt: '2026-10-25 00:00:00' });
+            expect(completeTransfer).toHaveBeenCalledWith(expect.objectContaining({ artefactId: 'art-1' }), ['cc-1'], true, 'txn-1');
+            expect(notify).toHaveBeenCalledOnce();
+        });
+
+        it('keeps the 30-day limit when the erase date is later or unreadable', async () => {
+            const body = { transactionId: 'txn-1', keyMaterial, entries: [{ content: 'a' }] };
+            for (const dataEraseAt of ['2027-01-01T00:00:00Z', 'someday']) {
+                const { processor, store } = setup([push('d1', body)], { hiu: { transferFor: () => transfer({ dataEraseAt }) } });
+                await processor.drain();
+                expect(store.storeFetchedRecordBatch.mock.calls[0][0][0].expiresAt).toBe('2026-11-19 10:00:00');
+            }
+        });
+
+        it('tells the consent manager when a push cannot be read', async () => {
+            const notify = vi.fn(async () => undefined);
+            const completeTransfer = vi.fn(() => notify);
+            const body = { transactionId: 'txn-1', keyMaterial, entries: [{ content: 'bad', careContextReference: 'cc-1' }] };
+            const { processor, store } = setup([push('d1', body)], { hiu: { transferFor: () => transfer(), completeTransfer } });
+
+            expect(await processor.drain()).toEqual({ processed: 0, failed: 1 });
+            expect(store.storeFetchedRecordBatch).not.toHaveBeenCalled();
+            expect(completeTransfer).toHaveBeenCalledWith(expect.anything(), ['cc-1'], false, 'txn-1');
+            expect(notify).toHaveBeenCalledOnce();
+        });
+
+        it('falls back to the request ID when the transaction is not a live transfer', async () => {
+            const { processor, store } = setup([push('d1', { transactionId: 'consent-1', records: [{ keyMaterial, encryptedData: 'one' }] })], {
+                hiu: { transferFor: () => null }
+            });
+            expect(await processor.drain()).toEqual({ processed: 1, failed: 0 });
+            expect(store.getConsentByRequestId).toHaveBeenCalledWith('consent-1');
         });
     });
 

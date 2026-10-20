@@ -1703,6 +1703,40 @@ export const MIGRATIONS = [
                     abdm_gateway_env = NULL, abdm_mock = NULL`);
             } catch (e) { }
         }
+    },
+    {
+        version: 48,
+        up: (db: any) => {
+            console.log('Running Migration v48 (live HIU consent through the relay)...');
+            // The consent manager names a request with its own ID (on-init);
+            // a grant carries one consent artefact per HIP, each fetched and
+            // asked for records on its own (#164).
+            try { db.exec('ALTER TABLE abdm_consents ADD COLUMN consent_request_id TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE abdm_consents ADD COLUMN error TEXT'); } catch (e) { }
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_consents_cm_request ON abdm_consents(consent_request_id);`);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_hiu_artefacts (
+                    id TEXT PRIMARY KEY,
+                    consent_id INTEGER NOT NULL REFERENCES abdm_consents(id),
+                    status TEXT NOT NULL DEFAULT 'granted',
+                    hip_id TEXT,
+                    date_from TEXT,
+                    date_to TEXT,
+                    data_erase_at TEXT,
+                    fetch_request_id TEXT,
+                    hi_request_id TEXT,
+                    transaction_id TEXT,
+                    transfer_status TEXT,
+                    error TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hiu_artefacts_consent ON abdm_hiu_artefacts(consent_id);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hiu_artefacts_fetch ON abdm_hiu_artefacts(fetch_request_id);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hiu_artefacts_hi ON abdm_hiu_artefacts(hi_request_id);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hiu_artefacts_txn ON abdm_hiu_artefacts(transaction_id);`);
+        }
     }
 ];
 

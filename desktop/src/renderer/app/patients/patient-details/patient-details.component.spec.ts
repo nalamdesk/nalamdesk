@@ -756,6 +756,19 @@ describe('PatientDetailsComponent', () => {
         expect(mockDataService.invoke).toHaveBeenCalledWith('abdmHiuClearExternalRecords', { patientId: 123 });
     });
 
+    it('says how many facilities were asked when records arrive later', async () => {
+        component.patientId = 123;
+        mockDataService.invoke.mockImplementation((endpoint: string) =>
+            Promise.resolve(endpoint === 'abdmHiuFetchRecords' ? { requested: 2 } : []));
+        await component.fetchExternal(2);
+        expect(component.externalNotice).toBe('Asked 2 facilities for records. They appear here as they arrive.');
+        mockDataService.invoke.mockImplementation((endpoint: string) =>
+            Promise.resolve(endpoint === 'abdmHiuFetchRecords' ? { requested: 1 } : []));
+        await component.fetchExternal(2);
+        expect(component.externalNotice).toContain('1 facility for');
+        expect(component.consentChipClass('failed')).toContain('red');
+    });
+
     it('imports outside meds through the allergy gate with override', async () => {
         component.patientId = 123;
         mockDataService.invoke.mockImplementation((method: string, input: any) => {

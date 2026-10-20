@@ -12,9 +12,18 @@ import {
 } from './updateFeed';
 
 describe('update feed resolver', () => {
-    it('disables updates when no generic feed URL is set', () => {
-        expect(resolveUpdateFeedConfig({})).toBeNull();
+    it('defaults to the nalamdesk.com feed when nothing is configured', () => {
+        expect(resolveUpdateFeedConfig({})).toEqual({
+            provider: 'generic',
+            url: 'https://nalamdesk.com/updates/desktop',
+            signatureMode: 'feed-checksum',
+            downloadPageUrl: 'https://nalamdesk.com/#get'
+        });
+    });
+
+    it('fails closed for an explicit generic provider without a feed URL', () => {
         expect(resolveUpdateFeedConfig({ NALAMDESK_UPDATE_PROVIDER: 'generic' })).toBeNull();
+        expect(resolveUpdateFeedConfig({ NALAMDESK_UPDATE_PROVIDER: 'generic', NALAMDESK_UPDATE_FEED_URL: ' ' })).toBeNull();
     });
 
     it('uses the documented generic feed URL without GitHub Releases', () => {
@@ -25,7 +34,7 @@ describe('update feed resolver', () => {
             provider: 'generic',
             url: 'https://updates.example.clinic/nalamdesk',
             signatureMode: 'feed-checksum',
-            downloadPageUrl: 'https://github.com/sankara-sabapathy/nalamdesk'
+            downloadPageUrl: 'https://nalamdesk.com/#get'
         });
         expect(toElectronUpdaterOptions(config!)).toEqual({
             provider: 'generic',
@@ -52,7 +61,7 @@ describe('update feed resolver', () => {
             provider: 'generic',
             url: 'http://127.0.0.1:8080/nalamdesk',
             signatureMode: 'feed-checksum',
-            downloadPageUrl: 'https://github.com/sankara-sabapathy/nalamdesk'
+            downloadPageUrl: 'https://nalamdesk.com/#get'
         });
         expect(resolveUpdateFeedConfig({
             NALAMDESK_UPDATE_FEED_URL: 'http://localhost/nalamdesk'
@@ -69,7 +78,7 @@ describe('update feed resolver', () => {
         expect(toElectronUpdaterOptions(config!)).toEqual({
             provider: 'github',
             owner: 'sankara-sabapathy',
-            repo: 'nalamdesk'
+            repo: 'nalamdesk-releases'
         });
         expect(signatureClaim(config!.signatureMode).verifiedSignature).toBe(false);
     });
@@ -85,13 +94,16 @@ describe('version compare and OS apply path', () => {
         expect(isNewerVersion('1.0.0-rc.1', '1.0.0')).toBe(false);
     });
 
-    it('applies Windows NSIS, macOS DMG, and Linux AppImage in-app', () => {
+    it('applies Windows NSIS and Linux AppImage in-app', () => {
         expect(resolveOsApplyPath({ platform: 'win32', isAppImage: false, feedHasAppImage: false }))
             .toEqual({ mode: 'nsis', canQuitAndInstall: true });
-        expect(resolveOsApplyPath({ platform: 'darwin', isAppImage: false, feedHasAppImage: false }))
-            .toEqual({ mode: 'dmg', canQuitAndInstall: true });
         expect(resolveOsApplyPath({ platform: 'linux', isAppImage: true, feedHasAppImage: true }))
             .toEqual({ mode: 'appimage-updater', canQuitAndInstall: true });
+    });
+
+    it('falls back to the download page for unsigned macOS builds', () => {
+        expect(resolveOsApplyPath({ platform: 'darwin', isAppImage: false, feedHasAppImage: false }))
+            .toEqual({ mode: 'open-download-page', canQuitAndInstall: false });
     });
 
     it('falls back to the download page for Linux .deb or a missing AppImage', () => {

@@ -51,7 +51,8 @@
       {
         "provider": "github",
         "owner": "sankara-sabapathy",
-        "repo": "nalamdesk"
+        "repo": "nalamdesk-releases",
+        "releaseType": "release"
       }
     ],
     "win": {

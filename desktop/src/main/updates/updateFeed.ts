@@ -1,14 +1,15 @@
 /**
  * In-app update feed configuration.
  *
- * Interim channel (this PR): generic provider. Ops hosts approved
- * `latest*.yml` plus OS packages at `NALAMDESK_UPDATE_FEED_URL` (HTTPS;
- * HTTP is allowed only for localhost). Feature CI PR zips / Actions
- * artifacts are not an update channel.
+ * Default: generic provider at `DEFAULT_UPDATE_FEED_URL`. nalamdesk.com
+ * redirects that path to the public `nalamdesk-releases` GitHub Releases
+ * (see `landing/src/pages/updates/desktop/[file].ts`), so the hosting can
+ * move without shipping a new app.
  *
- * Later PR seam: set `NALAMDESK_UPDATE_PROVIDER=github` (and optional
- * owner/repo). IPC and renderer UX stay the same — only this resolver
- * and `toElectronUpdaterOptions()` change.
+ * Overrides: `NALAMDESK_UPDATE_FEED_URL` points at another generic feed
+ * (HTTPS; HTTP only for localhost). `NALAMDESK_UPDATE_PROVIDER=github`
+ * reads GitHub Releases directly. `NALAMDESK_UPDATE_PROVIDER=generic`
+ * without a feed URL disables updates.
  */
 
 export type UpdateProviderKind = 'generic' | 'github';
@@ -32,24 +33,27 @@ export interface GithubUpdateFeed {
 
 export type UpdateFeedConfig = GenericUpdateFeed | GithubUpdateFeed;
 
-export const DEFAULT_UPDATE_DOWNLOAD_PAGE = 'https://github.com/sankara-sabapathy/nalamdesk';
+export const DEFAULT_UPDATE_FEED_URL = 'https://nalamdesk.com/updates/desktop';
+export const DEFAULT_UPDATE_DOWNLOAD_PAGE = 'https://nalamdesk.com/#get';
 
 export function resolveUpdateFeedConfig(env: NodeJS.Dict<string> = process.env): UpdateFeedConfig | null {
     const downloadPageUrl = trimSlash(env['NALAMDESK_UPDATE_DOWNLOAD_PAGE'] || DEFAULT_UPDATE_DOWNLOAD_PAGE);
-    const provider = (env['NALAMDESK_UPDATE_PROVIDER'] || 'generic').trim().toLowerCase();
+    const provider = (env['NALAMDESK_UPDATE_PROVIDER'] || '').trim().toLowerCase();
 
     if (provider === 'github') {
         return {
             provider: 'github',
             owner: (env['NALAMDESK_UPDATE_GITHUB_OWNER'] || 'sankara-sabapathy').trim(),
-            repo: (env['NALAMDESK_UPDATE_GITHUB_REPO'] || 'nalamdesk').trim(),
+            repo: (env['NALAMDESK_UPDATE_GITHUB_REPO'] || 'nalamdesk-releases').trim(),
             signatureMode: env['NALAMDESK_UPDATE_RELEASE_SIGNED'] === '1' ? 'release-signed' : 'feed-checksum',
             downloadPageUrl
         };
     }
 
-    const url = (env['NALAMDESK_UPDATE_FEED_URL'] || '').trim();
-    if (!url || !isAllowedGenericFeedUrl(url)) return null;
+    const configured = (env['NALAMDESK_UPDATE_FEED_URL'] || '').trim();
+    if (!configured && provider) return null;
+    const url = configured || DEFAULT_UPDATE_FEED_URL;
+    if (!isAllowedGenericFeedUrl(url)) return null;
     return {
         provider: 'generic',
         url: trimSlash(url),
@@ -87,7 +91,8 @@ export function resolveOsApplyPath(input: {
     feedHasAppImage: boolean;
 }): { mode: OsApplyMode; canQuitAndInstall: boolean } {
     if (input.platform === 'win32') return { mode: 'nsis', canQuitAndInstall: true };
-    if (input.platform === 'darwin') return { mode: 'dmg', canQuitAndInstall: true };
+    // Squirrel.Mac only installs signed apps; macOS builds are unsigned until notarization lands.
+    if (input.platform === 'darwin') return { mode: 'open-download-page', canQuitAndInstall: false };
     if (input.platform === 'linux' && input.isAppImage && input.feedHasAppImage) {
         return { mode: 'appimage-updater', canQuitAndInstall: true };
     }

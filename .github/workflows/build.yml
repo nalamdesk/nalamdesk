@@ -109,24 +109,27 @@ jobs:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run build
 
-      # Build & Publish based on OS
+      # Build & Publish based on OS. The code repo is private, so installers and
+      # latest*.yml go to the public sankara-sabapathy/nalamdesk-releases repo
+      # (desktop/package.json "publish"). RELEASES_TOKEN is a fine-grained token
+      # with Contents read/write on that repo only; GITHUB_TOKEN cannot write there.
       - name: Build & Publish Electron (Windows)
         if: matrix.os == 'windows-latest'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:win -- --publish always
 
       - name: Build & Publish Electron (Linux)
         if: matrix.os == 'ubuntu-latest'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:linux -- --publish always
 
       - name: Build & Publish Electron (Mac)
         if: matrix.os == 'macos-latest'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:mac -- --publish always

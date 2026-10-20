@@ -6,6 +6,7 @@ import { TestBed } from '@angular/core/testing';
 import { CloudService } from '../services/cloud.service';
 import { CloudLinkComponent, messageOf } from './cloud-link.component';
 
+const settle = () => new Promise((resolve) => setTimeout(resolve));
 const status = (patch: Partial<CloudStatus> = {}): CloudStatus => ({ state: 'unpaired', configured: true, listingEnabled: false, ...patch });
 
 describe('CloudLinkComponent', () => {
@@ -29,7 +30,8 @@ describe('CloudLinkComponent', () => {
 
     it('walks an admin through request, code and pairing', async () => {
         component.isAdmin = true;
-        await component.ngOnInit();
+        component.ngOnInit();
+        await settle();
         expect(component.status?.state).toBe('unpaired');
 
         component.hfrId = ' in2710000123 ';
@@ -75,7 +77,8 @@ describe('CloudLinkComponent', () => {
         cloud.getStatus.mockResolvedValue(status({ state: 'requested', hfrId: 'IN2710000123', keyFingerprint: 'ABCD-EFGH', requestExpiresAt: Date.now() }));
         const fixture = TestBed.createComponent(CloudLinkComponent);
         fixture.componentInstance.isAdmin = true;
-        await fixture.componentInstance.ngOnInit();
+        fixture.componentInstance.ngOnInit();
+        await settle();
         fixture.detectChanges();
         const text = fixture.nativeElement.textContent as string;
         expect(text).toContain('ABCD-EFGH');
@@ -106,10 +109,35 @@ describe('CloudLinkComponent', () => {
     it('tells non-admins they cannot change pairing', async () => {
         TestBed.configureTestingModule({ imports: [CloudLinkComponent], providers: [{ provide: CloudService, useValue: cloud }] });
         const fixture = TestBed.createComponent(CloudLinkComponent);
-        await fixture.componentInstance.ngOnInit();
+        fixture.componentInstance.ngOnInit();
+        await settle();
         fixture.detectChanges();
         expect(fixture.nativeElement.textContent).toContain('Only an admin can change cloud pairing.');
         expect(fixture.nativeElement.querySelector('#cloud-hfr')).toBeNull();
+    });
+
+    it('refreshes when main reports a pairing change, and stops listening on destroy', async () => {
+        let changed: (status: CloudStatus) => void = () => undefined;
+        const unsubscribe = vi.fn();
+        cloud.onPairingChanged.mockImplementation((listener: (status: CloudStatus) => void) => { changed = listener; return unsubscribe; });
+        component.ngOnInit();
+        await settle();
+        cloud.getStatus.mockResolvedValueOnce(status({ state: 'revoked' }));
+        changed(status({ state: 'revoked' }));
+        await settle();
+        expect(component.status?.state).toBe('revoked');
+        component.ngOnDestroy();
+        expect(unsubscribe).toHaveBeenCalled();
+    });
+
+    it('cancels a request, starts over, and shows a failed status read', async () => {
+        await component.cancel();
+        expect(cloud.cancelPairing).toHaveBeenCalled();
+        await component.forget();
+        expect(cloud.forgetPairing).toHaveBeenCalled();
+        cloud.getStatus.mockRejectedValueOnce(new Error('offline'));
+        await component.refresh();
+        expect(component.error).toBe('offline');
     });
 
     it('strips the IPC wrapper from main\'s errors', () => {

@@ -125,9 +125,9 @@ export class CloudLinkComponent implements OnInit, OnDestroy {
 
     constructor(private cloud: CloudService, private ngZone: NgZone) { }
 
-    async ngOnInit() {
-        this.unsubscribe = this.cloud.onPairingChanged((status) => this.ngZone.run(() => { void this.refresh(); }));
-        await this.refresh();
+    ngOnInit(): void {
+        this.unsubscribe = this.cloud.onPairingChanged(() => this.ngZone.run(() => { void this.refresh(); }));
+        void this.refresh();
     }
 
     ngOnDestroy() {

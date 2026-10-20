@@ -69,13 +69,14 @@ export class DynamoClinicStore implements ClinicStore {
         await this.db.send(new UpdateCommand({
             TableName: this.table,
             Key: { clinicId },
-            UpdateExpression: 'SET #name = :name, city = :city, specialty = :specialty, sealingPublicKey = :key, listed = :yes, lastSeenAt = :now, online = if_not_exists(online, :no)',
+            UpdateExpression: 'SET #name = :name, city = :city, specialty = :specialty, sealingPublicKey = :key, deviceId = :device, listed = :yes, lastSeenAt = :now, online = if_not_exists(online, :no)',
             ExpressionAttributeNames: { '#name': 'name' },
             ExpressionAttributeValues: {
                 ':name': listing.name,
                 ':city': listing.city,
                 ':specialty': listing.specialty,
                 ':key': listing.sealingPublicKey,
+                ':device': listing.deviceId,
                 ':yes': true,
                 ':no': false,
                 ':now': nowMs

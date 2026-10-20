@@ -1,10 +1,12 @@
+import { DeleteItemCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { createDeviceAuthenticator, DynamoDeviceRegistry, DynamoMailbox, DynamoNonceStore, IotDoorbell } from '@nalamdesk/cloud-shared';
 import { Hono } from 'hono';
 import { createBookingApp, type BookingDeps } from './app.js';
-import type { DeviceAuthenticator, Doorbell, Mailbox } from './ports.js';
+import type { ActiveDevices, DeviceAuthenticator, Doorbell, Mailbox } from './ports.js';
 
 export interface Adapters {
     devices?: DeviceAuthenticator;
+    activeDevices?: ActiveDevices;
     mailbox?: Mailbox;
     doorbell?: Doorbell;
 }
@@ -19,11 +21,43 @@ export function deviceAuthenticatorFromEnv(env: NodeJS.ProcessEnv): DeviceAuthen
     });
 }
 
+/** Consistent reads of a device's status in the Core devices table. */
+export function activeDevicesFromEnv(env: NodeJS.ProcessEnv): ActiveDevices | undefined {
+    if (!env.DEVICES_TABLE) return undefined;
+    const registry = new DynamoDeviceRegistry(env.DEVICES_TABLE);
+    return {
+        isActive: async (deviceId, clinicId) => {
+            const device = await registry.get(deviceId, { fresh: true });
+            return device?.status === 'active' && device.clinicId === clinicId;
+        }
+    };
+}
+
+/**
+ * The shared mailbox, put and remove. Booking bodies are far below the
+ * mailbox's inline limit, so their items never have an S3 object and a
+ * row delete removes them; that keeps the API's grant to DeleteItem.
+ */
+export function mailboxFromEnv(env: NodeJS.ProcessEnv, dynamo: Pick<DynamoDBClient, 'send'> = new DynamoDBClient({})): Mailbox | undefined {
+    if (!env.MAILBOX_TABLE || !env.MAILBOX_BUCKET) return undefined;
+    const table = env.MAILBOX_TABLE;
+    const store = new DynamoMailbox({ table, bucket: env.MAILBOX_BUCKET, dynamo: dynamo as never });
+    return {
+        put: (item) => store.put(item),
+        remove: async (clinicId, itemIds) => {
+            for (const itemId of itemIds) {
+                await dynamo.send(new DeleteItemCommand({ TableName: table, Key: { clinicId: { S: clinicId }, itemId: { S: itemId } } }));
+            }
+        }
+    };
+}
+
 /** Every adapter the environment names: the verifier, the mailbox and the doorbell (#155). */
 export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
     return {
         devices: deviceAuthenticatorFromEnv(env),
-        mailbox: env.MAILBOX_TABLE && env.MAILBOX_BUCKET ? new DynamoMailbox({ table: env.MAILBOX_TABLE, bucket: env.MAILBOX_BUCKET }) : undefined,
+        activeDevices: activeDevicesFromEnv(env),
+        mailbox: mailboxFromEnv(env),
         doorbell: env.IOT_DATA_ENDPOINT && env.DOORBELL_TOPIC_PREFIX ? new IotDoorbell(env.IOT_DATA_ENDPOINT, env.DOORBELL_TOPIC_PREFIX) : undefined
     };
 }
@@ -34,14 +68,15 @@ export function adaptersFromEnv(env: NodeJS.ProcessEnv): Adapters {
  * the API never accepts a booking it cannot deliver or a clinic call it
  * cannot verify.
  */
-export function buildServerApp(base: Omit<BookingDeps, 'devices' | 'mailbox' | 'doorbell'>, adapters: Adapters): { app: Hono; missing: string[] } {
+export function buildServerApp(base: Omit<BookingDeps, 'devices' | 'activeDevices' | 'mailbox' | 'doorbell'>, adapters: Adapters): { app: Hono; missing: string[] } {
     const missing = [
-        adapters.devices ? null : 'device authenticator (DEVICES_TABLE, NONCES_TABLE)',
+        adapters.devices && adapters.activeDevices ? null : 'device authenticator (DEVICES_TABLE, NONCES_TABLE)',
         adapters.mailbox ? null : 'mailbox (MAILBOX_TABLE, MAILBOX_BUCKET)',
         adapters.doorbell ? null : 'doorbell (IOT_DATA_ENDPOINT, DOORBELL_TOPIC_PREFIX)'
     ].filter((name): name is string => name !== null);
-    if (adapters.devices && adapters.mailbox && adapters.doorbell) {
-        return { app: createBookingApp({ ...base, devices: adapters.devices, mailbox: adapters.mailbox, doorbell: adapters.doorbell }), missing };
+    if (adapters.devices && adapters.activeDevices && adapters.mailbox && adapters.doorbell) {
+        const { devices, activeDevices, mailbox, doorbell } = adapters;
+        return { app: createBookingApp({ ...base, devices, activeDevices, mailbox, doorbell }), missing };
     }
     const holding = new Hono();
     holding.get('/api/health', (c) => c.json({ ok: false, missing }, 503));

@@ -18,7 +18,7 @@ export interface OpenSlot {
 export type BookingStatus = 'Requested' | 'Accepted' | 'Declined';
 
 export class ApiError extends Error {
-    constructor(readonly status: number, readonly code: string) {
+    constructor(readonly status: number, readonly code: string, readonly body: Record<string, unknown> = {}) {
         super(code);
     }
 }
@@ -31,7 +31,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
         throw new ApiError(0, 'offline');
     }
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new ApiError(response.status, typeof body?.error === 'string' ? body.error : 'unknown');
+    if (!response.ok) throw new ApiError(response.status, typeof body?.error === 'string' ? body.error : 'unknown', body && typeof body === 'object' ? body : {});
     return body as T;
 }
 
@@ -49,6 +49,8 @@ export interface BookRequest {
     slotId: string | null;
     phoneDigest: string;
     sealed: string;
+    /** The clinic key `sealed` was sealed to; the API answers clinic_key_changed if it is no longer current. */
+    sealedTo: string;
 }
 
 export async function submitBooking(request: BookRequest): Promise<{ ref: string; status: BookingStatus }> {

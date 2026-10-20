@@ -4,7 +4,7 @@ import { CLINIC_ID, harness, NOW, TOMORROW } from './helpers.js';
 describe('public directory and slots', () => {
     it('lists listed clinics with their sealing key and a 30-second cache', async () => {
         const h = await harness();
-        await h.clinics.upsertListing('clinic-2', { name: 'Zen Clinic', city: 'Madurai', specialty: 'ENT', sealingPublicKey: h.clinic.publicRaw }, NOW);
+        await h.clinics.upsertListing('clinic-2', { name: 'Zen Clinic', city: 'Madurai', specialty: 'ENT', sealingPublicKey: h.clinic.publicRaw, deviceId: 'dev-2' }, NOW);
         await h.clinics.unlist('clinic-2', NOW);
         const res = await h.app.request('/api/clinics');
         expect(res.status).toBe(200);

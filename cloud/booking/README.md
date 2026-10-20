@@ -27,7 +27,7 @@ The desktop side lives in `desktop/src/main/booking/BookingInboxService.ts` (#15
 | --- | --- | --- |
 | `GET /api/clinics` | Public | Listed clinics with Online/Offline and sealing key. Cached 30 s at CloudFront. |
 | `GET /api/slots/:clinicId` | Public | Open slots for the next 14 days (IST). Cached 30 s. |
-| `POST /api/book` | Public | `{clinicId, ref, slotId \| null, phoneDigest, sealed}`. Conditional slot hold, sealed item to the mailbox, doorbell. Rate-limited at the edge. |
+| `POST /api/book` | Public | `{clinicId, ref, slotId \| null, phoneDigest, sealed, sealedTo}`. `sealedTo` is the key the browser sealed to: a stale one gets `409 clinic_key_changed` with the current key, and a listing whose computer was replaced gets `503 clinic_unavailable` until the new one lists the clinic again. Conditional slot hold, sealed item to the mailbox, doorbell. Rate-limited at the edge. |
 | `GET /api/booking/:ref` | Public | `Requested`, `Accepted` or `Declined`, and the clinic name. Nothing else. |
 | `PUT/DELETE /api/clinic/listing` | Paired desktop | Signed (`cloud/shared`, audience `booking`). Turns the listing on with name, city, specialty and sealing key, or off. |
 | `PUT/GET /api/clinic/slots` | Paired desktop | Signed. Replaces open slots on given dates; held and booked slots stay. |

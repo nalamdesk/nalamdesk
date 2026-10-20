@@ -298,7 +298,11 @@
                 <div *ngIf="inboxItems.length === 0" class="text-sm text-gray-400 italic">No pending callbacks.</div>
                 <div *ngFor="let item of inboxItems" class="flex items-center justify-between gap-3 py-2 border-t border-gray-100">
                     <div class="min-w-0">
-                        <span class="text-sm font-medium text-gray-800">{{ item.kind }}</span>
+                        <span *ngIf="item.kind !== 'hip-link-otp'" class="text-sm font-medium text-gray-800">{{ item.kind }}</span>
+                        <span *ngIf="item.kind === 'hip-link-otp'" class="text-sm font-medium text-gray-800">
+                            Health ID link code for {{ item.linkPatient || 'patient' }}:
+                            <span class="font-mono">{{ item.linkCode || 'expired' }}</span>
+                        </span>
                         <span class="block text-xs text-gray-400 truncate">{{ item.created_at }}</span>
                     </div>
                     <button type="button" class="btn btn-outline btn-sm shrink-0" [disabled]="abdmBusy" (click)="ackInbox(item.id)">Acknowledge</button>

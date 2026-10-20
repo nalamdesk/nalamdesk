@@ -679,6 +679,29 @@ describe('PatientDetailsComponent', () => {
         expect(component.transferBusy).toBe(false);
     });
 
+    it('links a finished visit to the patient\'s health ID and says when it cannot', async () => {
+        component.patient = { id: 1, name: 'Asha', abha_address: 'asha@sbx' };
+        component.currentUser = { id: 10, role: 'doctor' };
+        component.selectedVisit = { id: 9, care_context_ref: 'OP-2026-0001' };
+        expect(component.canLinkVisit).toBe(true);
+        mockDataService.invoke.mockResolvedValue({ status: 'token-requested' });
+
+        await component.linkVisitToHealthId();
+
+        expect(mockDataService.invoke).toHaveBeenCalledWith('abdmHipLinkVisit', { visitId: 9 });
+        expect(mockDialogService.open).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Linking sent' }));
+        mockDataService.invoke.mockRejectedValue(new Error('Link the patient\'s health ID first.'));
+        await component.linkVisitToHealthId();
+        expect(mockDialogService.open).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Linking failed', message: 'Link the patient\'s health ID first.' }));
+        expect(component.linkBusy).toBe(false);
+
+        component.patient = { id: 1, name: 'Asha' };
+        expect(component.canLinkVisit).toBe(false);
+        component.selectedVisit = null;
+        await component.linkVisitToHealthId();
+        expect(mockDataService.invoke).toHaveBeenCalledTimes(2);
+    });
+
     it('transfers the receipt bundle and reports the receipt honestly', async () => {
         component.patient = { id: 1, name: 'Asha' };
         component.currentUser = { id: 10, name: 'Dr. Smith' };

@@ -1737,6 +1737,92 @@ export const MIGRATIONS = [
             db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hiu_artefacts_hi ON abdm_hiu_artefacts(hi_request_id);`);
             db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hiu_artefacts_txn ON abdm_hiu_artefacts(transaction_id);`);
         }
+    },
+    {
+        version: 49,
+        up: (db: any) => {
+            console.log('Running Migration v49 (ABDM HIP linking, consent and data push)...');
+            // HIP flows through the relay (#163): which visits are linked to
+            // which health ID, OTP link requests from the patient's app,
+            // consent artefacts the patient granted to other facilities, and
+            // the link token and link calls this clinic sends.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_hip_links (
+                    care_context_ref TEXT NOT NULL,
+                    abha_address TEXT NOT NULL,
+                    patient_id INTEGER,
+                    via TEXT NOT NULL,
+                    linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    -- A visit belongs to one patient, so it links to one health ID.
+                    PRIMARY KEY (care_context_ref)
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hip_links_abha ON abdm_hip_links(abha_address);`);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_hip_link_requests (
+                    link_ref TEXT PRIMARY KEY,
+                    transaction_id TEXT,
+                    abha_address TEXT NOT NULL,
+                    patient_id INTEGER NOT NULL,
+                    care_context_refs TEXT NOT NULL,
+                    otp_hash TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_hip_consents (
+                    consent_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    abha_address TEXT,
+                    hi_types TEXT NOT NULL DEFAULT '[]',
+                    care_context_refs TEXT NOT NULL DEFAULT '[]',
+                    date_from TEXT,
+                    date_to TEXT,
+                    data_erase_at TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_hip_requests (
+                    request_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    abha_address TEXT NOT NULL,
+                    patient_id INTEGER,
+                    care_context_refs TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'sent',
+                    error TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            // A patient app may only start linking for the patient its
+            // discovery matched, under the same health ID.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_hip_discoveries (
+                    transaction_id TEXT PRIMARY KEY,
+                    abha_address TEXT NOT NULL,
+                    patient_id INTEGER NOT NULL,
+                    discovered_at INTEGER NOT NULL
+                );
+            `);
+            // Linking a visit to the patient's health ID is a clinical act.
+            const grants: Record<string, string[]> = { doctor: ['abdmHipLinkVisit'], admin: ['abdmHipLinkVisit'] };
+            Object.entries(grants).forEach(([roleName, methods]) => {
+                try {
+                    const role = db.prepare('SELECT permissions FROM roles WHERE name = ?').get(roleName);
+                    if (role?.permissions) {
+                        const permissions = new Set<string>(JSON.parse(role.permissions));
+                        methods.forEach((m) => permissions.add(m));
+                        db.prepare('UPDATE roles SET permissions = ? WHERE name = ?')
+                            .run(JSON.stringify([...permissions]), roleName);
+                    }
+                } catch (e) { }
+            });
+        }
     }
 ];
 

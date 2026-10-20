@@ -966,7 +966,7 @@ export class SettingsComponent implements OnInit {
     'abdmLinkAbha', 'findPatientByAbha', 'abdmGetShareTokens', 'abdmAcceptShareToken',
     'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmGetConfig',
     'abdmHiuGetPublicKey', 'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords',
-    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords'
+    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords', 'abdmHipLinkVisit'
   ];
 
   // Per-user permission overrides (admin-only surface)

@@ -48,6 +48,21 @@ describe('outbound proxy', () => {
         expect(m3!.get('x-hip-id')).toBeNull();
     });
 
+    it('passes the link token on to HIP care-context linking', async () => {
+        const h = await harness();
+        await h.app.request('/abdm/gateway/hip/v3/link/carecontext', {
+            method: 'POST', headers: signedHeaders({ 'x-link-token': 'link-1' }), body: '{}'
+        });
+        const headers = h.upstreamCalls[0]!.init.headers as Headers;
+        expect(headers.get('x-link-token')).toBe('link-1');
+        expect(headers.get('x-hip-id')).toBe(HIP_ID);
+
+        await h.app.request('/abdm/abha/v3/profile/login/verify', {
+            method: 'POST', headers: signedHeaders({ 'x-link-token': 'link-1' }), body: '{}'
+        });
+        expect((h.upstreamCalls[1]!.init.headers as Headers).has('x-link-token')).toBe(false);
+    });
+
     it('passes the device check failure through, with the relay clock on clock_skew', async () => {
         const h = await harness();
         h.setAuth({ ok: false, status: 401, code: 'clock_skew', serverTimeMs: 1234 });

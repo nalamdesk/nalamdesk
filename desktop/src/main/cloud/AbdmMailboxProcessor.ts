@@ -11,6 +11,7 @@ import type { AbdmRelaySend } from './SignedCloudClient';
 //
 // - Scan and share (`/api/v3/hip/patient/share`) queues a front-desk token
 //   and answers the gateway through the relay with the token number.
+// - HIP discovery, linking, consent and records requests go to the HIP.
 // - HIU consent notifications update the matching consent request and stay
 //   in the callback inbox for the desk.
 // - Any other callback is queued in the callback inbox for the desk.
@@ -59,6 +60,10 @@ export interface AbdmMailboxProcessorDeps {
         fetchArtefactDetails?(consentId: number): Promise<void>;
         transferFor?(transactionId: string, page?: { pageNumber?: unknown; pageCount?: unknown }): HiuTransfer | null;
         completeTransfer?(transfer: HiuTransfer, careContextRefs: Array<string | null>, ok: boolean, transactionId: string): (() => Promise<void>) | null;
+    };
+    /** HIP callbacks (#163): discovery, linking, consent and records requests. */
+    hip?: {
+        applyCallback(path: string | null, body: any, requestId: string | null): { followUp?: () => Promise<void> } | null;
     };
     /** Sends a signed gateway call through the relay; null when this computer is not paired. */
     relay: () => AbdmRelaySend | null;
@@ -144,6 +149,8 @@ export class AbdmMailboxProcessor {
             }
             if (item.path === SHARE_PATH) return this.applyShare(item, body);
             if (item.path === HIU_CONSENT_NOTIFY_PATH) return this.applyConsentNotify(item, body);
+            const hip = this.deps.hip?.applyCallback(item.path, body, item.request_id);
+            if (hip) return { status: 'processed', reply: hip.followUp };
             const hiu = this.deps.hiu.applyCallback?.(item.path, body);
             if (hiu) return { status: 'processed', reply: hiu.followUp };
             this.deps.store.receiveInboxCallback(kindFor(item.path), body, undefined, item.request_id ?? undefined);

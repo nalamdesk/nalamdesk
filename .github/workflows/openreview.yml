@@ -28,6 +28,8 @@ jobs:
   # Out of minutes, this job fails within seconds without running;
   # continue-on-error keeps that from failing the run.
   runner:
+    # Shows as failed on a PR while the account is out of minutes; expected.
+    name: GitHub-hosted minutes
     # Only when the review below would run, so bot comments cost no minutes.
     if: >
       (github.event_name == 'pull_request' &&

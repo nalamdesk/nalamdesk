@@ -31,6 +31,16 @@ export interface CloudDeviceRow {
     paired_at: number | null;
     revoked_reason: string | null;
     updated_at: number;
+    /**
+     * The doorbell's IoT Core identity (#155): a keychain-wrapped P-256 key
+     * and the certificate the relay issued for it. Null until first issued.
+     */
+    iot_private_protected?: string | null;
+    iot_public?: string | null;
+    iot_certificate_pem?: string | null;
+    iot_endpoint?: string | null;
+    iot_topic?: string | null;
+    iot_client_id?: string | null;
 }
 
 export interface CloudDeviceStore {
@@ -45,6 +55,7 @@ export interface KeyPair {
     privateKey: crypto.KeyObject;
 }
 
+/** Last 32 bytes of the SPKI: the raw key for Ed25519 and X25519, and a stable check value for P-256. */
 export function rawPublicKey(key: crypto.KeyObject): string {
     const publicKey = key.type === 'private' ? crypto.createPublicKey(key) : key;
     return publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');

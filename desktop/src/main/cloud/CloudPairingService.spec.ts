@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import type { DeviceKeyStore } from '../services/DeviceKeyStore';
 import { DatabaseService } from '../services/DatabaseService';
@@ -34,15 +35,18 @@ function keyStore(available = true): DeviceKeyStore & { mask: number } {
 function memoryDb() {
     let row: CloudDeviceRow | null = null;
     const requests: any[] = [];
+    const abdm: any[] = [];
     return {
         getCloudDevice: () => (row ? { ...row } : null),
         saveCloudDevice: (next: CloudDeviceRow) => { row = { ...next }; },
         clearCloudDevice: () => { row = null; },
         saveAppointmentRequest: (r: any) => { requests.push(r); },
+        saveAbdmInboxItem: (r: any) => { abdm.push(r); },
         updateAppointmentRequestStatus: vi.fn(),
         acceptAppointmentRequest: vi.fn(),
         raw: () => row,
-        requests
+        requests,
+        abdm
     };
 }
 
@@ -56,6 +60,8 @@ function fakeCloud(clock: { now: number }) {
         request: null as null | { hfrId: string; signingPublicKey: string; sealingPublicKey: string; code?: string; attempts: number },
         device: null as null | { deviceId: string; key: string; previous?: string; status: 'active' | 'revoked' },
         serverOffset: 0,
+        mailbox: [] as { id: string; type: string; sealed: string }[],
+        csrs: [] as string[],
         calls: [] as { method: string; path: string; audience: Audience }[]
     };
     const json = (status: number, body?: unknown) => new Response(body === undefined ? null : JSON.stringify(body), { status });
@@ -124,7 +130,15 @@ function fakeCloud(clock: { now: number }) {
             d.key = body.signingPublicKey;
             return json(204);
         }
-        if (u.pathname === '/inbox') return json(404, { error: 'not_found' });
+        if (u.pathname === '/inbox') return json(200, { items: state.mailbox.map((m) => ({ ...m, createdAt: 1 })), more: false });
+        if (u.pathname === '/inbox/ack') {
+            state.mailbox = state.mailbox.filter((m) => !body.ids.includes(m.id));
+            return json(204);
+        }
+        if (u.pathname === '/device/iot-certificate') {
+            state.csrs.push(body.csr);
+            return json(200, { certificatePem: 'CERT', endpoint: 'iot.test', clientId: d.deviceId, topic: 'nalamdesk/sandbox/clinic/cln_1/mail' });
+        }
         if (u.pathname === '/api/clinic/listing') return json(200, { ok: true });
         return json(404, { error: 'not_found' });
     });
@@ -135,12 +149,46 @@ function fakeCloud(clock: { now: number }) {
     return { state, fetchFn, approve };
 }
 
+// Same format as cloud/relay/src/seal.ts.
+function sealFor(plaintext: Buffer, recipientRaw: string, clinicId: string, type: string): string {
+    const peer = crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), Buffer.from(recipientRaw, 'base64')]), format: 'der', type: 'spki' });
+    const eph = crypto.generateKeyPairSync('x25519');
+    const shared = crypto.diffieHellman({ publicKey: peer, privateKey: eph.privateKey });
+    const salt = crypto.randomBytes(16);
+    const key = Buffer.from(crypto.hkdfSync('sha256', shared, salt, Buffer.from('nalamdesk-mailbox-v1'), 32));
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    cipher.setAAD(Buffer.from(`nalamdesk-mailbox-v1|${clinicId}|${type}`));
+    const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    return Buffer.from(JSON.stringify({
+        v: 1, epk: eph.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64'),
+        salt: salt.toString('base64'), iv: iv.toString('base64'), ct: ct.toString('base64'), tag: cipher.getAuthTag().toString('base64')
+    })).toString('base64');
+}
+
+/** Stands in for mqtt.connect: records options, connects on the next tick. */
+function fakeMqtt() {
+    const clients: (EventEmitter & { options: any; subscribed: string[]; ended: boolean })[] = [];
+    const connect = (options: any) => {
+        const client = Object.assign(new EventEmitter(), {
+            options, subscribed: [] as string[], ended: false,
+            subscribe(topic: string, _opts: unknown, cb: (error?: Error) => void) { client.subscribed.push(topic); cb(); },
+            end() { client.ended = true; }
+        });
+        clients.push(client);
+        setTimeout(() => client.emit('connect'), 0);
+        return client as any;
+    };
+    return { connect, clients };
+}
+
 function setup(options: { keysAvailable?: boolean; runWork?: <T>(work: () => Promise<T>) => Promise<T> } = {}) {
     const clock = { now: 1_792_400_000_000 };
     const db = memoryDb();
     const cloud = fakeCloud(clock);
     const changes: string[] = [];
     const keys = keyStore(options.keysAvailable ?? true);
+    const mqtt = fakeMqtt();
     const link = new CloudLink({
         store: db,
         keyStore: keys,
@@ -149,9 +197,10 @@ function setup(options: { keysAvailable?: boolean; runWork?: <T>(work: () => Pro
         fetchFn: cloud.fetchFn as unknown as typeof fetch,
         nowMs: () => clock.now,
         runWork: options.runWork,
-        onPairingChange: (status) => changes.push(status.state)
+        onPairingChange: (status) => changes.push(status.state),
+        mqttConnect: mqtt.connect
     });
-    return { clock, db, cloud, link, pairing: link.pairing, changes, keys };
+    return { clock, db, cloud, link, pairing: link.pairing, changes, keys, mqtt };
 }
 
 describe('pairing this computer', () => {
@@ -275,6 +324,17 @@ describe('pairing this computer', () => {
         link.stop();
     });
 
+    it('ignores a revocation reply for a device that is no longer the stored one', async () => {
+        const { pairing, cloud, link, db } = setup();
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        await pairing.activate({ code: cloud.approve() });
+        await pairing.markRevoked('revoked', 'dev_restored_elsewhere');
+        expect(pairing.status().state).toBe('paired');
+        await pairing.markRevoked('revoked', db.raw()!.device_id!);
+        expect(pairing.status().state).toBe('revoked');
+        link.stop();
+    });
+
     it('reports keys it cannot read (a backup restored on another computer)', async () => {
         const { pairing, cloud, keys, link } = setup();
         await pairing.request({ hfrId: HFR, label: 'PC' });
@@ -357,7 +417,8 @@ describe('signing key rotation', () => {
         const restored = { ...db.raw()!, signing_created_at: 0 };
         db.saveCloudDevice(restored);
         await expect(pairing.rotateSigningKeyIfDue()).rejects.toThrow('RESTORE_IN_PROGRESS');
-        await expect(link.booking.sync()).rejects.toThrow('RESTORE_IN_PROGRESS');
+        // Listing an empty mailbox touches no local data, so it may still run.
+        await expect(link.mailbox.sync()).resolves.toEqual({});
         expect(db.raw()).toEqual(restored);
         link.stop();
     });
@@ -380,16 +441,127 @@ describe('signing key rotation', () => {
         expect(await pairing.rotateSigningKeyIfDue()).toBe(true);
         expect(db.raw()!.previous_signing_public).toBeNull();
     });
+    it('keeps a doorbell certificate saved while the rotation call was out', async () => {
+        const { pairing, clock, cloud, db } = await paired();
+        clock.now += SIGNING_KEY_MAX_AGE_MS + 1;
+        const real = cloud.fetchFn.getMockImplementation()!;
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        cloud.fetchFn.mockImplementationOnce(async (url: string, init: any) => { await held; return real(url, init); });
+        const rotation = pairing.rotateSigningKeyIfDue();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const deviceId = db.raw()!.device_id as string;
+        const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+        pairing.saveDoorbellIdentity(privateKey, { certificatePem: 'CERT', endpoint: 'x-ats.iot.test', clientId: deviceId, topic: 't/cln/mail' });
+        release();
+        expect(await rotation).toBe(true);
+        const row = db.raw()!;
+        expect(row.previous_signing_public).toBeNull();
+        expect(row).toMatchObject({ iot_certificate_pem: 'CERT', iot_client_id: deviceId, iot_topic: 't/cln/mail' });
+        expect(pairing.doorbellIdentity()?.certificatePem).toBe('CERT');
+    });
 });
 
 describe('cloud link', () => {
-    it('treats a relay without a mailbox yet as an empty inbox', async () => {
+    it('reads booking requests and ABDM callbacks from the mailbox and acknowledges them', async () => {
         const { pairing, cloud, link, db } = setup();
         await pairing.request({ hfrId: HFR, label: 'PC' });
         await pairing.activate({ code: cloud.approve() });
-        expect(await link.booking.sync()).toBe(0);
-        expect(db.requests).toEqual([]);
+        const sealingRaw = db.raw()!.sealing_public;
+        const booking = { v: 1, ref: '7K3P9QXA2B4M', clinicId: 'cln_1', slotId: null, slot: null, name: 'Asha', phone: '9876543210', reason: '' };
+        const callback = { path: '/api/v3/hip/patient/share', receivedAt: '2026-10-19T06:00:00Z', headers: { 'request-id': 'r-1' }, body: '{"a":1}' };
+        cloud.state.mailbox.push(
+            { id: 'm1', type: 'booking-request', sealed: sealFor(Buffer.from(JSON.stringify(booking)), sealingRaw, 'cln_1', 'booking-request') },
+            { id: 'm2', type: 'abdm-callback', sealed: sealFor(Buffer.from(JSON.stringify(callback)), sealingRaw, 'cln_1', 'abdm-callback') },
+            { id: 'm3', type: 'unknown-type', sealed: 'x' }
+        );
+        expect(await link.checkMailbox()).toBe(1);
+        expect(db.requests).toMatchObject([{ id: '7K3P9QXA2B4M', patient_name: 'Asha' }]);
+        expect(db.abdm).toEqual([{ id: 'm2', type: 'abdm-callback', path: '/api/v3/hip/patient/share', request_id: 'r-1', received_at: '2026-10-19T06:00:00Z', payload: JSON.stringify({ headers: { 'request-id': 'r-1' }, body: '{"a":1}' }) }]);
+        // Only what was saved is acknowledged; an unknown type waits for an app that can read it.
+        expect(cloud.state.mailbox.map((m) => m.id)).toEqual(['m3']);
+        expect(link.mailboxStatus().lastCheckedAt).not.toBeNull();
         link.stop();
+    });
+
+    it('connects the doorbell with its own certificate and fetches on each ring', async () => {
+        const { pairing, cloud, link, db, mqtt } = setup();
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        await pairing.activate({ code: cloud.approve() });
+        await vi.waitFor(() => expect(link.mailboxStatus().doorbell).toBe('live'));
+        expect(cloud.state.csrs).toHaveLength(1);
+        expect(cloud.state.csrs[0]).toMatch(/^-----BEGIN CERTIFICATE REQUEST-----/);
+        const client = mqtt.clients[0]!;
+        expect(client.options).toMatchObject({ host: 'iot.test', port: 8883, clientId: 'dev_abcdefghjkmnpqrs', cert: 'CERT', protocol: 'mqtts' });
+        expect(client.options.key).toMatch(/BEGIN PRIVATE KEY/);
+        expect(client.subscribed).toEqual(['nalamdesk/sandbox/clinic/cln_1/mail']);
+        // The doorbell key is stored wrapped, never as PEM.
+        expect(db.raw()!.iot_private_protected).not.toContain('PRIVATE KEY');
+
+        const inboxCalls = () => cloud.state.calls.filter((c) => c.path === '/inbox').length;
+        const before = inboxCalls();
+        client.emit('message', 'nalamdesk/sandbox/clinic/cln_1/mail', Buffer.alloc(0));
+        await vi.waitFor(() => expect(inboxCalls()).toBeGreaterThan(before));
+        link.stop();
+        expect(client.ended).toBe(true);
+        expect(link.mailboxStatus().doorbell).toBe('off');
+    });
+
+    it('lets a restore drain a certificate request in flight, and saves nothing after stop', async () => {
+        const database = new DatabaseService();
+        const { pairing, cloud, link, db } = setup({ runWork: (work) => database.runWork(work) });
+        const real = cloud.fetchFn.getMockImplementation()!;
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let asked = false;
+        cloud.fetchFn.mockImplementation(async (url: string, init: any) => {
+            if (new URL(url).pathname === '/device/iot-certificate') { asked = true; await held; }
+            return real(url, init);
+        });
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        await pairing.activate({ code: cloud.approve() });
+        await vi.waitFor(() => expect(asked).toBe(true));
+
+        let drained = false;
+        const fence = database.fence(1_000).then(() => { drained = true; });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(drained).toBe(false);
+        link.stop();
+        release();
+        await fence;
+        expect(cloud.state.csrs).toHaveLength(1);
+        expect(db.raw()!.iot_client_id ?? null).toBeNull();
+        expect(db.raw()!.iot_certificate_pem ?? null).toBeNull();
+        expect(link.mailboxStatus().doorbell).toBe('off');
+    });
+
+    it('falls back to port 443 with ALPN when 8883 is blocked', async () => {
+        const { pairing, cloud, link, mqtt } = setup();
+        const connect = mqtt.connect;
+        let first = true;
+        (link.doorbell as any).deps.connect = (options: any) => {
+            if (!first) return connect(options);
+            first = false;
+            const blocked = Object.assign(new EventEmitter(), { options, end: () => undefined });
+            mqtt.clients.push(blocked as any);
+            setTimeout(() => { blocked.emit('error', new Error('ECONNREFUSED')); blocked.emit('close'); }, 0);
+            return blocked as any;
+        };
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+        try {
+            await pairing.request({ hfrId: HFR, label: 'PC' });
+            await pairing.activate({ code: cloud.approve() });
+            await vi.waitFor(async () => {
+                await vi.advanceTimersByTimeAsync(1_000);
+                expect(link.mailboxStatus().doorbell).toBe('live');
+            }, { timeout: 2_000, interval: 1 });
+        } finally {
+            link.stop();
+            vi.useRealTimers();
+        }
+        expect(mqtt.clients.map((c) => c.options.port)).toEqual([8883, 443]);
+        expect(mqtt.clients[1]!.options.ALPNProtocols).toEqual(['x-amzn-mqtt-ca']);
     });
 
     it('stays off when the build has no cloud address', () => {

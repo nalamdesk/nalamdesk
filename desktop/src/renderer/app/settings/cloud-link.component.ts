@@ -65,6 +65,15 @@ import { CloudService } from '../services/cloud.service';
               <span class="block text-xs mt-1 text-green-800">To unpair, ask NalamDesk support, or pair the replacement computer.</span>
             </div>
 
+            <div class="flex flex-wrap items-center gap-3 mt-3 text-sm text-gray-600" data-testid="cloud-mailbox">
+              <span>
+                <ng-container *ngIf="s.mailbox?.doorbell === 'live'; else polling">New ABDM messages and bookings arrive as they are sent.</ng-container>
+                <ng-template #polling>Checking for new messages every 30 minutes.</ng-template>
+                <span *ngIf="s.mailbox?.lastCheckedAt as checked" class="text-gray-500"> Last checked {{ checked | date:'shortTime' }}.</span>
+              </span>
+              <button type="button" class="btn btn-ghost btn-xs" [disabled]="checking" (click)="checkNow()">{{ checking ? 'Checking…' : 'Check now' }}</button>
+            </div>
+
             <div class="mt-4 pt-4 border-t border-gray-100">
               <div class="flex items-center justify-between">
                 <div>
@@ -108,6 +117,7 @@ export class CloudLinkComponent implements OnInit, OnDestroy {
     label = '';
     code = '';
     busy = false;
+    checking = false;
     error = '';
     showListingForm = false;
     listing = { name: '', city: '', specialty: '' };
@@ -148,6 +158,20 @@ export class CloudLinkComponent implements OnInit, OnDestroy {
 
     forget() {
         return this.run(() => this.cloud.forgetPairing());
+    }
+
+    /** Fetches the cloud mailbox now (the same as Refresh on Online Booking). */
+    async checkNow() {
+        this.checking = true;
+        this.error = '';
+        try {
+            await this.cloud.syncNow();
+        } catch (e) {
+            this.ngZone.run(() => { this.error = messageOf(e); });
+        } finally {
+            this.ngZone.run(() => { this.checking = false; });
+            await this.refresh();
+        }
     }
 
     async toggleListing(event: Event) {

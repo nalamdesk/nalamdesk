@@ -15,7 +15,7 @@ const CSR = /^-----BEGIN CERTIFICATE REQUEST-----\r?\n[A-Za-z0-9+/=\r\n]+-----EN
 
 /**
  * The paired desktop's mailbox and doorbell endpoints (#155), all signed:
- *   GET  /inbox                  oldest items first; large ones as short-lived links
+ *   GET  /inbox[?after=<id>]     oldest items first (past `after`); large ones as short-lived links
  *   POST /inbox/ack              { ids } the desktop has saved; they are deleted
  *   POST /device/iot-certificate { csr } for a P-256 key; returns the
  *                                certificate, endpoint, client ID and topic
@@ -52,8 +52,13 @@ export function registerInboxRoutes(app: Hono, deps: InboxRouteDeps, ctx: {
     app.get('/inbox', async (c) => {
         const r = await signed(c, '/inbox');
         if ('response' in r) return r.response;
+        const after = c.req.query('after');
+        if (after !== undefined && !isMailboxItemId(after)) {
+            r.done({ hipId: r.auth.hipId, status: 400, code: 'bad_request' });
+            return refuse(c, 400, 'bad_request');
+        }
         try {
-            const page = await deps.inbox.list(r.auth.clinicId);
+            const page = after === undefined ? await deps.inbox.list(r.auth.clinicId) : await deps.inbox.list(r.auth.clinicId, after);
             r.done({ hipId: r.auth.hipId, status: 200 });
             c.header('cache-control', 'no-store');
             return c.json(page);

@@ -40,7 +40,8 @@ async function signedInbox() {
     });
     const call = (method: 'GET' | 'POST', path: string, body?: unknown) => {
         const bytes = body === undefined ? undefined : new TextEncoder().encode(JSON.stringify(body));
-        const headers = signRequest({ privateKey, deviceId: 'dev_clinic1_main', audience: 'relay', method, path, body: bytes, nowMs: now });
+        const [pathOnly, query] = path.split('?', 2) as [string, string?];
+        const headers = signRequest({ privateKey, deviceId: 'dev_clinic1_main', audience: 'relay', method, path: pathOnly, query, body: bytes, nowMs: now });
         return h.app.request(path, { method, headers: { 'content-type': 'application/json', ...headers }, body: bytes ? Buffer.from(bytes) : undefined });
     };
     return { h, call, inbox, certificates, stored };
@@ -56,6 +57,15 @@ describe('the desktop\'s mailbox endpoints', () => {
 
         expect((await call('POST', '/inbox/ack', { ids: [stored[0]!.id] })).status).toBe(204);
         expect(inbox.ack).toHaveBeenCalledWith(CLINIC_ID, [stored[0]!.id]);
+    });
+
+    it('lists past a cursor, signed with its query, and refuses a malformed one', async () => {
+        const { call, inbox, stored } = await signedInbox();
+        const after = stored[0]!.id;
+        expect((await call('GET', `/inbox?after=${after}`)).status).toBe(200);
+        expect(inbox.list).toHaveBeenCalledWith(CLINIC_ID, after);
+        expect((await call('GET', '/inbox?after=..%2Fother')).status).toBe(400);
+        expect(inbox.list).toHaveBeenCalledTimes(1);
     });
 
     it('refuses unsigned calls and malformed acknowledgements', async () => {

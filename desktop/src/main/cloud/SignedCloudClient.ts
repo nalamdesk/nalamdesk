@@ -19,8 +19,8 @@ export interface SignedCloudClientDeps {
     baseUrl: (audience: Audience) => string | null;
     /** The paired device, or null before pairing. */
     identity: () => SigningIdentity | null;
-    /** Called when the cloud says this device was revoked or replaced. */
-    onRevoked?: (code: 'device_revoked' | 'device_unknown') => void;
+    /** Called when the cloud says the device that signed (`deviceId`) was revoked or replaced. */
+    onRevoked?: (code: 'device_revoked' | 'device_unknown', deviceId: string) => void | Promise<void>;
     fetchFn?: typeof fetch;
     nowMs?: () => number;
     timeoutMs?: number;
@@ -106,7 +106,7 @@ export class SignedCloudClient {
         let response = await attempt();
         if (this.adjustClock(response)) response = await attempt();
         if (response.status === 401 && (response.body?.error === 'device_revoked' || response.body?.error === 'device_unknown')) {
-            this.deps.onRevoked?.(response.body.error);
+            await this.deps.onRevoked?.(response.body.error, identity.deviceId);
         }
         return response;
     }

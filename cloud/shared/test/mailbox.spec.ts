@@ -62,6 +62,24 @@ describe('DynamoMailbox', () => {
         expect(newMailboxItemId(NOW - MAILBOX_LIMITS.ttlMs + 1) > from).toBe(true);
     });
 
+    it('lists past a cursor, but never below the 48-hour cut', async () => {
+        const dynamo = client(() => ({ Items: [] }));
+        const mailbox = new DynamoMailbox({ table: 'mail', bucket: 'b', dynamo: dynamo as never, s3: client() as never, nowMs: () => NOW });
+        const after = newMailboxItemId(NOW - 1000);
+        await mailbox.list('cln_1', after);
+        const past = (dynamo.sent[0] as QueryCommand).input;
+        expect(past.KeyConditionExpression).toBe('clinicId = :c AND itemId > :from');
+        expect(past.ExpressionAttributeValues![':from']).toEqual({ S: after });
+
+        // A cursor older than the cut, or malformed, starts at the cut.
+        await mailbox.list('cln_1', newMailboxItemId(NOW - MAILBOX_LIMITS.ttlMs - 1000));
+        await mailbox.list('cln_1', 'junk');
+        for (const sent of dynamo.sent.slice(1) as QueryCommand[]) {
+            expect(sent.input.KeyConditionExpression).toBe('clinicId = :c AND itemId >= :from');
+            expect(sent.input.ExpressionAttributeValues![':from']!.S).toMatch(/^m[0-9a-z]{9}$/);
+        }
+    });
+
     it('acknowledges only well-formed IDs, scoped to the clinic, and drops their S3 objects', async () => {
         const dynamo = client();
         const s3 = client();

@@ -2,7 +2,7 @@ import type * as crypto from 'node:crypto';
 import type { DeviceKeyStore } from '../services/DeviceKeyStore';
 import type { ClinicSealingKey } from '../booking/BookingInboxService';
 import {
-    keyFingerprint, newSealingKey, newSigningKey, protectPrivateKey, unprotectPrivateKey,
+    keyFingerprint, newSealingKey, newSigningKey, protectPrivateKey, rawPublicKey, unprotectPrivateKey,
     type CloudDeviceRow, type CloudDeviceStore
 } from './DeviceIdentity';
 import { normalizePairingCode, pairingMessages, signMessage } from './requestSigning';
@@ -21,6 +21,14 @@ const CODE = /^[0-9A-HJKMNP-TV-Z]{8}$/;
 export const SIGNING_KEY_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 /** How long the relay keeps a pairing request open. */
 const REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
+
+export interface DoorbellIdentity {
+    endpoint: string;
+    clientId: string;
+    topic: string;
+    certificatePem: string;
+    privateKeyPem: string;
+}
 
 export type PairingState = 'unpaired' | 'requested' | 'paired' | 'revoked' | 'keys_unavailable';
 
@@ -158,6 +166,53 @@ export class CloudPairingService {
             publicKeyRaw: () => keys().row.sealing_public,
             privateKey: () => keys().sealing
         };
+    }
+
+    // ---- Doorbell identity (#155) ----
+
+    /** The stored doorbell certificate and key, if issued for the current device. */
+    doorbellIdentity(): DoorbellIdentity | null {
+        const row = this.deps.store.getCloudDevice();
+        if (!row || row.state !== 'paired' || !row.device_id || row.iot_client_id !== row.device_id) return null;
+        if (!row.iot_private_protected || !row.iot_public || !row.iot_certificate_pem || !row.iot_endpoint || !row.iot_topic) return null;
+        try {
+            const key = unprotectPrivateKey(this.deps.keyStore, row.iot_private_protected, row.iot_public);
+            return {
+                endpoint: row.iot_endpoint,
+                clientId: row.iot_client_id,
+                topic: row.iot_topic,
+                certificatePem: row.iot_certificate_pem,
+                privateKeyPem: key.export({ type: 'pkcs8', format: 'pem' }) as string
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    saveDoorbellIdentity(key: crypto.KeyObject, issued: { certificatePem: string; endpoint: string; clientId: string; topic: string }): void {
+        const row = this.deps.store.getCloudDevice();
+        if (!row || row.state !== 'paired' || row.device_id !== issued.clientId) throw new PairingError('not_paired', 'This computer is not paired.');
+        this.save({
+            ...row,
+            iot_private_protected: protectPrivateKey(this.deps.keyStore, key),
+            iot_public: rawPublicKey(key),
+            iot_certificate_pem: issued.certificatePem,
+            iot_endpoint: issued.endpoint,
+            iot_topic: issued.topic,
+            iot_client_id: issued.clientId,
+            updated_at: this.nowMs()
+        });
+    }
+
+    /** Forgets the doorbell certificate, so the next connection asks for a new one. */
+    clearDoorbellIdentity(): void {
+        const row = this.deps.store.getCloudDevice();
+        if (!row || !row.iot_client_id) return;
+        this.save({
+            ...row,
+            iot_private_protected: null, iot_public: null, iot_certificate_pem: null, iot_endpoint: null, iot_topic: null, iot_client_id: null,
+            updated_at: this.nowMs()
+        });
     }
 
     private keys(): LoadedKeys | null {
@@ -348,13 +403,18 @@ export class CloudPairingService {
     /**
      * Called by the signed client when the cloud says this device is revoked
      * or unknown: another computer was paired for the HFR ID, or staff
-     * revoked it. Cloud work stops until the admin pairs again.
+     * revoked it. Cloud work stops until the admin pairs again. A late reply
+     * for a device that is no longer the stored one (a restore installed
+     * another) changes nothing, and the write is drained by a restore.
      */
-    markRevoked(reason: string): void {
-        const row = this.deps.store.getCloudDevice();
-        if (!row || row.state !== 'paired') return;
-        this.save({ ...row, state: 'revoked', revoked_reason: reason, updated_at: this.nowMs() });
-        this.changed();
+    markRevoked(reason: string, deviceId?: string): Promise<void> {
+        return this.work(async () => {
+            const row = this.deps.store.getCloudDevice();
+            if (!row || row.state !== 'paired') return;
+            if (deviceId !== undefined && row.device_id !== deviceId) return;
+            this.save({ ...row, state: 'revoked', revoked_reason: reason, updated_at: this.nowMs() });
+            this.changed();
+        });
     }
 
     /**
@@ -419,7 +479,12 @@ export class CloudPairingService {
             || (response.status === 400 && response.body?.error === 'same_key')
             || (response.status === 401 && response.body?.error === 'bad_signature');
         if (!done) throw failure(response);
-        this.save({ ...row, previous_signing_public: null, previous_signing_private_protected: null, updated_at: this.nowMs() });
+        // Re-read the row: the doorbell certificate (or a revocation) may have
+        // been saved while the relay call was out, and must not be written over.
+        const current = this.deps.store.getCloudDevice();
+        if (current && current.signing_public === row.signing_public && current.previous_signing_public === oldKey) {
+            this.save({ ...current, previous_signing_public: null, previous_signing_private_protected: null, updated_at: this.nowMs() });
+        }
         return true;
     }
 }

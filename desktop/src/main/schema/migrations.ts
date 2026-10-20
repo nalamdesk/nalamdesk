@@ -1648,6 +1648,35 @@ export const MIGRATIONS = [
                 db.exec('UPDATE settings SET cloud_api_key = NULL, cloud_clinic_id = NULL, cloud_enabled = 0');
             } catch (e) { }
         }
+    },
+    {
+        version: 45,
+        up: (db: any) => {
+            console.log('Running Migration v45 (cloud mailbox and doorbell)...');
+            // The doorbell's IoT Core identity (#155), on the cloud_device row.
+            for (const column of ['iot_private_protected', 'iot_public', 'iot_certificate_pem', 'iot_endpoint', 'iot_topic', 'iot_client_id']) {
+                try {
+                    db.exec(`ALTER TABLE cloud_device ADD COLUMN ${column} TEXT`);
+                } catch (e) { }
+            }
+            // ABDM callbacks and HIU data pushes opened from the mailbox, for
+            // the ABDM flows to process (#160). The ID is the mailbox item ID.
+            // Its own table: v20's abdm_inbox holds the older callback queue.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_mailbox (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL CHECK (type IN ('abdm-callback', 'abdm-data-push')),
+                    path TEXT,
+                    request_id TEXT,
+                    received_at TEXT,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'processed', 'failed')),
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_abdm_mailbox_status ON abdm_mailbox(status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_abdm_mailbox_request ON abdm_mailbox(request_id);
+            `);
+        }
     }
 ];
 

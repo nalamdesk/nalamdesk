@@ -74,6 +74,7 @@ export class CloudService {
         return (window as any).electron?.cloud?.onPairingChanged?.(callback) ?? (() => undefined);
     }
 
+    /** Fetches the cloud mailbox now; resolves with new booking requests saved. */
     async syncNow() {
         if ((window as any).electron) {
             return (window as any).electron.cloud.syncNow();

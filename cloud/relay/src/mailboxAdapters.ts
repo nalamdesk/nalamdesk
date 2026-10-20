@@ -29,8 +29,8 @@ export class RelayMailbox implements Mailbox, Inbox {
         return this.store.ack(clinicId, itemIds);
     }
 
-    async list(clinicId: string): Promise<{ items: InboxItem[]; more: boolean }> {
-        const page = await this.store.list(clinicId);
+    async list(clinicId: string, after?: string): Promise<{ items: InboxItem[]; more: boolean }> {
+        const page = await this.store.list(clinicId, after);
         const items = await Promise.all(page.items.map(async (item): Promise<InboxItem> => {
             const base = { id: item.itemId, type: item.type, createdAt: item.createdAt };
             if (item.sealed) return { ...base, sealed: item.sealed };

@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   bump-version:
-    runs-on: ubuntu-latest
+    # CI_RUNNER: see feature-ci.yml.
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     outputs:
       new_tag: ${{ steps.bump.outputs.new_tag }}
     steps:
@@ -58,7 +59,9 @@ jobs:
 
   build-and-release:
     needs: bump-version
-    runs-on: ${{ matrix.os }}
+    # matrix.os stays the logical OS name; only the ubuntu leg follows
+    # CI_RUNNER. Windows and macOS always need GitHub-hosted runners.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || matrix.os }}
     defaults:
       run:
         working-directory: ./desktop
@@ -76,7 +79,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
+          # CI_RUNNER: self-hosted runners keep ~/.npm, so skip the GitHub cache (see feature-ci.yml).
+          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
           cache-dependency-path: desktop/package-lock.json
 
       - name: Install Dependencies

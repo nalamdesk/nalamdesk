@@ -33,7 +33,8 @@ jobs:
       (github.event.issue.pull_request &&
        github.event.comment.body == '/review' &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
-    runs-on: ubuntu-latest
+    # CI_RUNNER: see feature-ci.yml.
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: sankara-sabapathy/openreview@v1 # tracks latest release (moved per release; see openreview AGENTS.md invariant 4)

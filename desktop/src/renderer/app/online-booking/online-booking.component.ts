@@ -78,10 +78,19 @@ import { ToastService } from '../shared/services/toast.service';
                    <h3 class="font-bold text-gray-800">{{ req.patient_name }}</h3>
                    <p class="text-sm text-gray-500">{{ req.phone }}</p>
                  </div>
-                 <div class="text-right">
+                 <div class="text-right" *ngIf="req.date; else callbackBadge">
                    <div class="badge badge-outline text-xs">{{ req.date }}</div>
                    <div class="text-lg font-bold text-blue-600">{{ req.time }}</div>
                  </div>
+                 <ng-template #callbackBadge>
+                   <div class="badge badge-warning text-xs">Callback request</div>
+                 </ng-template>
+               </div>
+
+               <!-- No slot was chosen online: staff set the appointment time when accepting. -->
+               <div *ngIf="!req.date" class="flex gap-2 mb-3">
+                 <input type="date" [(ngModel)]="callbackSlot(req.id).date" [min]="minDate" class="input input-bordered input-sm flex-1" aria-label="Appointment date" />
+                 <input type="time" [(ngModel)]="callbackSlot(req.id).time" class="input input-bordered input-sm w-32" aria-label="Appointment time" />
                </div>
                
                <p *ngIf="req.reason" class="text-sm text-gray-600 bg-gray-50 p-2 rounded mb-3">
@@ -115,6 +124,8 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
   selectedSlots: Set<string> = new Set();  // Slots currently selected (Blue/Green)
 
   private refreshInterval: any;
+  // Date and time staff pick for callback requests, kept across list refreshes.
+  private callbackSlots = new Map<string, { date: string; time: string }>();
 
   constructor(public cloud: CloudService, private patientService: PatientService, private dialogService?: DialogService, private toastService?: ToastService) {
     this.generateTimeSlots();
@@ -268,10 +279,30 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
 
 
+  callbackSlot(id: unknown): { date: string; time: string } {
+    const key = String(id);
+    let slot = this.callbackSlots.get(key);
+    if (!slot) {
+      slot = { date: '', time: '' };
+      this.callbackSlots.set(key, slot);
+    }
+    return slot;
+  }
+
   async accept(req: any) {
+    // A callback request has no slot: the appointment needs the date and time staff set.
+    const { date, time } = req.date ? { date: req.date, time: req.time } : this.callbackSlot(req.id);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || !/^\d{2}:\d{2}$/.test(time || '')) {
+      await this.dialogService?.open({
+        title: 'Pick a date and time',
+        message: `${req.patient_name} asked for a callback. Set the appointment date and time on the request before accepting it.`,
+        type: 'error'
+      });
+      return;
+    }
     const confirmed = await this.dialogService?.open({
       title: 'Accept booking?',
-      message: `${req.patient_name} gets a confirmed appointment for ${req.date} at ${req.time}.`,
+      message: `${req.patient_name} gets a confirmed appointment for ${date} at ${time}.`,
       type: 'confirm',
       confirmText: 'Accept',
       cancelText: 'Cancel'
@@ -312,12 +343,13 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
       if (patientId) {
         await this.cloud.saveAppointment({
           patient_id: patientId,
-          date: req.date,
-          time: req.time,
+          date,
+          time,
           reason: req.reason,
           status: 'CONFIRMED'
         });
 
+        this.callbackSlots.delete(String(req.id));
         await this.loadRequests();
         this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
       }
@@ -334,7 +366,9 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
   async reject(req: any) {
     const confirmed = await this.dialogService?.open({
       title: 'Reject booking?',
-      message: `${req.patient_name}'s request for ${req.date} at ${req.time} will be declined.`,
+      message: req.date
+        ? `${req.patient_name}'s request for ${req.date} at ${req.time} will be declined.`
+        : `${req.patient_name}'s callback request will be declined.`,
       type: 'confirm',
       confirmText: 'Reject',
       cancelText: 'Keep'

@@ -129,6 +129,8 @@ export interface BookingInboxDeps {
     store: BookingRequestStore;
     /** Called after new requests are saved, so the UI can refresh. */
     onNewRequests?: (count: number) => void;
+    /** Each pass fetches, then saves; a restore drains passes before replacing the database. */
+    runWork?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 export class BookingInboxService {
@@ -197,7 +199,7 @@ export class BookingInboxService {
             try {
                 do {
                     this.rerun = false;
-                    saved += await this.syncOnce();
+                    saved += await (this.deps.runWork ? this.deps.runWork(() => this.syncOnce()) : this.syncOnce());
                 } while (this.rerun);
             } finally {
                 this.running = null;

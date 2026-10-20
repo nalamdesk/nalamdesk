@@ -41,6 +41,8 @@ export interface CloudLinkDeps {
     onPairingChange?: (status: PairingStatus) => void;
     fetchFn?: typeof fetch;
     nowMs?: () => number;
+    /** DatabaseService.runWork: background cloud work that writes is drained by a restore. */
+    runWork?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -68,6 +70,7 @@ export class CloudLink {
             client: this.client,
             appVersion: deps.appVersion,
             nowMs: deps.nowMs,
+            runWork: deps.runWork,
             onChange: (status) => {
                 this.apply(status);
                 deps.onPairingChange?.(status);
@@ -77,7 +80,8 @@ export class CloudLink {
             transport: bookingTransport(this.client),
             key: this.pairing.sealingKey(),
             store: deps.store,
-            onNewRequests: deps.onNewRequests
+            onNewRequests: deps.onNewRequests,
+            runWork: deps.runWork
         });
     }
 

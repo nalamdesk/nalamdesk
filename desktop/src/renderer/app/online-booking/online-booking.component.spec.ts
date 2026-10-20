@@ -100,6 +100,22 @@ describe('OnlineBookingComponent', () => {
         }));
     });
 
+    it('asks for a date and time before accepting a callback request', async () => {
+        const dialogService = TestBed.inject(DialogService);
+        const open = vi.spyOn(dialogService, 'open').mockResolvedValue(true);
+        const req = { id: 'ABCDEFGHJKMN', patient_name: 'John', phone: '9876543210', status: 'pending', date: null, time: null };
+
+        await component.accept(req);
+        expect(mockCloudService.decide).not.toHaveBeenCalled();
+        expect(open).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Pick a date and time' }));
+
+        component.callbackSlot(req.id).date = '2025-01-02';
+        component.callbackSlot(req.id).time = '11:30';
+        await component.accept(req);
+        expect(mockCloudService.decide).toHaveBeenCalledWith('ABCDEFGHJKMN', 'accepted');
+        expect(mockCloudService.saveAppointment).toHaveBeenCalledWith(expect.objectContaining({ date: '2025-01-02', time: '11:30' }));
+    });
+
     it('declines through the cloud', async () => {
         const dialogService = TestBed.inject(DialogService);
         vi.spyOn(dialogService, 'open').mockResolvedValue(true);

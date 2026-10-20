@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { DeviceKeyStore } from '../services/DeviceKeyStore';
+import { DatabaseService } from '../services/DatabaseService';
 import { CloudLink } from './CloudLink';
 import { SIGNING_KEY_MAX_AGE_MS } from './CloudPairingService';
 import type { CloudDeviceRow } from './DeviceIdentity';
@@ -133,7 +134,7 @@ function fakeCloud(clock: { now: number }) {
     return { state, fetchFn, approve };
 }
 
-function setup(options: { keysAvailable?: boolean } = {}) {
+function setup(options: { keysAvailable?: boolean; runWork?: <T>(work: () => Promise<T>) => Promise<T> } = {}) {
     const clock = { now: 1_792_400_000_000 };
     const db = memoryDb();
     const cloud = fakeCloud(clock);
@@ -146,6 +147,7 @@ function setup(options: { keysAvailable?: boolean } = {}) {
         baseUrl: (audience) => (audience === 'relay' ? 'https://relay.test' : 'https://book.test'),
         fetchFn: cloud.fetchFn as unknown as typeof fetch,
         nowMs: () => clock.now,
+        runWork: options.runWork,
         onPairingChange: (status) => changes.push(status.state)
     });
     return { clock, db, cloud, link, pairing: link.pairing, changes, keys };
@@ -292,8 +294,8 @@ describe('pairing this computer', () => {
 });
 
 describe('signing key rotation', () => {
-    async function paired() {
-        const ctx = setup();
+    async function paired(options: Parameters<typeof setup>[0] = {}) {
+        const ctx = setup(options);
         await ctx.pairing.request({ hfrId: HFR, label: 'PC' });
         await ctx.pairing.activate({ code: ctx.cloud.approve() });
         ctx.link.stop();
@@ -327,6 +329,35 @@ describe('signing key rotation', () => {
         expect(await pairing.rotateSigningKeyIfDue()).toBe(true);
         expect(cloud.state.device!.key).toBe(db.raw()!.signing_public);
         await link.booking.enableListing({ name: 'Arogya', city: 'Chennai' });
+        link.stop();
+    });
+
+    it('lets a restore drain a rotation in flight, then refuses cloud work', async () => {
+        const database = new DatabaseService();
+        const { pairing, clock, cloud, db, link } = await paired({ runWork: (work) => database.runWork(work) });
+        clock.now += SIGNING_KEY_MAX_AGE_MS + 1;
+        const real = cloud.fetchFn.getMockImplementation()!;
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        cloud.fetchFn.mockImplementationOnce(async (url: string, init: any) => { await held; return real(url, init); });
+        const rotation = pairing.rotateSigningKeyIfDue();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        let drained = false;
+        const fence = database.fence(1_000).then(() => { drained = true; });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(drained).toBe(false);
+        release();
+        expect(await rotation).toBe(true);
+        await fence;
+        expect(db.raw()!.previous_signing_public).toBeNull();
+
+        // The restored database goes in now; nothing written before it can follow.
+        const restored = { ...db.raw()!, signing_created_at: 0 };
+        db.saveCloudDevice(restored);
+        await expect(pairing.rotateSigningKeyIfDue()).rejects.toThrow('RESTORE_IN_PROGRESS');
+        await expect(link.booking.sync()).rejects.toThrow('RESTORE_IN_PROGRESS');
+        expect(db.raw()).toEqual(restored);
         link.stop();
     });
 

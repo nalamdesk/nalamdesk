@@ -185,7 +185,7 @@ describe('DesktopUpdateService', () => {
 
     it('skips when no feed is configured and ignores updater events until a download starts', async () => {
         const updater = mockUpdater();
-        const { service, send } = createService(updater, { env: {} });
+        const { service, send } = createService(updater, { env: { NALAMDESK_UPDATE_PROVIDER: 'generic' } });
         const skipped = await service.check({ source: 'startup' });
         expect(skipped.state).toBe('skipped');
         expect(skipped.reason).toBe('no-feed');

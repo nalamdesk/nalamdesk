@@ -43,19 +43,18 @@ This will:
 ## In-app updates (#43)
 Packaged Electron only (`app.isPackaged`). Unpackaged `npm start` skips the updater.
 
-### Interim feed (this PR)
-- Provider: **generic** via `NALAMDESK_UPDATE_FEED_URL` (HTTPS directory that serves `latest.yml` / `latest-mac.yml` / `latest-linux.yml` plus the OS packages those files name). Plain HTTP is rejected except `localhost` / `127.0.0.1`.
-- Ops copies **approved** builds onto that feed. Feature CI PR zips and random Actions artifacts are not an update channel. Automated Release / public GitHub Releases are not required here.
-- Optional: `NALAMDESK_UPDATE_DOWNLOAD_PAGE` (Linux `.deb` fallback opens this URL).
-
-### GitHub provider seam (later PR)
-Set `NALAMDESK_UPDATE_PROVIDER=github` (optional `NALAMDESK_UPDATE_GITHUB_OWNER` / `NALAMDESK_UPDATE_GITHUB_REPO`). IPC (`updates:check|download|install|cancel|status` + `updates:event`) and Settings/launch UX stay the same.
+### Feed
+- Default: **generic** provider at `https://nalamdesk.com/updates/desktop`. The landing worker (`landing/src/pages/updates/desktop/[file].ts`) redirects each file to the public [`nalamdesk-releases`](https://github.com/sankara-sabapathy/nalamdesk-releases) GitHub Releases, so hosting can move (R2, another repo) by changing the redirect, without an app release.
+- Automated Release (`.github/workflows/build.yml`) publishes installers and `latest*.yml` to `nalamdesk-releases` using the `RELEASES_TOKEN` secret (fine-grained, Contents read/write on that repo only). The code repo is private and is not an update channel.
+- Override with `NALAMDESK_UPDATE_FEED_URL` (HTTPS directory serving `latest.yml` / `latest-mac.yml` / `latest-linux.yml` plus the packages they name). Plain HTTP is rejected except `localhost` / `127.0.0.1`.
+- `NALAMDESK_UPDATE_PROVIDER=generic` without a feed URL disables updates. `NALAMDESK_UPDATE_PROVIDER=github` reads GitHub Releases directly (optional `NALAMDESK_UPDATE_GITHUB_OWNER` / `NALAMDESK_UPDATE_GITHUB_REPO`, default `nalamdesk-releases`).
+- Optional: `NALAMDESK_UPDATE_DOWNLOAD_PAGE` (default `https://nalamdesk.com/#get`), opened where the app cannot install in place.
 
 ### OS apply paths
 | OS | Packaged form | In-app apply |
 | --- | --- | --- |
 | Windows | NSIS | `electron-updater` `quitAndInstall` |
-| macOS | DMG | `electron-updater` `quitAndInstall` |
+| macOS | DMG | **Open download page**. Squirrel.Mac needs a signed, notarized app; until then macOS builds do not install in place. |
 | Linux | AppImage | `electron-updater` `quitAndInstall` |
 | Linux | `.deb` (clinic first-install) | **Open download page** if the running process is not an AppImage, or if the feed has no AppImage. No apt repo. |
 

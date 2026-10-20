@@ -74,18 +74,49 @@ jobs:
           
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
 
+      # One draft release up front, so the per-OS legs below upload into it
+      # instead of racing to create it. publish-release makes it live once
+      # every leg has uploaded, so clinics never see a half-filled release.
+      - name: Create draft release in nalamdesk-releases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          NEW_TAG: ${{ steps.bump.outputs.new_tag }}
+        run: |
+          node -e '
+            const tag = process.env.NEW_TAG;
+            fetch("https://api.github.com/repos/sankara-sabapathy/nalamdesk-releases/releases", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" },
+              body: JSON.stringify({ tag_name: tag, name: tag, draft: true })
+            }).then(async (res) => {
+              if (!res.ok) { console.error(res.status, await res.text()); process.exit(1); }
+              console.log(`Draft release ${tag} created`);
+            });
+          '
+
   build-and-release:
     needs: [runner, bump-version]
     if: ${{ !cancelled() && needs.bump-version.result == 'success' }}
-    # matrix.os stays the logical OS name; only the ubuntu leg can move to
-    # CI_RUNNER. Windows and macOS always need GitHub-hosted runners.
-    runs-on: ${{ matrix.os != 'ubuntu-latest' && matrix.os || needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    # matrix.os stays the logical OS name. Out of GitHub-hosted minutes, the
+    # ubuntu leg moves to CI_RUNNER and the windows leg to CI_RUNNER_WINDOWS
+    # (a self-hosted Windows runner, e.g. ["self-hosted","Windows"]), and
+    # the macOS leg is dropped: it needs GitHub-hosted runners, and macOS
+    # downloads stay "coming soon" until the build is signed.
+    runs-on: >-
+      ${{ matrix.os == 'macos-latest' && 'macos-latest'
+      || needs.runner.outputs.hosted == 'true' && matrix.os
+      || matrix.os == 'windows-latest' && fromJSON(vars.CI_RUNNER_WINDOWS)
+      || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./desktop
     strategy:
+      # One OS failing must not cancel the others mid-upload.
+      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # Without a Windows runner, release Linux only rather than queue a
+        # leg that can never start and keep the draft from publishing.
+        os: ${{ fromJSON(needs.runner.outputs.hosted == 'true' && '["windows-latest","ubuntu-latest","macos-latest"]' || vars.CI_RUNNER_WINDOWS && '["windows-latest","ubuntu-latest"]' || '["ubuntu-latest"]') }}
 
     steps:
       - name: Checkout code
@@ -109,24 +140,57 @@ jobs:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run build
 
-      # Build & Publish based on OS
+      # Build & Publish based on OS. The code repo is private, so installers and
+      # latest*.yml go to the public sankara-sabapathy/nalamdesk-releases repo
+      # (desktop/package.json "publish"). RELEASES_TOKEN is a fine-grained token
+      # with Contents read/write on that repo only; GITHUB_TOKEN cannot write there.
       - name: Build & Publish Electron (Windows)
         if: matrix.os == 'windows-latest'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:win -- --publish always
 
       - name: Build & Publish Electron (Linux)
         if: matrix.os == 'ubuntu-latest'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:linux -- --publish always
 
       - name: Build & Publish Electron (Mac)
         if: matrix.os == 'macos-latest'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:mac -- --publish always
+
+  publish-release:
+    needs: [runner, bump-version, build-and-release]
+    if: ${{ !cancelled() && needs.build-and-release.result == 'success' }}
+    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          NEW_TAG: ${{ needs.bump-version.outputs.new_tag }}
+        run: |
+          node -e '
+            const api = "https://api.github.com/repos/sankara-sabapathy/nalamdesk-releases/releases";
+            const headers = { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" };
+            (async () => {
+              const releases = await (await fetch(`${api}?per_page=20`, { headers })).json();
+              const draft = releases.find((r) => r.tag_name === process.env.NEW_TAG && r.draft);
+              if (!draft) { console.error(`No draft release for ${process.env.NEW_TAG}`); process.exit(1); }
+              const res = await fetch(`${api}/${draft.id}`, {
+                method: "PATCH", headers, body: JSON.stringify({ draft: false, make_latest: "true" })
+              });
+              if (!res.ok) { console.error(res.status, await res.text()); process.exit(1); }
+              console.log(`Published ${process.env.NEW_TAG}`);
+            })();
+          '

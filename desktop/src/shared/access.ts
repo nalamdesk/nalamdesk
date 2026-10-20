@@ -70,7 +70,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
             'abdmGetInbox', 'abdmAckInbox', 'abdmGetConfig',
             'abdmHiuGetPublicKey', 'abdmHiuRequestConsent', 'abdmHiuGetConsents',
             'abdmHiuFetchRecords', 'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords',
-            'abdmHiuImportMedication', 'abdmTransferBundle'
+            'abdmHiuImportMedication', 'abdmTransferBundle', 'abdmHipLinkVisit'
         ]
     },
     {

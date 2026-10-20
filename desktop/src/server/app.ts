@@ -13,6 +13,7 @@ import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmRelayService, abdmConfigView } from '../main/services/AbdmRelayService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
 import { HiuService } from '../main/services/HiuService';
+import { HipService } from '../main/services/HipService';
 import { AccessPolicy } from '../main/services/AccessPolicy';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import { FideliusService, parseKeyMaterial } from '../main/services/FideliusService';
@@ -33,7 +34,7 @@ const ABDM_SERVICE_METHODS = new Set([
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle', 'abdmHiuGetPublicKey',
     'abdmHiuRequestConsent', 'abdmHiuGetConsents', 'abdmHiuFetchRecords',
-    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords', 'abdmHiuImportMedication'
+    'abdmHiuGetExternalRecords', 'abdmHiuClearExternalRecords', 'abdmHiuImportMedication', 'abdmHipLinkVisit'
 ]);
 
 /** Allowlisted LAN methods; the conformance spec pins allow/deny per role. */
@@ -63,7 +64,7 @@ export const ALLOWED_IPC_METHODS = [
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey', 'abdmHiuRequestConsent',
     'abdmHiuGetConsents', 'abdmHiuFetchRecords', 'abdmHiuGetExternalRecords',
-    'abdmHiuClearExternalRecords', 'abdmHiuImportMedication',
+    'abdmHiuClearExternalRecords', 'abdmHiuImportMedication', 'abdmHipLinkVisit',
     'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
@@ -81,6 +82,7 @@ export interface ApiAbdmServices {
     relay: AbdmRelayService;
     abha: AbdmAbhaService;
     hiu: HiuService;
+    hip?: HipService;
 }
 
 export class ApiServer {
@@ -114,14 +116,15 @@ export class ApiServer {
                         getPendingInbox: () => db.getPendingInbox()
                     },
                     relay
-                })
+                }),
+                hip: new HipService({ store: db, relay, hipId: () => relay.status().hfr_id })
             };
         }
         return this.abdm;
     }
 
     private async invokeAbdmMethod(method: string, args: unknown[], user: any): Promise<unknown> {
-        const { relay, abha, hiu } = this.abdmServices();
+        const { relay, abha, hiu, hip } = this.abdmServices();
         const payload = ((args || [])[0] || {}) as Record<string, any>;
         const db = this.dbService as any;
         switch (method) {
@@ -191,6 +194,9 @@ export class ApiServer {
                 return db.getConsents(payload['patientId'] ?? null);
             case 'abdmHiuFetchRecords':
                 return hiu.fetchForConsent(Number(payload['consentId']), user?.id);
+            case 'abdmHipLinkVisit':
+                if (!hip) throw new Error('Linking records is not available here.');
+                return hip.linkVisit(Number(payload['visitId']));
             case 'abdmHiuGetExternalRecords': {
                 db.expireFetchedRecords();
                 const rows = db.getFetchedRecords(Number(payload['patientId'])) as any[];

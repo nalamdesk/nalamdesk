@@ -340,6 +340,42 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         expect(db.clearFetchedRecords).toHaveBeenCalledWith(1, expect.anything());
     });
 
+    it('links visits over LAN for clinicians only, and refuses in mock mode', async () => {
+        rolePerms.receptionist = ['abdmHiuGetExternalRecords'];
+        rolePerms.doctor = [...rolePerms.doctor, 'abdmHipLinkVisit'];
+        const denied = await postIpc('abdmHipLinkVisit', [{ visitId: 3 }], 'receptionist');
+        expect(denied.statusCode).toBe(403);
+
+        // Mock mode refuses; the LAN answer never carries the detail.
+        const mock = await postIpc('abdmHipLinkVisit', [{ visitId: 3 }], 'doctor');
+        expect(mock.statusCode).toBe(500);
+
+        const linkVisit = vi.fn().mockResolvedValue({ status: 'linking' });
+        const relay = new AbdmRelayService({ getSettings: () => ({}) });
+        const paired = new ApiServer(db, os.tmpdir(), undefined, {
+            relay, abha: new AbdmAbhaService({ relay }), hiu: new HiuService({ relay }), hip: { linkVisit } as any
+        });
+        const unlinked = new ApiServer(db, os.tmpdir(), undefined, { relay, abha: new AbdmAbhaService({ relay }), hiu: new HiuService({ relay }) });
+        try {
+            const ok = await paired.inject({
+                method: 'POST', url: '/api/ipc/abdmHipLinkVisit',
+                headers: { authorization: authHeader({ id: 7, role: 'doctor' }), 'content-type': 'application/json' },
+                payload: [{ visitId: '3' }]
+            });
+            expect(ok.json()).toEqual({ status: 'linking' });
+            expect(linkVisit).toHaveBeenCalledWith(3);
+            const none = await unlinked.inject({
+                method: 'POST', url: '/api/ipc/abdmHipLinkVisit',
+                headers: { authorization: authHeader({ id: 7, role: 'doctor' }), 'content-type': 'application/json' },
+                payload: [{ visitId: 3 }]
+            });
+            expect(none.statusCode).toBe(500);
+        } finally {
+            await paired.close();
+            await unlinked.close();
+        }
+    });
+
     it('imports outside medications over LAN through the safety gate', async () => {
         rolePerms.receptionist = ['abdmHiuGetExternalRecords'];
         rolePerms.doctor = [...rolePerms.doctor, 'abdmHiuImportMedication'];

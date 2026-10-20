@@ -37,7 +37,8 @@ export const LIMITS = {
 
 // Desktop headers that may travel upstream. Authorization, X-CM-ID,
 // X-HIP-ID and X-HIU-ID are always set by the relay, never passed through.
-const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'request-id', 'timestamp', 'x-token', 't-token', 'transaction_id'];
+// X-LINK-TOKEN carries the patient's link token on HIP care-context linking (#163).
+const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'request-id', 'timestamp', 'x-token', 't-token', 'transaction_id', 'x-link-token'];
 const FORWARDED_RESPONSE_HEADERS = ['content-type', 'content-disposition', 'request-id', 'timestamp'];
 // Callback headers worth sealing for the desktop; the gateway JWT is not one.
 const SEALED_CALLBACK_HEADERS = ['request-id', 'timestamp', 'x-hip-id', 'x-hiu-id', 'x-cm-id', 'content-type'];

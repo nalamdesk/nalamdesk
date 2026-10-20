@@ -830,6 +830,10 @@ import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patie
                         {{ transferBusy ? 'Sending...' : 'Secure Share' }}
                     </button>
 
+                    <button (click)="linkVisitToHealthId()" [disabled]="linkBusy" *ngIf="canLinkVisit" class="px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded font-medium hover:bg-blue-50 transition disabled:opacity-50">
+                        {{ linkBusy ? 'Linking...' : 'Link to Health ID' }}
+                    </button>
+
                     <button (click)="printVisit()" class="px-4 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-md transition">
                         Print Record
                     </button>
@@ -1838,6 +1842,35 @@ export class PatientDetailsComponent implements OnInit {
     // would only ever see Forbidden never see the button.
     get canTransfer(): boolean {
         return this.currentUser?.role === 'doctor' || this.currentUser?.role === 'admin';
+    }
+
+    linkBusy = false;
+
+    // A finished visit with a care context, for a patient with a linked
+    // health ID, can be offered to the patient's health app.
+    get canLinkVisit(): boolean {
+        return this.canTransfer && !!this.selectedVisit?.care_context_ref && !!this.patient?.abha_address;
+    }
+
+    async linkVisitToHealthId() {
+        if (!this.selectedVisit || this.linkBusy) return;
+        this.linkBusy = true;
+        try {
+            await this.dataService.invoke('abdmHipLinkVisit', { visitId: this.selectedVisit.id });
+            await this.dialogService.open({
+                title: 'Linking sent',
+                message: 'ABDM will add this visit to the patient\'s health app.',
+                type: 'success'
+            });
+        } catch (e) {
+            await this.dialogService.open({
+                title: 'Linking failed',
+                message: e instanceof Error ? e.message : 'Could not link this visit.',
+                type: 'error'
+            });
+        } finally {
+            this.linkBusy = false;
+        }
     }
 
     // Encrypts the current receipt bundle for the configured recipient and

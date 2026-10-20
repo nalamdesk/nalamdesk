@@ -1570,6 +1570,169 @@ export class DatabaseService {
         };
     }
 
+    // ABDM HIP (#163): the patients and visits this clinic offers to the
+    // patient's health app, and the links and consents that follow.
+
+    /**
+     * Candidates for a discovery request: the patient holding this health ID,
+     * or else patients matching mobile, gender and (when given) birth year.
+     */
+    findHipPatients(query: { abhaAddress?: string | null; abhaNumber?: string | null; mobile?: string | null; gender?: string | null; yearOfBirth?: number | null }) {
+        const address = String(query?.abhaAddress || '').trim();
+        if (address) {
+            const rows = this.db.prepare(`SELECT * FROM patients WHERE merged_into IS NULL AND COALESCE(active, 1) != 0
+                AND abha_address IS NOT NULL AND LOWER(abha_address) = LOWER(?)`).all(address) as any[];
+            if (rows.length > 0) return { matchedBy: 'ABHA_ADDRESS', patients: rows };
+        }
+        const number = String(query?.abhaNumber || '').replace(/\D/g, '');
+        if (number.length === 14) {
+            const rows = (this.db.prepare(`SELECT * FROM patients WHERE merged_into IS NULL AND COALESCE(active, 1) != 0 AND abha_number IS NOT NULL`).all() as any[])
+                .filter((row) => String(row.abha_number).replace(/\D/g, '') === number);
+            if (rows.length > 0) return { matchedBy: 'ABHA_NUMBER', patients: rows };
+        }
+        const mobile = String(query?.mobile || '').replace(/\D/g, '').slice(-10);
+        if (mobile.length !== 10) return { matchedBy: null, patients: [] };
+        const gender = String(query?.gender || '').trim().charAt(0).toUpperCase();
+        const year = Number(query?.yearOfBirth);
+        const thisYear = new Date().getFullYear();
+        const rows = (this.db.prepare(`SELECT * FROM patients WHERE merged_into IS NULL AND COALESCE(active, 1) != 0 AND mobile IS NOT NULL`).all() as any[])
+            .filter((row) => String(row.mobile).replace(/\D/g, '').slice(-10) === mobile)
+            .filter((row) => !gender || String(row.gender || '').trim().charAt(0).toUpperCase() === gender)
+            .filter((row) => {
+                if (!Number.isInteger(year) || year < 1900) return true;
+                const dobYear = row.dob ? Number(String(row.dob).slice(0, 4)) : null;
+                const known = dobYear ?? (row.age != null ? thisYear - Number(row.age) : null);
+                return known == null || Math.abs(known - year) <= 1;
+            });
+        return { matchedBy: rows.length > 0 ? 'MOBILE' : null, patients: rows };
+    }
+
+    /** A patient by the reference this clinic gave the gateway (MRN, UUID or row ID). */
+    findHipPatientByReference(reference: string) {
+        const ref = String(reference || '').trim();
+        if (!ref) return null;
+        return (this.db.prepare(`SELECT * FROM patients WHERE merged_into IS NULL
+            AND (mrn = ? OR uuid = ? OR CAST(id AS TEXT) = ?) LIMIT 1`).get(ref, ref, ref) ?? null) as any;
+    }
+
+    /** Finished visits with a care context reference, newest first. */
+    getHipCareContexts(patientId: number) {
+        return this.db.prepare(`SELECT id, care_context_ref, date, diagnosis FROM visits
+            WHERE patient_id = ? AND status = 'finished' AND care_context_ref IS NOT NULL
+            ORDER BY date DESC, id DESC`).all(Number(patientId)) as any[];
+    }
+
+    getHipLinkedRefs(abhaAddress: string): string[] {
+        return (this.db.prepare(`SELECT care_context_ref FROM abdm_hip_links WHERE LOWER(abha_address) = LOWER(?)`)
+            .all(String(abhaAddress || '').trim()) as any[]).map((row) => row.care_context_ref);
+    }
+
+    saveHipLinks(abhaAddress: string, patientId: number | null, refs: string[], via: 'patient' | 'clinic', actingUserId?: number) {
+        const save = this.db.transaction(() => {
+            for (const ref of refs) {
+                this.db.prepare(`INSERT OR IGNORE INTO abdm_hip_links (care_context_ref, abha_address, patient_id, via)
+                    VALUES (?, ?, ?, ?)`).run(String(ref), String(abhaAddress).trim(), patientId, via);
+            }
+        });
+        (save as any).immediate ? (save as any).immediate() : (save as any)();
+        this.logAudit('ABHA_LINK', 'abdm_hip_links', Number(patientId || 0), actingUserId,
+            `Linked ${refs.length} care context(s) to ${abhaAddress} (${via})`);
+    }
+
+    saveHipLinkRequest(row: { linkRef: string; transactionId: string | null; abhaAddress: string; patientId: number; refs: string[]; otpHash: string; expiresAt: number }) {
+        this.db.prepare(`INSERT INTO abdm_hip_link_requests
+            (link_ref, transaction_id, abha_address, patient_id, care_context_refs, otp_hash, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`).run(row.linkRef, row.transactionId, row.abhaAddress, row.patientId,
+            JSON.stringify(row.refs), row.otpHash, row.expiresAt);
+    }
+
+    getHipLinkRequest(linkRef: string) {
+        return (this.db.prepare('SELECT * FROM abdm_hip_link_requests WHERE link_ref = ?').get(String(linkRef || '')) ?? null) as any;
+    }
+
+    updateHipLinkRequest(linkRef: string, patch: { attempts?: number; status?: string }) {
+        this.db.prepare(`UPDATE abdm_hip_link_requests SET attempts = COALESCE(?, attempts), status = COALESCE(?, status)
+            WHERE link_ref = ?`).run(patch.attempts ?? null, patch.status ?? null, String(linkRef));
+    }
+
+    /** Saves (or updates the status of) a consent artefact granted to another facility. */
+    saveHipConsent(row: { consentId: string; status: string; abhaAddress: string | null; hiTypes: string[]; refs: string[];
+        dateFrom: string | null; dateTo: string | null; dataEraseAt: string | null }) {
+        this.db.prepare(`INSERT INTO abdm_hip_consents
+            (consent_id, status, abha_address, hi_types, care_context_refs, date_from, date_to, data_erase_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(consent_id) DO UPDATE SET status = excluded.status, updated_at = CURRENT_TIMESTAMP`)
+            .run(row.consentId, row.status, row.abhaAddress, JSON.stringify(row.hiTypes), JSON.stringify(row.refs),
+                row.dateFrom, row.dateTo, row.dataEraseAt);
+        this.logAudit('UPDATE', 'abdm_hip_consents', 0, undefined, `HIP consent ${row.consentId} ${row.status}`);
+    }
+
+    getHipConsent(consentId: string) {
+        return (this.db.prepare('SELECT * FROM abdm_hip_consents WHERE consent_id = ?').get(String(consentId || '')) ?? null) as any;
+    }
+
+    saveHipRequest(row: { requestId: string; kind: 'token' | 'link'; abhaAddress: string; patientId: number | null; refs: string[] }) {
+        this.db.prepare(`INSERT INTO abdm_hip_requests (request_id, kind, abha_address, patient_id, care_context_refs)
+            VALUES (?, ?, ?, ?, ?)`).run(row.requestId, row.kind, row.abhaAddress, row.patientId, JSON.stringify(row.refs));
+    }
+
+    getHipRequest(requestId: string) {
+        return (this.db.prepare('SELECT * FROM abdm_hip_requests WHERE request_id = ?').get(String(requestId || '')) ?? null) as any;
+    }
+
+    updateHipRequest(requestId: string, status: string, error: string | null = null) {
+        this.db.prepare(`UPDATE abdm_hip_requests SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE request_id = ?`).run(status, error ? String(error).slice(0, 500) : null, String(requestId));
+    }
+
+    getHipLinkToken(abhaAddress: string, nowMs = Date.now()): string | null {
+        const row = this.db.prepare(`SELECT link_token, expires_at FROM abdm_hip_link_tokens WHERE LOWER(abha_address) = LOWER(?)`)
+            .get(String(abhaAddress || '').trim()) as any;
+        return row && Number(row.expires_at) > nowMs ? String(row.link_token) : null;
+    }
+
+    saveHipLinkToken(abhaAddress: string, linkToken: string, expiresAt: number) {
+        this.db.prepare(`INSERT INTO abdm_hip_link_tokens (abha_address, link_token, expires_at) VALUES (?, ?, ?)
+            ON CONFLICT(abha_address) DO UPDATE SET link_token = excluded.link_token, expires_at = excluded.expires_at,
+            updated_at = CURRENT_TIMESTAMP`).run(String(abhaAddress).trim(), String(linkToken), expiresAt);
+    }
+
+    clearHipLinkToken(abhaAddress: string) {
+        this.db.prepare('DELETE FROM abdm_hip_link_tokens WHERE LOWER(abha_address) = LOWER(?)').run(String(abhaAddress || '').trim());
+    }
+
+    /**
+     * Everything the FHIR serializer needs for one care context, read from
+     * the chart; null when no finished visit carries this reference.
+     */
+    getHipEncounterExport(careContextRef: string) {
+        const visit = this.db.prepare(`SELECT id, patient_id FROM visits
+            WHERE care_context_ref = ? AND status = 'finished'`).get(String(careContextRef || '')) as any;
+        if (!visit) return null;
+        const full = (this.getVisits(Number(visit.patient_id)) as any[]).find((v) => Number(v.id) === Number(visit.id));
+        const patient = this.getPatientById(Number(visit.patient_id)) as any;
+        if (!full || !patient) return null;
+        const doctor = full.doctor_id != null
+            ? this.db.prepare('SELECT id, name, license_number, specialty, abdm_hpr_id FROM users WHERE id = ?').get(Number(full.doctor_id)) as any
+            : null;
+        const settings = (this.db.prepare('SELECT clinic_name, doctor_name, abdm_hfr_id FROM settings LIMIT 1').get() ?? {}) as any;
+        return {
+            visit: full,
+            patient,
+            doctor: doctor ?? { id: full.doctor_id ?? 0, name: full.doctor_name || settings.doctor_name || 'Doctor' },
+            clinic: { name: settings.clinic_name || 'Clinic', hfrId: settings.abdm_hfr_id || null },
+            allergies: this.getAllergies(Number(visit.patient_id)) as any[],
+            conditions: this.getConditions(Number(visit.patient_id)) as any[]
+        };
+    }
+
+    /** The visit a clinician links to the patient's health ID from the chart. */
+    getHipVisit(visitId: number) {
+        return (this.db.prepare(`SELECT v.id, v.care_context_ref, v.date, v.status, p.id AS patient_id, p.name, p.gender,
+            p.dob, p.age, p.abha_address, p.abha_number FROM visits v JOIN patients p ON p.id = v.patient_id
+            WHERE v.id = ?`).get(Number(visitId)) ?? null) as any;
+    }
+
     /** Stores a decrypted inbound bundle against a consent (retention set by caller). */
     storeFetchedRecord(input: {
         consentId?: number | null;

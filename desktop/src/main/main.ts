@@ -19,6 +19,7 @@ import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './serv
 import { AbdmRelayService, abdmConfigView } from './services/AbdmRelayService';
 import { AbdmAbhaService } from './services/AbdmAbhaService';
 import { HiuService } from './services/HiuService';
+import { HipService } from './services/HipService';
 import { FideliusService, parseKeyMaterial } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
@@ -222,9 +223,15 @@ const cloudLink: CloudLink = new CloudLink({
 });
 // ABDM callbacks and data pushes arrive through the relay's mailbox (#160);
 // the local server has no public ABDM routes.
+const hipService = new HipService({
+    store: databaseService,
+    relay: abdmRelayService,
+    hipId: () => abdmRelayService.status().hfr_id
+});
 const abdmMailbox = new AbdmMailboxProcessor({
     store: databaseService,
     hiu: hiuService,
+    hip: hipService,
     relay: () => cloudLink.abdmRelay(),
     onShare: () => notifyRenderer('abdm:shareReceived', {}),
     runWork: (work) => databaseService.runWork(work)
@@ -250,7 +257,7 @@ const apiServer = new ApiServer(
     staticPath,
     isDev ? getDevUiProxyUrl() : undefined,
     // LAN browsers share the desktop's relay connection and HIU identity.
-    { relay: abdmRelayService, abha: abdmAbhaService, hiu: hiuService }
+    { relay: abdmRelayService, abha: abdmAbhaService, hiu: hiuService, hip: hipService }
 );
 const sessionService = new SessionService();
 const backupService = new BackupService(databaseService, googleDriveService, securityService, userDataPath, {
@@ -1347,6 +1354,11 @@ handleGuardedDb('db:abdmHiuFetchRecords', (_, payload) => {
     const user = requireHiuClinician(sessionService.getUser());
     const args = payload || {};
     return hiuService.fetchForConsent(Number(args.consentId), user.id);
+});
+handleGuardedDb('db:abdmHipLinkVisit', (_, payload) => {
+    requireHiuClinician(sessionService.getUser());
+    const args = payload || {};
+    return hipService.linkVisit(Number(args.visitId));
 });
 handleGuardedDb('db:abdmHiuGetExternalRecords', (_, payload) => {
     const user = sessionService.getUser();

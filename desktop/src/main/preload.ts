@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld('electron', {
         abdmHiuRequestConsent: (input: any) => ipcRenderer.invoke('db:abdmHiuRequestConsent', input),
         abdmHiuGetConsents: (input: any) => ipcRenderer.invoke('db:abdmHiuGetConsents', input),
         abdmHiuFetchRecords: (input: any) => ipcRenderer.invoke('db:abdmHiuFetchRecords', input),
+        abdmHipLinkVisit: (input: any) => ipcRenderer.invoke('db:abdmHipLinkVisit', input),
         abdmHiuGetExternalRecords: (input: any) => ipcRenderer.invoke('db:abdmHiuGetExternalRecords', input),
         abdmHiuClearExternalRecords: (input: any) => ipcRenderer.invoke('db:abdmHiuClearExternalRecords', input),
         getUserOverrides: (userId: number) => ipcRenderer.invoke('db:getUserOverrides', userId),

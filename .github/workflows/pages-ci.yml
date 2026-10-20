@@ -19,7 +19,7 @@ on:
 jobs:
   docs:
     name: Docs build (Docusaurus)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./cloud/documentation

@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import * as dns from 'node:dns';
+import * as https from 'node:https';
 import * as net from 'node:net';
 import { buildOpConsultRecord, type EncounterExportInput } from '../../shared/fhir/serializer';
 import { FideliusService, parseKeyMaterial, type FideliusKeyMaterial } from './FideliusService';
@@ -45,6 +46,7 @@ export interface HipStore {
     saveHipLinks(abhaAddress: string, patientId: number | null, refs: string[], via: 'patient' | 'clinic', actingUserId?: number): void;
     saveHipLinkRequest(row: { linkRef: string; transactionId: string | null; abhaAddress: string; patientId: number; refs: string[]; otpHash: string; expiresAt: number }): void;
     getHipLinkRequest(linkRef: string): any;
+    closeHipLinkOtp(linkRef: string): void;
     saveHipDiscovery(row: { transactionId: string; abhaAddress: string; patientId: number; discoveredAt: number }): void;
     getHipDiscovery(transactionId: string): any;
     updateHipLinkRequest(linkRef: string, patch: { attempts?: number; status?: string }): void;
@@ -78,6 +80,7 @@ export interface HipDeps {
     };
     /** The paired facility ID; it is this clinic's HIP ID. */
     hipId: () => string | null;
+    /** Test seam for the push; production posts through `pinnedPost`. */
     fetchFn?: typeof fetch;
     /** Resolves a host name to its addresses; records only go to public ones. */
     lookupHost?: (host: string) => Promise<string[]>;
@@ -241,15 +244,18 @@ export class HipService {
         if (!request || request.status !== 'pending') throw new HipRefusal(1000, 'Link request not found.');
         if (Number(request.expires_at) <= this.nowMs()) {
             this.deps.store.updateHipLinkRequest(linkRef, { status: 'expired' });
+            this.deps.store.closeHipLinkOtp(linkRef);
             throw new HipRefusal(1000, 'The code has expired. Please start linking again.');
         }
         const attempts = Number(request.attempts) + 1;
         if (!sameHash(request.otp_hash, otpHash(linkRef, token))) {
             this.deps.store.updateHipLinkRequest(linkRef, { attempts, status: attempts >= MAX_OTP_ATTEMPTS ? 'failed' : 'pending' });
+            if (attempts >= MAX_OTP_ATTEMPTS) this.deps.store.closeHipLinkOtp(linkRef);
             throw new HipRefusal(1000, 'The code does not match.');
         }
         const refs: string[] = JSON.parse(request.care_context_refs || '[]');
         this.deps.store.updateHipLinkRequest(linkRef, { attempts, status: 'linked' });
+        this.deps.store.closeHipLinkOtp(linkRef);
         this.deps.store.saveHipLinks(request.abha_address, Number(request.patient_id), refs, 'patient');
         const contexts = this.deps.store.getHipCareContexts(Number(request.patient_id)).filter((row) => refs.includes(row.care_context_ref));
         const patient = this.deps.store.findHipPatientByReference(String(request.patient_id));
@@ -421,7 +427,6 @@ export class HipService {
      */
     private async transfer(consentId: string, transactionId: string, url: string, requester: FideliusKeyMaterial, pages: PushPage[]): Promise<void> {
         const fidelius = new FideliusService({ nowMs: () => this.nowMs() });
-        const fetchFn = this.deps.fetchFn ?? fetch;
         const reachable = await this.publicHost(new URL(url).hostname).catch(() => false);
         const statuses: Array<{ careContextReference: string; hiStatus: string; description: string }> = [];
         for (const [index, page] of pages.entries()) {
@@ -430,27 +435,28 @@ export class HipService {
             let ok = false;
             try {
                 if (!reachable) throw new Error('The data push host is not public.');
-                const response = await fetchFn(url, {
-                    method: 'POST',
-                    // A redirect could point at a private address; records never follow one.
-                    redirect: 'error',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({
-                        pageNumber: index + 1,
-                        pageCount: pages.length,
-                        transactionId,
-                        entries: [{
-                            content: envelope.encryptedData,
-                            media: 'application/fhir+json',
-                            // ABDM asks for an MD5 of the plain FHIR bundle; an integrity tag, not a security control.
-                            checksum: crypto.createHash('md5').update(plaintext, 'utf8').digest('hex'), // NOSONAR
-                            careContextReference: page.careContextRef
-                        }],
-                        keyMaterial: envelope.keyMaterial
-                    }),
-                    signal: AbortSignal.timeout(PUSH_TIMEOUT_MS)
+                const body = JSON.stringify({
+                    pageNumber: index + 1,
+                    pageCount: pages.length,
+                    transactionId,
+                    entries: [{
+                        content: envelope.encryptedData,
+                        media: 'application/fhir+json',
+                        // ABDM asks for an MD5 of the plain FHIR bundle; an integrity tag, not a security control.
+                        checksum: crypto.createHash('md5').update(plaintext, 'utf8').digest('hex'), // NOSONAR
+                        careContextReference: page.careContextRef
+                    }],
+                    keyMaterial: envelope.keyMaterial
                 });
-                ok = response.ok;
+                ok = this.deps.fetchFn
+                    ? (await this.deps.fetchFn(url, {
+                        method: 'POST',
+                        redirect: 'error',
+                        headers: { 'content-type': 'application/json' },
+                        body,
+                        signal: AbortSignal.timeout(PUSH_TIMEOUT_MS)
+                    })).ok
+                    : await pinnedPost(url, body, PUSH_TIMEOUT_MS);
             } catch {
                 ok = false;
             }
@@ -578,6 +584,45 @@ const PRIVATE_RANGES = (() => {
     }
     return list;
 })();
+
+type LookupCallback = (error: NodeJS.ErrnoException | null, address: string | dns.LookupAddress[], family?: number) => void;
+type Resolver = (host: string, callback: (error: NodeJS.ErrnoException | null, addresses: dns.LookupAddress[]) => void) => void;
+
+/**
+ * A socket lookup that only ever connects to public addresses: the check and
+ * the connection use the same answer, so a host cannot pass the check and
+ * then rebind to a private address.
+ */
+export function publicLookup(resolve: Resolver = (host, callback) => dns.lookup(host, { all: true }, callback)) {
+    return (host: string, options: { all?: boolean }, callback: LookupCallback) => {
+        resolve(host, (error, addresses) => {
+            if (error) return callback(error, []);
+            if (addresses.length === 0 || !addresses.every((entry) => isPublicAddress(entry.address))) {
+                return callback(Object.assign(new Error(`${host} does not resolve to a public address.`), { code: 'ENOTPUBLIC' }), []);
+            }
+            return options?.all ? callback(null, addresses) : callback(null, addresses[0].address, addresses[0].family);
+        });
+    };
+}
+
+/** POSTs JSON over HTTPS to a public address; never follows a redirect. Resolves true on a 2xx. */
+export function pinnedPost(url: string, body: string, timeoutMs: number, lookup = publicLookup()): Promise<boolean> {
+    return new Promise((resolve) => {
+        const request = https.request(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+            lookup: lookup as any,
+            timeout: timeoutMs
+        }, (response) => {
+            response.resume();
+            const status = response.statusCode ?? 0;
+            resolve(status >= 200 && status < 300);
+        });
+        request.on('timeout', () => request.destroy(new Error('Push timed out.')));
+        request.on('error', () => resolve(false));
+        request.end(body);
+    });
+}
 
 function isPublicAddress(address: string): boolean {
     const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);

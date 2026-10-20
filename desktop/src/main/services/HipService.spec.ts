@@ -11,7 +11,9 @@ import {
     HIP_LINK_INIT_PATH,
     HIP_ON_CARE_CONTEXT_PATH,
     HIP_ON_GENERATE_TOKEN_PATH,
-    HipService
+    HipService,
+    pinnedPost,
+    publicLookup
 } from './HipService';
 
 vi.mock('electron-log', () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
@@ -148,7 +150,7 @@ describe('HIP discovery and linking from the patient app', () => {
     });
 
     it('links with the one-time code the desk reads to the patient', async () => {
-        const { deliver, last, store } = await setup();
+        const { deliver, last, store, db } = await setup();
         await deliver(HIP_DISCOVER_PATH, { transactionId: 'txn-l', patient: { id: 'ravi@sbx' } });
         await deliver(HIP_LINK_INIT_PATH, {
             transactionId: 'txn-l', abhaAddress: 'ravi@sbx',
@@ -176,6 +178,9 @@ describe('HIP discovery and linking from the patient app', () => {
             hiType: 'OPConsultation', count: 1
         }]);
         expect(store.getHipLinkedRefs('RAVI@sbx')).toEqual(['OP-2026-0002']);
+        // The code leaves the desk inbox once linking ends.
+        expect((store.getPendingInbox() as any[]).filter((row) => row.kind === 'hip-link-otp')).toEqual([]);
+        expect(JSON.parse((db.prepare(`SELECT payload FROM abdm_inbox WHERE kind = 'hip-link-otp'`).get() as any).payload)).not.toHaveProperty('otp');
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '123456' } });
         expect(last().body.error.message).toBe('Link request not found.');
     });
@@ -188,6 +193,8 @@ describe('HIP discovery and linking from the patient app', () => {
         const linkRefNumber = last().body.link.referenceNumber;
         for (let i = 0; i < 3; i += 1) await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '999999' } });
         expect(store.getHipLinkRequest(linkRefNumber)).toMatchObject({ attempts: 3, status: 'failed' });
+        const otpRows = () => (db.prepare(`SELECT payload, status FROM abdm_inbox WHERE kind = 'hip-link-otp'`).all() as any[]);
+        expect(otpRows().map((row) => [row.status, JSON.parse(row.payload).otp])).toEqual([['handled', undefined]]);
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '123456' } });
         expect(last().body.error.message).toBe('Link request not found.');
 
@@ -197,6 +204,7 @@ describe('HIP discovery and linking from the patient app', () => {
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber: second, token: '123456' } });
         expect(last().body.error.message).toContain('expired');
         expect(store.getHipLinkRequest(second).status).toBe('expired');
+        expect(otpRows().every((row) => row.status === 'handled' && !('otp' in JSON.parse(row.payload)))).toBe(true);
     });
 
     it('refuses link requests it cannot honour', async () => {
@@ -385,6 +393,21 @@ describe('HIP consent and data transfer', () => {
         });
         expect(open.fetchFn).toHaveBeenCalledTimes(2);
         expect((open.fetchFn.mock.calls[0] as any[])[1]).toMatchObject({ redirect: 'error' });
+    });
+
+    it('connects only to the public address it checked, and never to a private one', async () => {
+        const resolveTo = (address: string, family = 4) => publicLookup((_host, callback) => callback(null, [{ address, family }]));
+        const answer = (lookup: ReturnType<typeof publicLookup>, all = false) => new Promise<any[]>((done) =>
+            lookup('hiu.example.in', { all }, (error, address, family) => done([error?.message ?? null, address, family])));
+        expect(await answer(resolveTo('93.184.216.34'))).toEqual([null, '93.184.216.34', 4]);
+        expect(await answer(resolveTo('2606:2800:220:1::1', 6), true)).toEqual([null, [{ address: '2606:2800:220:1::1', family: 6 }], undefined]);
+        expect((await answer(resolveTo('127.0.0.1')))[0]).toContain('does not resolve to a public address');
+        expect((await answer(publicLookup((_host, callback) => callback(null, []))))[0]).toContain('public address');
+        const failing = publicLookup((_host, callback) => callback(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }), []));
+        expect((await answer(failing))[0]).toBe('ENOTFOUND');
+        // A real request to a host that resolves privately never connects.
+        expect(await pinnedPost('https://localhost:9/push', '{}', 2000)).toBe(false);
+        expect(await pinnedPost('https://hiu.example.in/push', '{}', 2000, resolveTo('10.0.0.7'))).toBe(false);
     });
 
     it('refuses a records request it cannot honour, with the reason', async () => {

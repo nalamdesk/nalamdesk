@@ -37,8 +37,9 @@ export const LIMITS = {
 
 // Desktop headers that may travel upstream. Authorization, X-CM-ID,
 // X-HIP-ID and X-HIU-ID are always set by the relay, never passed through.
-// X-LINK-TOKEN carries the patient's link token on HIP care-context linking (#163).
-const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'request-id', 'timestamp', 'x-token', 't-token', 'transaction_id', 'x-link-token'];
+const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'request-id', 'timestamp', 'x-token', 't-token', 'transaction_id'];
+// The patient's link token travels only on HIP care-context linking (#163).
+const LINK_TOKEN_PATH = '/hip/v3/link/carecontext';
 const FORWARDED_RESPONSE_HEADERS = ['content-type', 'content-disposition', 'request-id', 'timestamp'];
 // Callback headers worth sealing for the desktop; the gateway JWT is not one.
 const SEALED_CALLBACK_HEADERS = ['request-id', 'timestamp', 'x-hip-id', 'x-hiu-id', 'x-cm-id', 'content-type'];
@@ -104,6 +105,8 @@ export function createRelayApp(deps: RelayDeps): Hono {
                 const value = c.req.header(name);
                 if (value) headers.set(name, value);
             }
+            const linkToken = c.req.header('x-link-token');
+            if (linkToken && resolved.upstream === 'gateway' && resolved.upstreamPath === LINK_TOKEN_PATH) headers.set('x-link-token', linkToken);
             if (!headers.has('request-id')) headers.set('REQUEST-ID', crypto.randomUUID());
             if (!headers.has('timestamp')) headers.set('TIMESTAMP', new Date(nowMs()).toISOString());
             headers.set('Authorization', `Bearer ${token}`);

@@ -1655,6 +1655,12 @@ export class DatabaseService {
         return (this.db.prepare('SELECT * FROM abdm_hip_discoveries WHERE transaction_id = ?').get(String(transactionId || '')) ?? null) as any;
     }
 
+    /** Once a link attempt ends, its code leaves the desk inbox for good. */
+    closeHipLinkOtp(linkRef: string) {
+        this.db.prepare(`UPDATE abdm_inbox SET payload = json_remove(payload, '$.otp'), status = 'handled'
+            WHERE kind = 'hip-link-otp' AND request_id = ?`).run(String(linkRef || ''));
+    }
+
     getHipLinkRequest(linkRef: string) {
         return (this.db.prepare('SELECT * FROM abdm_hip_link_requests WHERE link_ref = ?').get(String(linkRef || '')) ?? null) as any;
     }

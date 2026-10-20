@@ -15,6 +15,8 @@
 export type { DesktopRequest, DeviceAuthenticator, DeviceAuthResult } from '@nalamdesk/cloud-shared';
 
 export interface Facility {
+    /** The active device the lookup found; absent only in tests. */
+    deviceId?: string;
     clinicId: string;
     hipId: string;
     /** Clinic's X25519 sealing key, raw 32 bytes, base64. */
@@ -31,6 +33,12 @@ export interface FacilityDirectory {
      * routes the push and keeps strangers from writing to a mailbox.
      */
     byDataPushToken(token: string): Promise<Facility | null>;
+    /**
+     * Whether this device is still active with this sealing key, read
+     * consistently. Lookups are cached, so mail sealed from one is checked
+     * against this after it is stored.
+     */
+    stillCurrent(facility: Facility): Promise<boolean>;
 }
 
 export type MailboxItemType = 'abdm-callback' | 'abdm-data-push';
@@ -45,6 +53,8 @@ export interface MailboxItem {
 export interface Mailbox {
     /** Stores a sealed item for up to 48 hours; resolves with its item ID. */
     put(item: MailboxItem): Promise<string>;
+    /** Deletes items the clinic will never be able to open. */
+    remove(clinicId: string, itemIds: string[]): Promise<void>;
 }
 
 /** One mailbox item as the desktop receives it. */

@@ -207,7 +207,9 @@ const cloudLink: CloudLink = new CloudLink({
     baseUrl: (audience) => getCloudServiceUrl(audience, stampedIdentity),
     onNewRequests: (count) => notifyRenderer('cloud:newRequests', { count }),
     onPairingChange: (status) => notifyRenderer('cloud:pairingChanged', status),
-    onMailboxChange: () => notifyRenderer('cloud:pairingChanged', cloudStatus())
+    onMailboxChange: () => notifyRenderer('cloud:pairingChanged', cloudStatus()),
+    // A restore drains cloud work before replacing the database, and refuses it after.
+    runWork: (work) => databaseService.runWork(work)
 });
 
 // Determine Static Path for ApiServer
@@ -1558,6 +1560,10 @@ const requireAdminUser = () => {
 const requirePaired = () => {
     if (!cloudLink.pairing.isPaired()) throw new Error('This computer is not paired with NalamDesk Cloud.');
 };
+// Cloud calls read the database, wait on the network and write back, so a
+// restore must drain them like any other database work.
+const handleCloud = (channel: string, handler: (...args: any[]) => unknown) =>
+    ipcMain.handle(channel, (...args) => databaseService.runWork(async () => handler(...args)));
 function cloudStatus() {
     return {
         ...cloudLink.pairing.status(),
@@ -1565,32 +1571,32 @@ function cloudStatus() {
         mailbox: cloudLink.mailboxStatus()
     };
 }
-ipcMain.handle('cloud:getStatus', () => {
+handleCloud('cloud:getStatus', () => {
     requireUser();
     return cloudStatus();
 });
-ipcMain.handle('cloud:requestPairing', async (_, input) => {
+handleCloud('cloud:requestPairing', async (_, input) => {
     requireAdminUser();
     await cloudLink.pairing.request({ hfrId: String(input?.hfrId ?? ''), label: String(input?.label ?? '') });
     return cloudStatus();
 });
-ipcMain.handle('cloud:cancelPairing', async () => {
+handleCloud('cloud:cancelPairing', async () => {
     requireAdminUser();
     await cloudLink.pairing.cancel();
     return cloudStatus();
 });
-ipcMain.handle('cloud:activatePairing', async (_, input) => {
+handleCloud('cloud:activatePairing', async (_, input) => {
     requireAdminUser();
     await cloudLink.pairing.activate({ code: String(input?.code ?? '') });
     return cloudStatus();
 });
-ipcMain.handle('cloud:forgetPairing', () => {
+handleCloud('cloud:forgetPairing', () => {
     requireAdminUser();
     cloudLink.pairing.forget();
     databaseService.saveSettings({ cloud_enabled: 0, cloud_clinic_id: null });
     return cloudStatus();
 });
-ipcMain.handle('cloud:enableListing', async (_, input) => {
+handleCloud('cloud:enableListing', async (_, input) => {
     requireAdminUser();
     requirePaired();
     const name = String(input?.name ?? '').trim();
@@ -1600,25 +1606,25 @@ ipcMain.handle('cloud:enableListing', async (_, input) => {
     databaseService.saveSettings({ cloud_enabled: 1, cloud_clinic_id: cloudLink.pairing.status().clinicId ?? null });
     return cloudStatus();
 });
-ipcMain.handle('cloud:disableListing', async () => {
+handleCloud('cloud:disableListing', async () => {
     requireAdminUser();
     if (cloudLink.pairing.isPaired()) await cloudLink.booking.disableListing();
     databaseService.saveSettings({ cloud_enabled: 0 });
     return cloudStatus();
 });
-ipcMain.handle('cloud:publishSlots', async (_, slots, dates) => {
+handleCloud('cloud:publishSlots', async (_, slots, dates) => {
     requireAdminUser();
     requirePaired();
     const published = await cloudLink.booking.publishSlots(Array.isArray(dates) ? dates : [], Array.isArray(slots) ? slots : []);
     return { published };
 });
-ipcMain.handle('cloud:syncNow', async () => {
+handleCloud('cloud:syncNow', async () => {
     requireUser();
     if (!cloudLink.pairing.isPaired()) return { success: false, paired: false, saved: 0 };
     const saved = await cloudLink.checkMailbox();
     return { success: true, paired: true, saved };
 });
-ipcMain.handle('cloud:getPublishedSlots', async (_, date) => {
+handleCloud('cloud:getPublishedSlots', async (_, date) => {
     requireUser();
     if (!cloudLink.pairing.isPaired()) return [];
     const day = String(date ?? '');
@@ -1626,7 +1632,7 @@ ipcMain.handle('cloud:getPublishedSlots', async (_, date) => {
 });
 // Accept or decline an online booking request: the cloud first (it books or
 // releases the slot and updates the patient's status page), then locally.
-ipcMain.handle('cloud:decide', async (_, input) => {
+handleCloud('cloud:decide', async (_, input) => {
     requireDesk();
     const ref = String(input?.ref ?? '');
     const decision = input?.decision === 'accepted' ? 'accepted' : input?.decision === 'declined' ? 'declined' : null;

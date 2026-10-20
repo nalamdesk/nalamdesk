@@ -65,6 +65,8 @@ export interface CloudLinkDeps {
     /** mqtt.connect, injectable for tests. */
     mqttConnect?: DoorbellDeps['connect'];
     nowMs?: () => number;
+    /** DatabaseService.runWork: background cloud work that writes is drained by a restore. */
+    runWork?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -95,6 +97,7 @@ export class CloudLink {
             client: this.client,
             appVersion: deps.appVersion,
             nowMs: deps.nowMs,
+            runWork: deps.runWork,
             onChange: (status) => {
                 this.apply(status);
                 deps.onPairingChange?.(status);
@@ -111,6 +114,7 @@ export class CloudLink {
                 'abdm-data-push': new AbdmInboxHandler('abdm-data-push', abdm)
             },
             nowMs: deps.nowMs,
+            runWork: deps.runWork,
             onSynced: (saved) => {
                 deps.onMailboxChange?.();
                 if (saved['booking-request']) deps.onNewRequests?.(saved['booking-request']);

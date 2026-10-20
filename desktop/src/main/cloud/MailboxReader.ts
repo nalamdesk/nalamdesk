@@ -56,6 +56,8 @@ export interface MailboxReaderDeps {
     /** After each successful pass, with the number of items saved per type (possibly none). */
     onSynced?: (saved: SyncCounts) => void;
     nowMs?: () => number;
+    /** Each pass fetches, then saves; a restore drains passes before replacing the database. */
+    runWork?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 export class MailboxReader {
@@ -97,7 +99,7 @@ export class MailboxReader {
             try {
                 do {
                     this.rerun = false;
-                    await this.pass(saved);
+                    await (this.deps.runWork ? this.deps.runWork(() => this.pass(saved)) : this.pass(saved));
                 } while (this.rerun);
                 this.lastChecked = (this.deps.nowMs ?? Date.now)();
             } finally {

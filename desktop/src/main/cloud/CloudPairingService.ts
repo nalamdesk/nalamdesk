@@ -61,6 +61,12 @@ export interface CloudPairingDeps {
     appVersion: string;
     /** Called once the computer is paired or unpaired, so cloud work can start or stop. */
     onChange?: (status: PairingStatus) => void;
+    /**
+     * Runs a call that reads the pairing row, waits on the cloud and writes
+     * the row back. A restore drains this work before replacing the database
+     * and refuses new work, so no reply lands in the restored one.
+     */
+    runWork?: <T>(work: () => Promise<T>) => Promise<T>;
     nowMs?: () => number;
 }
 
@@ -99,6 +105,10 @@ export class CloudPairingService {
 
     constructor(private readonly deps: CloudPairingDeps) {
         this.nowMs = deps.nowMs ?? Date.now;
+    }
+
+    private work<T>(task: () => Promise<T>): Promise<T> {
+        return this.deps.runWork ? this.deps.runWork(task) : task();
     }
 
     // ---- State ----
@@ -245,7 +255,11 @@ export class CloudPairingService {
      * before sending, so a request whose answer was lost is repeated with
      * them; a refusal puts back what was there before.
      */
-    async request(input: { hfrId: string; label: string }): Promise<PairingStatus> {
+    request(input: { hfrId: string; label: string }): Promise<PairingStatus> {
+        return this.work(() => this.requestNow(input));
+    }
+
+    private async requestNow(input: { hfrId: string; label: string }): Promise<PairingStatus> {
         const hfrId = String(input.hfrId || '').trim().toUpperCase();
         const label = String(input.label || '').replace(/\s+/g, ' ').trim().slice(0, 60);
         if (!HFR_ID.test(hfrId)) throw new PairingError('bad_hfr_id', MESSAGES['bad_hfr_id'] as string);
@@ -314,7 +328,11 @@ export class CloudPairingService {
     }
 
     /** Withdraws an open request. The local request is dropped even if the cloud has already let it lapse. */
-    async cancel(): Promise<PairingStatus> {
+    cancel(): Promise<PairingStatus> {
+        return this.work(() => this.cancelNow());
+    }
+
+    private async cancelNow(): Promise<PairingStatus> {
         const keys = this.keys();
         if (!keys || keys.row.state !== 'requested') throw new PairingError('no_request', 'There is no pairing request to cancel.');
         const hfrId = keys.row.hfr_id;
@@ -333,7 +351,11 @@ export class CloudPairingService {
     }
 
     /** Spends the code NalamDesk staff read to the clinic. */
-    async activate(input: { code: string }): Promise<PairingStatus> {
+    activate(input: { code: string }): Promise<PairingStatus> {
+        return this.work(() => this.activateNow(input));
+    }
+
+    private async activateNow(input: { code: string }): Promise<PairingStatus> {
         const code = normalizePairingCode(input.code);
         if (!CODE.test(code)) throw new PairingError('bad_code_format', MESSAGES['bad_code_format'] as string);
         const keys = this.keys();
@@ -413,7 +435,11 @@ export class CloudPairingService {
      * carries the new key's proof over the rotation message; the relay keeps
      * the old key valid for 10 minutes for calls in flight.
      */
-    async rotateSigningKeyIfDue(): Promise<boolean> {
+    rotateSigningKeyIfDue(): Promise<boolean> {
+        return this.work(() => this.rotateSigningKeyIfDueNow());
+    }
+
+    private async rotateSigningKeyIfDueNow(): Promise<boolean> {
         const keys = this.keys();
         if (!keys || keys.row.state !== 'paired' || !keys.row.device_id) return false;
         if (keys.row.previous_signing_public) return this.finishRotation(keys);

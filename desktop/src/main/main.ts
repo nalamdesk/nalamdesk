@@ -1618,7 +1618,9 @@ handleCloud('cloud:publishSlots', async (_, slots, dates) => {
     const published = await cloudLink.booking.publishSlots(Array.isArray(dates) ? dates : [], Array.isArray(slots) ? slots : []);
     return { published };
 });
-handleCloud('cloud:syncNow', async () => {
+// Not handleCloud: the reader fences each save itself, so a restore never
+// waits on a slow mailbox download.
+ipcMain.handle('cloud:syncNow', async () => {
     requireUser();
     if (!cloudLink.pairing.isPaired()) return { success: false, paired: false, saved: 0 };
     const saved = await cloudLink.checkMailbox();

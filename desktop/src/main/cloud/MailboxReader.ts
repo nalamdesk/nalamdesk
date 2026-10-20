@@ -59,7 +59,11 @@ export interface MailboxReaderDeps {
     /** After each successful pass, with the number of items saved per type (possibly none). */
     onSynced?: (saved: SyncCounts) => void;
     nowMs?: () => number;
-    /** Each pass fetches, then saves; a restore drains passes before replacing the database. */
+    /**
+     * Each item's save and acknowledgement run as one unit of work, so a
+     * restore drains them; listing and downloads run outside it and never
+     * hold a restore up.
+     */
     runWork?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
@@ -102,7 +106,7 @@ export class MailboxReader {
             try {
                 do {
                     this.rerun = false;
-                    await (this.deps.runWork ? this.deps.runWork(() => this.pass(saved)) : this.pass(saved));
+                    await this.pass(saved);
                 } while (this.rerun);
                 this.lastChecked = (this.deps.nowMs ?? Date.now)();
             } finally {
@@ -114,13 +118,16 @@ export class MailboxReader {
         return this.running;
     }
 
+    private work<T>(task: () => Promise<T>): Promise<T> {
+        return this.deps.runWork ? this.deps.runWork(task) : task();
+    }
+
     private async pass(saved: SyncCounts): Promise<void> {
         const now = this.deps.nowMs ?? Date.now;
         let after: string | undefined;
         for (let page = 0; page < MAX_PAGES; page++) {
             const { items, more } = await this.deps.transport.list(after);
             const listedAt = now();
-            const done: string[] = [];
             let reached = 0;
             for (; reached < items.length; reached++) {
                 const listed = items[reached]!;
@@ -136,18 +143,22 @@ export class MailboxReader {
                     continue;
                 }
                 if (!sealed) continue;
-                let result: HandleResult;
-                try {
-                    result = await handler.handle({ id: listed.id, type: listed.type, sealed });
-                } catch (error) {
-                    log.error(`[Mailbox] Handler for ${listed.type} failed`, error);
-                    result = 'retry';
-                }
-                if (result === 'retry') continue;
-                done.push(listed.id);
-                if (result === 'saved') saved[listed.type] = (saved[listed.type] ?? 0) + 1;
+                const item: MailboxItem = { id: listed.id, type: listed.type, sealed };
+                // Acknowledged before the work ends: a restore must not land
+                // between the save and the cloud deleting its copy.
+                const result = await this.work(async () => {
+                    let outcome: HandleResult;
+                    try {
+                        outcome = await handler.handle(item);
+                    } catch (error) {
+                        log.error(`[Mailbox] Handler for ${item.type} failed`, error);
+                        outcome = 'retry';
+                    }
+                    if (outcome !== 'retry') await this.deps.transport.ack([item.id]);
+                    return outcome;
+                });
+                if (result === 'saved') saved[item.type] = (saved[item.type] ?? 0) + 1;
             }
-            for (let i = 0; i < done.length; i += 100) await this.deps.transport.ack(done.slice(i, i + 100));
             if (reached < items.length) {
                 // Lists the rest again with fresh links, starting past the last
                 // item reached. Each refresh moves forward (the first item is

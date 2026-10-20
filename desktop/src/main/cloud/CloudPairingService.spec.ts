@@ -405,7 +405,8 @@ describe('signing key rotation', () => {
         const restored = { ...db.raw()!, signing_created_at: 0 };
         db.saveCloudDevice(restored);
         await expect(pairing.rotateSigningKeyIfDue()).rejects.toThrow('RESTORE_IN_PROGRESS');
-        await expect(link.mailbox.sync()).rejects.toThrow('RESTORE_IN_PROGRESS');
+        // Listing an empty mailbox touches no local data, so it may still run.
+        await expect(link.mailbox.sync()).resolves.toEqual({});
         expect(db.raw()).toEqual(restored);
         link.stop();
     });

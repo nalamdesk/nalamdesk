@@ -41,7 +41,7 @@ describe('MailboxReader', () => {
         h.put({ id: 'a', type: 'booking-request', sealed: 's' }, { id: 'b', type: 'booking-request', sealed: 's' },
             { id: 'c', type: 'booking-request', sealed: 's' }, { id: 'd', type: 'someday', sealed: 's' });
         expect(await h.reader.sync()).toEqual({ 'booking-request': 1 });
-        expect(h.acked).toEqual([['a', 'b']]);
+        expect(h.acked).toEqual([['a'], ['b']]);
         expect(h.synced).toEqual([{ 'booking-request': 1 }]);
         expect(h.reader.lastCheckedAt()).not.toBeNull();
     });
@@ -99,6 +99,28 @@ describe('MailboxReader', () => {
         expect(handled).toEqual(['b000']);
     });
 
+    it('holds restore work only for each save and its acknowledgement, never across a download', async () => {
+        let inFlight = 0;
+        const log: string[] = [];
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const reader = new MailboxReader({
+            transport: {
+                list: async () => ({ items: [{ id: 'a', type: 'booking-request', url: 'https://s3.test/a' }], more: false }),
+                download: async () => { log.push(`download:${inFlight}`); await held; return 'sealed'; },
+                ack: async (ids: string[]) => { log.push(`ack:${ids.join()}:${inFlight}`); }
+            },
+            handlers: { 'booking-request': { handle: () => { log.push(`save:${inFlight}`); return 'saved'; } } },
+            runWork: async (work) => { inFlight++; try { return await work(); } finally { inFlight--; } }
+        });
+        const pass = reader.sync();
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(inFlight).toBe(0);
+        release();
+        expect(await pass).toEqual({ 'booking-request': 1 });
+        expect(log).toEqual(['download:0', 'save:1', 'ack:a:1']);
+    });
+
     it('keeps a handler failure in the mailbox for the next pass', async () => {
         const h = setup(() => { throw new Error('disk full'); });
         h.put({ id: 'a', type: 'booking-request', sealed: 's' });
@@ -119,7 +141,7 @@ describe('MailboxReader', () => {
         h.put(...['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, type: 'booking-request', sealed: 's' })));
         expect(await h.reader.sync()).toEqual({ 'booking-request': 3 });
         expect(h.transport.list.mock.calls.map((call) => call[0])).toEqual([undefined, 'b', 'd']);
-        expect(h.acked).toEqual([['c', 'd'], ['e']]);
+        expect(h.acked).toEqual([['c'], ['d'], ['e']]);
         // The next pass starts from the oldest again and retries what was kept.
         h.transport.list.mockClear();
         await h.reader.sync();

@@ -12,7 +12,12 @@ export type CoreParamName =
     | 'ops-auth-domain'
     | 'code-bucket-name'
     | 'hosted-zone-id'
-    | 'bridge-certificate-arn';
+    | 'bridge-certificate-arn'
+    | 'mailbox-table-name'
+    | 'mailbox-bucket-name'
+    | 'iot-data-endpoint'
+    | 'iot-policy-name'
+    | 'doorbell-topic-prefix';
 
 export const coreParam = (stage: Stage, name: CoreParamName) => `/nalamdesk/${stage}/core/${name}`;
 

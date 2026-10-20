@@ -249,13 +249,19 @@ export const OPS_JS = `'use strict';
       const row = document.createElement('tr');
       cell(row, d.deviceId, 'mono');
       cell(row, d.label);
-      cell(row, d.status === 'active' ? 'Active' : 'Revoked' + (d.revokedReason === 'replaced' ? ' (replaced)' : ''));
+      cell(row, d.status === 'active' ? 'Active' : 'Revoked' + (d.revokedReason === 'replaced' ? ' (replaced)' : '')
+        + (d.cleanupPending ? ', certificate cleanup pending' : ''));
       cell(row, when(d.pairedAt));
       cell(row, d.approvedBy);
       const actions = cell(row, '');
       if (d.status === 'active') {
         button(actions, 'Revoke', 'danger', async () => {
           if (!confirm('Revoke ' + d.deviceId + '? The clinic will have to pair again.')) return;
+          try { await api('POST', '/devices/' + encodeURIComponent(d.deviceId) + '/revoke'); await loadDevices(hipId); }
+          catch (error) { say(error.message); }
+        });
+      } else if (d.cleanupPending) {
+        button(actions, 'Retry cleanup', '', async () => {
           try { await api('POST', '/devices/' + encodeURIComponent(d.deviceId) + '/revoke'); await loadDevices(hipId); }
           catch (error) { say(error.message); }
         });

@@ -70,7 +70,7 @@ export class MemoryPairingStore implements PairingStore {
         if (!r || r.requestId !== request.requestId || r.codeHash !== request.codeHash || r.status !== 'approved') return false;
         if (revokeDeviceIds.some((id) => this.devices.get(id)?.status !== 'active')) return false;
         this.devices.set(device.deviceId, { ...device });
-        for (const id of revokeDeviceIds) Object.assign(this.devices.get(id)!, { status: 'revoked', revokedAt: nowMs, revokedReason: 'replaced' });
+        for (const id of revokeDeviceIds) Object.assign(this.devices.get(id)!, { status: 'revoked', revokedAt: nowMs, revokedReason: 'replaced', cleanupPending: true });
         this.activeDevice.set(device.hipId, device.deviceId);
         this.requests.delete(request.hfrId);
         return true;
@@ -79,8 +79,13 @@ export class MemoryPairingStore implements PairingStore {
     async revoke(deviceId: string, reason: 'ops', by: string, nowMs: number) {
         const d = this.devices.get(deviceId);
         if (!d || d.status !== 'active') return false;
-        Object.assign(d, { status: 'revoked', revokedAt: nowMs, revokedReason: reason, revokedBy: by });
+        Object.assign(d, { status: 'revoked', revokedAt: nowMs, revokedReason: reason, revokedBy: by, cleanupPending: true });
         return true;
+    }
+
+    async cleanupDone(deviceId: string) {
+        const d = this.devices.get(deviceId);
+        if (d) delete d.cleanupPending;
     }
 
     async rotateKey(deviceId: string, oldKey: string, newKey: string, validUntil: number, nowMs: number) {

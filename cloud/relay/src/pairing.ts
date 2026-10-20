@@ -80,6 +80,8 @@ export interface Device {
     revokedAt?: number;
     revokedReason?: 'replaced' | 'ops';
     revokedBy?: string;
+    /** Revoked, but its IoT certificate and old mail may still be there; cleanup is retried. */
+    cleanupPending?: boolean;
 }
 
 export interface PairingStore {
@@ -100,14 +102,18 @@ export interface PairingStore {
     devicesFor(hipId: string): Promise<Device[]>;
     getDevice(deviceId: string): Promise<Device | null>;
     /**
-     * One transaction: create the device, revoke the listed devices, point
+     * One transaction: create the device, revoke the listed devices (cleanup
+     * pending), point
      * the clinic row at the new device (only if it still names
      * `expectedActive`) and delete the request (only if it still carries
      * this code hash).
      */
     activate(device: Device, revokeDeviceIds: string[], request: { hfrId: string; requestId: string; codeHash: string }, nowMs: number,
         expectedActive: string | null): Promise<boolean>;
+    /** Revokes the device if active, marking its cleanup pending in the same write. */
     revoke(deviceId: string, reason: 'ops', by: string, nowMs: number): Promise<boolean>;
+    /** The revocation hooks finished for this device. */
+    cleanupDone(deviceId: string): Promise<void>;
     /** Swaps the signing key if it is still `oldKey`, keeping the old one until validUntil. */
     rotateKey(deviceId: string, oldKey: string, newKey: string, validUntil: number, nowMs: number): Promise<boolean>;
 }
@@ -353,9 +359,8 @@ export class PairingService {
             hfrId, requestId: request.requestId, codeHash: request.codeHash
         }, now, expectedActive);
         if (!committed) return refuse(409, 'conflict');
-        for (const old of previous) {
-            await this.lifecycle.revoked({ ...old, status: 'revoked', revokedAt: now, revokedReason: 'replaced' }).catch(() => undefined);
-        }
+        for (const old of previous) await this.cleanUp({ ...old, status: 'revoked', revokedAt: now, revokedReason: 'replaced' });
+        await this.retryCleanup(hfrId);
         return {
             ok: true,
             value: {
@@ -436,6 +441,7 @@ export class PairingService {
 
     async devices(hipId: string): Promise<PairingResult<Omit<Device, 'dataPushToken'>[]>> {
         if (!HFR_ID.test(hipId)) return refuse(400, 'bad_hfr_id');
+        await this.retryCleanup(hipId);
         const devices = (await this.options.store.devicesFor(hipId)).sort((a, b) => b.pairedAt - a.pairedAt);
         return { ok: true, value: devices.map(({ dataPushToken: _token, ...rest }) => rest) };
     }
@@ -443,11 +449,37 @@ export class PairingService {
     async revoke(deviceId: string, by: string): Promise<PairingResult<null>> {
         const device = await this.options.store.getDevice(deviceId);
         if (!device) return refuse(404, 'no_device');
-        if (device.status !== 'active') return refuse(409, 'already_revoked');
+        if (device.status !== 'active') {
+            // Revoking again finishes a cleanup that failed the first time.
+            if (!device.cleanupPending) return refuse(409, 'already_revoked');
+            return (await this.cleanUp(device)) ? { ok: true, value: null } : refuse(503, 'cleanup_failed');
+        }
         const now = this.nowMs();
         if (!(await this.options.store.revoke(deviceId, 'ops', by, now))) return refuse(409, 'already_revoked');
-        await this.lifecycle.revoked({ ...device, status: 'revoked', revokedAt: now, revokedReason: 'ops', revokedBy: by }).catch(() => undefined);
+        await this.cleanUp({ ...device, status: 'revoked', revokedAt: now, revokedReason: 'ops', revokedBy: by });
         return { ok: true, value: null };
+    }
+
+    /**
+     * Runs the revocation hooks (IoT certificate, old mail). The device row
+     * says cleanup is pending from the moment it is revoked until they
+     * succeed, so a failure is retried on the next listing, activation or
+     * revoke for that HFR ID instead of being lost.
+     */
+    private async cleanUp(device: Device): Promise<boolean> {
+        try {
+            await this.lifecycle.revoked(device);
+            await this.options.store.cleanupDone(device.deviceId);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private async retryCleanup(hipId: string): Promise<void> {
+        for (const device of await this.options.store.devicesFor(hipId)) {
+            if (device.status === 'revoked' && device.cleanupPending) await this.cleanUp(device);
+        }
     }
 
     // ---- Paired device ----

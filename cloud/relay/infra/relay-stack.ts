@@ -40,6 +40,8 @@ export const RELAY_LIMITS = {
  * Hono app, an IamAuth endpoint only CloudFront can call, CloudFront on the
  * bridge domain, metadata-only logs kept 30 days, and read access to the
  * vendor credentials in Parameter Store and to the Core device registry.
+ * It also writes the 48-hour mailbox, rings the IoT doorbell and issues
+ * each paired desktop its IoT certificate (#155).
  * Shared resources come from the Core stack through Parameter Store.
  */
 export class RelayStack extends Stack {
@@ -56,6 +58,10 @@ export class RelayStack extends Stack {
         const pairingTableName = core('pairing-table-name');
         const clinicIdsTableName = core('clinic-ids-table-name');
         const codeBucket = Bucket.fromBucketName(this, 'CodeBucket', core('code-bucket-name'));
+        const mailboxTableName = core('mailbox-table-name');
+        const mailboxBucket = Bucket.fromBucketName(this, 'MailboxBucket', core('mailbox-bucket-name'));
+        const iotPolicyName = core('iot-policy-name');
+        const doorbellTopicPrefix = core('doorbell-topic-prefix');
 
         const logGroup = new LogGroup(this, 'Logs', {
             logGroupName: `/aws/lambda/web/${functionName}`,
@@ -87,7 +93,8 @@ export class RelayStack extends Stack {
         const tableArn = (name: string) => this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: name });
         // Signed desktop requests read devices by ID and record nonces;
         // pairing creates and revokes devices, rotates keys and counts
-        // pairing requests per IP in the nonces table (#154).
+        // pairing requests per IP in the nonces table (#154); device rows
+        // also record each device's IoT certificates (#155).
         role.addToPolicy(new PolicyStatement({
             actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
             resources: [devicesTableArn]
@@ -100,6 +107,40 @@ export class RelayStack extends Stack {
         }));
         // The clinic row also names the active device; activation updates it in its transaction.
         role.addToPolicy(new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'], resources: [tableArn(clinicIdsTableName)] }));
+
+        // The mailbox (#155): put sealed items, list and acknowledge them for
+        // the paired desktop, and purge a replaced device's mail.
+        role.addToPolicy(new PolicyStatement({
+            actions: ['dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:BatchWriteItem'],
+            resources: [tableArn(mailboxTableName)]
+        }));
+        role.addToPolicy(new PolicyStatement({
+            actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
+            resources: [mailboxBucket.arnForObjects('mailbox/*')]
+        }));
+        role.addToPolicy(new PolicyStatement({
+            actions: ['s3:ListBucket'],
+            resources: [mailboxBucket.bucketArn],
+            conditions: { StringLike: { 's3:prefix': 'mailbox/*' } }
+        }));
+        // The doorbell, and one IoT certificate per paired desktop.
+        role.addToPolicy(new PolicyStatement({
+            actions: ['iot:Publish'],
+            resources: [this.formatArn({ service: 'iot', resource: 'topic', resourceName: `${doorbellTopicPrefix}/*` })]
+        }));
+        role.addToPolicy(new PolicyStatement({ actions: ['iot:CreateCertificateFromCsr'], resources: ['*'] }));
+        role.addToPolicy(new PolicyStatement({
+            actions: ['iot:UpdateCertificate', 'iot:DeleteCertificate', 'iot:AttachPolicy', 'iot:DetachPolicy'],
+            resources: [this.formatArn({ service: 'iot', resource: 'cert', resourceName: '*' })]
+        }));
+        role.addToPolicy(new PolicyStatement({
+            actions: ['iot:AttachPolicy', 'iot:DetachPolicy'],
+            resources: [this.formatArn({ service: 'iot', resource: 'policy', resourceName: iotPolicyName })]
+        }));
+        role.addToPolicy(new PolicyStatement({
+            actions: ['iot:CreateThing', 'iot:UpdateThing', 'iot:DeleteThing', 'iot:ListThingPrincipals', 'iot:AttachThingPrincipal', 'iot:DetachThingPrincipal'],
+            resources: [this.formatArn({ service: 'iot', resource: 'thing', resourceName: 'dev_*' })]
+        }));
 
         // Each build is uploaded once, named by its content hash, at the
         // bucket root (objectKeys reports keys without a prefix). The
@@ -145,6 +186,11 @@ export class RelayStack extends Stack {
                     OPS_USER_POOL_ID: core('ops-user-pool-id'),
                     OPS_CLIENT_ID: core('ops-client-id'),
                     OPS_AUTH_DOMAIN: core('ops-auth-domain'),
+                    MAILBOX_TABLE: mailboxTableName,
+                    MAILBOX_BUCKET: mailboxBucket.bucketName,
+                    IOT_DATA_ENDPOINT: core('iot-data-endpoint'),
+                    IOT_POLICY_NAME: iotPolicyName,
+                    DOORBELL_TOPIC_PREFIX: doorbellTopicPrefix,
                     ...(props.gatewayIssuer ? { ABDM_GATEWAY_ISSUER: props.gatewayIssuer } : {})
                 },
                 telemetryConfig: {

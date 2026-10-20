@@ -31,6 +31,8 @@ export interface Harness {
     app: ReturnType<typeof createRelayApp>;
     upstreamCalls: { url: string; init: RequestInit }[];
     mailbox: MailboxItem[];
+    /** Item IDs the relay removed again. */
+    removed: string[];
     rings: string[];
     logs: RelayLogEntry[];
     clinic: ReturnType<typeof clinicKeys>;
@@ -40,6 +42,8 @@ export interface Harness {
     setFacility(facility: Facility | null): void;
     failMailbox(): void;
     failDoorbell(): void;
+    /** The device is replaced after the (cached) lookup. */
+    replaceDevice(): void;
     tokens: { issued: number; invalidated: number };
 }
 
@@ -52,6 +56,8 @@ export async function harness(overrides: Partial<RelayDeps> = {}): Promise<Harne
     let facility: Facility | null = { clinicId: CLINIC_ID, hipId: HIP_ID, sealingPublicKey: clinic.publicRaw, linkedToBridge: true };
     let mailboxFails = false;
     let doorbellFails = false;
+    let facilityCurrent = true;
+    const removed: string[] = [];
     const upstreamCalls: Harness['upstreamCalls'] = [];
     const mailbox: MailboxItem[] = [];
     const rings: string[] = [];
@@ -67,14 +73,16 @@ export async function harness(overrides: Partial<RelayDeps> = {}): Promise<Harne
         devices: { authenticate: async () => auth },
         facilities: {
             byHipId: async (hipId) => (facility && facility.hipId === hipId ? facility : null),
-            byDataPushToken: async (token) => (token === PUSH_TOKEN ? facility : null)
+            byDataPushToken: async (token) => (token === PUSH_TOKEN ? facility : null),
+            stillCurrent: async () => facilityCurrent
         },
         mailbox: {
             put: async (item) => {
                 if (mailboxFails) throw new Error('down');
                 mailbox.push(item);
                 return `item-${mailbox.length}`;
-            }
+            },
+            remove: async (_clinicId, ids) => { removed.push(...ids); }
         },
         doorbell: {
             ring: async (clinicId) => {
@@ -92,11 +100,12 @@ export async function harness(overrides: Partial<RelayDeps> = {}): Promise<Harne
     });
 
     return {
-        app, upstreamCalls, mailbox, rings, logs, clinic, sign, tokens,
+        app, upstreamCalls, mailbox, removed, rings, logs, clinic, sign, tokens,
         setAuth: (result) => { auth = result; },
         setUpstream: (fn) => { respond = fn; },
         setFacility: (value) => { facility = value; },
         failMailbox: () => { mailboxFails = true; },
-        failDoorbell: () => { doorbellFails = true; }
+        failDoorbell: () => { doorbellFails = true; },
+        replaceDevice: () => { facilityCurrent = false; }
     };
 }

@@ -68,6 +68,7 @@ export function deviceItem(d: Device): Item {
     if (d.revokedAt) item.revokedAt = n(d.revokedAt);
     if (d.revokedReason) item.revokedReason = s(d.revokedReason);
     if (d.revokedBy) item.revokedBy = s(d.revokedBy);
+    if (d.cleanupPending) item.cleanupPending = { BOOL: true };
     return item;
 }
 
@@ -93,6 +94,7 @@ export function toDevice(item: Item | undefined): Device | null {
     if (item.revokedAt?.N) device.revokedAt = Number(item.revokedAt.N);
     if (item.revokedReason?.S === 'replaced' || item.revokedReason?.S === 'ops') device.revokedReason = item.revokedReason.S;
     if (item.revokedBy?.S) device.revokedBy = item.revokedBy.S;
+    if (item.cleanupPending?.BOOL) device.cleanupPending = true;
     return device;
 }
 
@@ -258,10 +260,12 @@ export class DynamoPairingStore implements PairingStore {
                         Update: {
                             TableName: this.tables.devices,
                             Key: { deviceId: s(deviceId) },
-                            UpdateExpression: 'SET #status = :revoked, revokedAt = :now, revokedReason = :replaced',
+                            UpdateExpression: 'SET #status = :revoked, revokedAt = :now, revokedReason = :replaced, cleanupPending = :pending',
                             ConditionExpression: '#status = :active',
                             ExpressionAttributeNames: { '#status': 'status' },
-                            ExpressionAttributeValues: { ':revoked': s('revoked'), ':now': n(nowMs), ':replaced': s('replaced'), ':active': s('active') }
+                            ExpressionAttributeValues: {
+                                ':revoked': s('revoked'), ':now': n(nowMs), ':replaced': s('replaced'), ':active': s('active'), ':pending': { BOOL: true }
+                            }
                         }
                     })),
                     {
@@ -299,16 +303,29 @@ export class DynamoPairingStore implements PairingStore {
             await this.client.send(new UpdateItemCommand({
                 TableName: this.tables.devices,
                 Key: { deviceId: s(deviceId) },
-                UpdateExpression: 'SET #status = :revoked, revokedAt = :now, revokedReason = :reason, revokedBy = :by',
+                UpdateExpression: 'SET #status = :revoked, revokedAt = :now, revokedReason = :reason, revokedBy = :by, cleanupPending = :pending',
                 ConditionExpression: '#status = :active',
                 ExpressionAttributeNames: { '#status': 'status' },
-                ExpressionAttributeValues: { ':revoked': s('revoked'), ':now': n(nowMs), ':reason': s(reason), ':by': s(by), ':active': s('active') }
+                ExpressionAttributeValues: {
+                    ':revoked': s('revoked'), ':now': n(nowMs), ':reason': s(reason), ':by': s(by), ':active': s('active'), ':pending': { BOOL: true }
+                }
             }));
             return true;
         } catch (error) {
             if (conditionFailed(error)) return false;
             throw error;
         }
+    }
+
+    async cleanupDone(deviceId: string): Promise<void> {
+        await this.client.send(new UpdateItemCommand({
+            TableName: this.tables.devices,
+            Key: { deviceId: s(deviceId) },
+            UpdateExpression: 'REMOVE cleanupPending',
+            ConditionExpression: 'attribute_exists(deviceId)'
+        })).catch((error) => {
+            if (!conditionFailed(error)) throw error;
+        });
     }
 
     async rotateKey(deviceId: string, oldKey: string, newKey: string, validUntil: number, nowMs: number): Promise<boolean> {

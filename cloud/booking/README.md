@@ -27,7 +27,7 @@ The desktop side lives in `desktop/src/main/booking/BookingInboxService.ts` (#15
 | --- | --- | --- |
 | `GET /api/clinics` | Public | Listed clinics with Online/Offline and sealing key. Cached 30 s at CloudFront. |
 | `GET /api/slots/:clinicId` | Public | Open slots for the next 14 days (IST). Cached 30 s. |
-| `POST /api/book` | Public | `{clinicId, ref, slotId \| null, phoneDigest, sealed}`. Conditional slot hold, sealed item to the mailbox, doorbell. Rate-limited at the edge. |
+| `POST /api/book` | Public | `{clinicId, ref, slotId \| null, phoneDigest, sealed, sealedTo}`. `sealedTo` is the key the browser sealed to: a stale one gets `409 clinic_key_changed` with the current key, and a listing whose computer was replaced gets `503 clinic_unavailable` until the new one lists the clinic again. Conditional slot hold, sealed item to the mailbox, doorbell. Rate-limited at the edge. |
 | `GET /api/booking/:ref` | Public | `Requested`, `Accepted` or `Declined`, and the clinic name. Nothing else. |
 | `PUT/DELETE /api/clinic/listing` | Paired desktop | Signed (`cloud/shared`, audience `booking`). Turns the listing on with name, city, specialty and sealing key, or off. |
 | `PUT/GET /api/clinic/slots` | Paired desktop | Signed. Replaces open slots on given dates; held and booked slots stay. |
@@ -36,7 +36,7 @@ The desktop side lives in `desktop/src/main/booking/BookingInboxService.ts` (#15
 **What the cloud keeps.** Clinics (name, city, specialty, public key, presence), slots
 (date, time, state, the holding reference) and a status record per request (reference, clinic,
 slot, status, and a keyed hash of a browser-side phone digest, dropped once the clinic decides).
-The sealed request itself goes to the mailbox (#155).
+The sealed request itself goes to the shared 48-hour mailbox.
 
 **Phone limit.** At most 2 open requests per phone per clinic. The browser sends
 `SHA-256("nalamdesk-booking-phone-v1|" + number)`; the API stores only an HMAC of that under a
@@ -63,13 +63,11 @@ self-hosted fonts; CSP `default-src 'none'` with only `'self'` sources (`infra/l
 HSTS, `X-Frame-Options: DENY`, no referrer. The patient still trusts the JavaScript NalamDesk
 serves; these make silent tampering hard, not impossible.
 
-## Not wired yet
+## Deploy notes
 
-| Piece | Waiting on |
-| --- | --- |
-| `Mailbox`, `Doorbell` (sealed store, IoT Core) and presence events | #155 |
-Until the adapters exist, `api/src/server.ts` serves a 503 holding app whose `/api/health` names
-what is missing. The desktop side is wired (#154): a paired computer signs its calls and
+The API puts each sealed request in the Core mailbox and rings the clinic's doorbell
+(`cloud/shared`, #155); until the Core names reach it, `api/src/server.ts` serves a 503 holding app
+whose `/api/health` names what is missing. A paired desktop signs its calls (#154) and
 `BookingInboxService` uses the X25519 key created at pairing.
 
 **CloudFront rate rule.** The Free flat-rate plan includes WAF rate limiting but is not set

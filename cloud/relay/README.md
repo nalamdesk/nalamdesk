@@ -17,6 +17,8 @@ Function (Node 24, arm64) and on a local Node server.
 | `POST /hiu/data-push/:token` | An HIP | Fidelius ciphertext for an HIU request, routed by the opaque token in the clinic's data push URL and sealed byte for byte. |
 | `POST /pairing/request`, `DELETE /pairing/request`, `POST /pairing/activate` | Desktop, before pairing | See [Pairing](#pairing). Bodies are signed by the install's new key; requests are rate limited per client IP. |
 | `POST /device/rotate-key` | Paired desktop | Signed. Replaces the signing key, with proof from the new key; the old key stays valid for 10 minutes, and another rotation waits until then. |
+| `GET /inbox`, `POST /inbox/ack` | Paired desktop | Signed. Lists the clinic's sealed mail, oldest first; acknowledging deletes it. See [Mailbox and doorbell](#mailbox-and-doorbell). |
+| `POST /device/iot-certificate` | Paired desktop | Signed. Issues the doorbell certificate for a P-256 CSR and returns it with the IoT endpoint, client ID and topic. |
 | `GET /ops/` | NalamDesk staff | The ops console page. |
 | `/ops/api/*` | Ops console | Cognito access token from the ops pool, `ops` group: list, approve and reject pairing requests; list and revoke devices. |
 | `GET /health` | Load balancer | Liveness. |
@@ -55,6 +57,31 @@ aws cognito-idp admin-add-user-to-group --region ap-south-1 --user-pool-id <pool
 ```
 
 They set a password and an authenticator app on first sign-in at `https://<bridge domain>/ops/`.
+
+## Mailbox and doorbell
+
+`cloud/shared/src/mailbox.ts` and `doorbell.ts` (#155), shared with the booking API.
+
+- **Mailbox.** One DynamoDB row per sealed item, keyed by clinic ID and a time-ordered item ID.
+  Items over 300 KB go to the mailbox bucket and the row keeps a pointer; `GET /inbox` returns
+  those as presigned links valid 5 minutes. A listing holds at most 50 items and 3 MB inline, with
+  `more: true` when another page waits; an acknowledgement takes at most 100 IDs. DynamoDB TTL and
+  a 2-day bucket lifecycle rule drop anything left after 48 hours. When a device is replaced or
+  revoked, mail stored before that moment is deleted, since only the old key could open it.
+- **Doorbell.** After each store, an empty QoS 0 message on
+  `nalamdesk/<stage>/clinic/<clinicId>/mail`. The desktop fetches on connect, every 30 minutes and
+  on each ring, so a lost or forged ring costs one fetch at most.
+- **Certificates.** Each paired device is an IoT thing named by its device ID, with its clinic ID as
+  an attribute and one certificate made from a CSR, so the private key stays on the computer. The
+  Core device policy lets it connect only with its thing name as client ID and subscribe only to
+  its own clinic's topic; it cannot publish. A new certificate retires the old one, and
+  revocation revokes and deletes them. Until that cleanup (and the mail purge) succeeds, the
+  device row carries `cleanupPending`, set in the same write that revoked it; listing the HFR
+  ID's devices, a later activation, or revoking again retries it. Each certificate is recorded in
+  the device row's `iotCertArns` set, on condition that the device is still active, before it
+  is attached; revocation reads that set consistently after marking the device revoked. A
+  certificate request racing a revocation therefore either fails with `device_revoked` or has
+  its certificate retired by the revocation.
 
 ## Sealing format
 
@@ -107,7 +134,7 @@ in `test/helpers.ts`.
 | `FacilityDirectory` | Done: `src/dynamoFacilities.ts`, against the Core devices table |
 | `DeviceAuthenticator` (signature, clock window, nonce, rate limits) | Done: `cloud/shared`, against the Core devices and nonces tables |
 | Pairing and the ops console | Done: `src/pairing.ts`, `src/dynamoPairing.ts`, `src/pairingRoutes.ts` |
-| `Mailbox`, `Doorbell` (48-hour sealed mailbox, IoT Core) | #155 |
+| `Mailbox`, `Doorbell`, inbox and device certificates (#155) | Done: `src/mailboxAdapters.ts`, `src/iotCertificates.ts`, `src/inboxRoutes.ts`, on `cloud/shared` |
 
 Still to confirm with NHA during sandbox registration (#152): the v3 certificate URL and
 issuer for callback JWTs, the ABHA host, and each allowlisted path.
@@ -124,6 +151,7 @@ npm start         # bundle and run locally on PORT or 127.0.0.1:8080
 
 Runtime environment variables (set by the stack): `ABDM_ENV` (`sandbox` or `production`),
 `ABDM_CLIENT_ID_PARAM`, `ABDM_CLIENT_SECRET_PARAM`, `DEVICES_TABLE`, `NONCES_TABLE`, `PAIRING_TABLE`,
-`CLINIC_IDS_TABLE`, `PAIRING_PEPPER_PARAM`, `BRIDGE_URL`, `OPS_USER_POOL_ID`, `OPS_CLIENT_ID`, `OPS_AUTH_DOMAIN`, optional
+`CLINIC_IDS_TABLE`, `PAIRING_PEPPER_PARAM`, `BRIDGE_URL`, `OPS_USER_POOL_ID`, `OPS_CLIENT_ID`, `OPS_AUTH_DOMAIN`,
+`MAILBOX_TABLE`, `MAILBOX_BUCKET`, `IOT_DATA_ENDPOINT`, `IOT_POLICY_NAME`, `DOORBELL_TOPIC_PREFIX`, optional
 `ABDM_GATEWAY_BASE_URL`, `ABDM_ABHA_BASE_URL`, `ABDM_GATEWAY_CERTS_URL`, `ABDM_GATEWAY_ISSUER`.
 The Web Function runtime supplies `AWS_LAMBDA_HTTP_ENDPOINT`, where the server listens.

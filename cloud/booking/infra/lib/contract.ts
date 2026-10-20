@@ -7,7 +7,11 @@ export type CoreParamName =
     | 'nonces-table-name'
     | 'code-bucket-name'
     | 'hosted-zone-id'
-    | 'booking-certificate-arn';
+    | 'booking-certificate-arn'
+    | 'mailbox-table-name'
+    | 'mailbox-bucket-name'
+    | 'iot-data-endpoint'
+    | 'doorbell-topic-prefix';
 
 export const coreParam = (stage: Stage, name: CoreParamName) => `/nalamdesk/${stage}/core/${name}`;
 

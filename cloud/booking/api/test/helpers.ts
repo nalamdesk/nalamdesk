@@ -45,9 +45,13 @@ export async function harness(overrides: Partial<BookingDeps> = {}) {
     const logs: BookingLogEntry[] = [];
     let auth: DeviceAuthResult = { ok: true, deviceId: 'dev-1', clinicId: CLINIC_ID, hipId: 'IN2710000123' };
     let mailboxFails = false;
+    const removed: string[] = [];
+    const revoked = new Set<string>();
+    // Called after each put, so a test can revoke the device mid-request.
+    let afterPut: () => void = () => undefined;
     let now = NOW;
 
-    await clinics.upsertListing(CLINIC_ID, { name: 'Arogya Clinic', city: 'Chennai', specialty: 'General Practice', sealingPublicKey: clinic.publicRaw }, NOW);
+    await clinics.upsertListing(CLINIC_ID, { name: 'Arogya Clinic', city: 'Chennai', specialty: 'General Practice', sealingPublicKey: clinic.publicRaw, deviceId: 'dev-1' }, NOW);
     await slots.publish(CLINIC_ID, [TODAY, TOMORROW], [
         { date: TODAY, time: '08:30' },
         { date: TODAY, time: '10:00' },
@@ -60,12 +64,15 @@ export async function harness(overrides: Partial<BookingDeps> = {}) {
         slots,
         bookings,
         devices: { authenticate: async () => auth },
+        activeDevices: { isActive: async (deviceId, clinicId) => clinicId === CLINIC_ID && !revoked.has(deviceId) },
         mailbox: {
             put: async (item) => {
                 if (mailboxFails) throw new Error('down');
                 mailbox.push(item);
+                afterPut();
                 return `item-${mailbox.length}`;
-            }
+            },
+            remove: async (_clinicId, itemIds) => { removed.push(...itemIds); }
         },
         doorbell: { ring: async (clinicId) => { rings.push(clinicId); } },
         phonePepper: Buffer.alloc(32, 7),
@@ -77,7 +84,7 @@ export async function harness(overrides: Partial<BookingDeps> = {}) {
     const sealFor = (payload: unknown) =>
         seal(Buffer.from(JSON.stringify(payload)), clinic.publicRaw, CLINIC_ID, 'booking-request');
 
-    const book = (input: { ref?: string; slotId?: string | null; phone?: string; sealed?: string; clinicId?: string } = {}) => {
+    const book = (input: { ref?: string; slotId?: string | null; phone?: string; sealed?: string; clinicId?: string; sealedTo?: string } = {}) => {
         const ref = input.ref ?? newRef();
         return app.request('/api/book', {
             method: 'POST',
@@ -87,7 +94,8 @@ export async function harness(overrides: Partial<BookingDeps> = {}) {
                 ref,
                 slotId: input.slotId === undefined ? `${TOMORROW}T10:00` : input.slotId,
                 phoneDigest: phoneDigest(input.phone ?? '9876543210'),
-                sealed: input.sealed ?? sealFor({ v: 1, ref, name: 'Asha', phone: input.phone ?? '9876543210', reason: 'Fever' })
+                sealed: input.sealed ?? sealFor({ v: 1, ref, name: 'Asha', phone: input.phone ?? '9876543210', reason: 'Fever' }),
+                sealedTo: input.sealedTo ?? clinic.publicRaw
             })
         });
     };
@@ -99,7 +107,9 @@ export async function harness(overrides: Partial<BookingDeps> = {}) {
     });
 
     return {
-        app, clinics, slots, bookings, mailbox, rings, logs, clinic, sealFor, book, clinicCall,
+        app, clinics, slots, bookings, mailbox, removed, rings, logs, clinic, sealFor, book, clinicCall,
+        revoke: (deviceId: string) => { revoked.add(deviceId); },
+        revokeAfterPut: (deviceId: string) => { afterPut = () => { revoked.add(deviceId); }; },
         setAuth: (value: DeviceAuthResult) => { auth = value; },
         failMailbox: () => { mailboxFails = true; },
         setNow: (value: number) => { now = value; }

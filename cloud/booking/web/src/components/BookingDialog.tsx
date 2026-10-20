@@ -50,6 +50,7 @@ function describeError(error: unknown): string {
         case 'unknown_slot': return 'That time is no longer offered. Please pick another.';
         case 'too_many_open_requests': return 'This phone number already has two requests waiting at this clinic. Please wait for the clinic to call you.';
         case 'unknown_clinic': return 'This clinic has stopped taking online requests.';
+        case 'clinic_unavailable': return 'This clinic is setting up a new computer and cannot take online requests yet. Please try again later.';
         default: return 'The request did not go through. Please try again in a moment.';
     }
 }
@@ -284,7 +285,11 @@ function DetailsStep(props: {
         setSending(true);
         try {
             const slot = choice === 'callback' ? null : choice;
-            // One retry with a fresh reference covers the 1-in-2^60 collision.
+            let sealingKey = clinic.sealingPublicKey;
+            let resealed = false;
+            // One retry with a fresh reference covers the 1-in-2^60 collision,
+            // and one more resealed to the clinic's current key covers a form
+            // opened before the clinic changed computers.
             for (let attempt = 0; ; attempt++) {
                 const ref = newReference();
                 const payload: BookingPayload = {
@@ -298,13 +303,19 @@ function DetailsStep(props: {
                     reason: reason.trim(),
                     sentAt: new Date().toISOString()
                 };
-                const sealed = await seal(new TextEncoder().encode(JSON.stringify(payload)), clinic.sealingPublicKey, clinic.clinicId);
+                const sealed = await seal(new TextEncoder().encode(JSON.stringify(payload)), sealingKey, clinic.clinicId);
                 try {
-                    await submitBooking({ clinicId: clinic.clinicId, ref, slotId: payload.slotId, phoneDigest: await phoneDigest(cleanPhone), sealed });
+                    await submitBooking({ clinicId: clinic.clinicId, ref, slotId: payload.slotId, phoneDigest: await phoneDigest(cleanPhone), sealed, sealedTo: sealingKey });
                     props.onSent(ref);
                     return;
                 } catch (error) {
                     if (attempt === 0 && error instanceof ApiError && error.code === 'ref_taken') continue;
+                    const current = error instanceof ApiError ? error.body.sealingPublicKey : undefined;
+                    if (!resealed && error instanceof ApiError && error.code === 'clinic_key_changed' && typeof current === 'string') {
+                        sealingKey = current;
+                        resealed = true;
+                        continue;
+                    }
                     throw error;
                 }
             }

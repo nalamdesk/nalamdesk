@@ -7,6 +7,7 @@ import type { FetchFn, GatewaySession } from './gatewaySession.js';
 import type { GatewayJwtVerifier } from './gatewayJwt.js';
 import { stdoutLogger, type RelayLogEntry, type RelayLogger } from './log.js';
 import type { DeviceAuthenticator, Doorbell, Facility, FacilityDirectory, Mailbox, MailboxItemType } from './ports.js';
+import { registerInboxRoutes, type InboxRouteDeps } from './inboxRoutes.js';
 import { registerPairingRoutes, type PairingRouteDeps } from './pairingRoutes.js';
 import { seal } from './seal.js';
 
@@ -20,6 +21,8 @@ export interface RelayDeps {
     verifyGatewayJwt: GatewayJwtVerifier;
     /** Pairing, the ops console and key rotation (#154). */
     pairing?: PairingRouteDeps;
+    /** The desktop's mailbox and doorbell certificate endpoints (#155). */
+    inbox?: InboxRouteDeps;
     logger?: RelayLogger;
     fetchFn?: FetchFn;
     nowMs?: () => number;
@@ -145,7 +148,15 @@ export function createRelayApp(deps: RelayDeps): Hono {
     // connect and every 30 minutes.
     async function deliver(facility: Facility, type: MailboxItemType, plaintext: Uint8Array): Promise<void> {
         const sealed = seal(plaintext, facility.sealingPublicKey, facility.clinicId, type);
-        await deps.mailbox.put({ clinicId: facility.clinicId, type, sealed });
+        const itemId = await deps.mailbox.put({ clinicId: facility.clinicId, type, sealed });
+        // The lookup may be up to 30 seconds old. If the device was replaced
+        // meanwhile, this item is sealed to a key nobody holds and may be
+        // dated after the replacement's purge: drop it and answer 503 so
+        // ABDM sends it again, to be sealed for the new device.
+        if (!(await deps.facilities.stillCurrent(facility))) {
+            await deps.mailbox.remove(facility.clinicId, [itemId]).catch(() => undefined);
+            throw new Error('facility_changed');
+        }
         deps.doorbell.ring(facility.clinicId).catch(() => undefined);
     }
 
@@ -224,6 +235,7 @@ export function createRelayApp(deps: RelayDeps): Hono {
     });
 
     if (deps.pairing) registerPairingRoutes(app, deps.pairing, { devices: deps.devices, log, nowMs });
+    if (deps.inbox) registerInboxRoutes(app, deps.inbox, { devices: deps.devices, log, nowMs });
 
     app.notFound((c) => refuse(c, 404, 'not_found'));
     app.onError((_error, c) => refuse(c, 500, 'internal_error'));

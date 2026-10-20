@@ -83,7 +83,7 @@ describe('booking site', () => {
         expect(wire).not.toContain('Asha');
         expect(wire).not.toContain('98765');
         expect(wire).not.toContain('Fever');
-        expect(body).toMatchObject({ clinicId: 'c1', slotId: '2099-01-05T16:00' });
+        expect(body).toMatchObject({ clinicId: 'c1', slotId: '2099-01-05T16:00', sealedTo: publicRaw });
         expect(body.phoneDigest).toMatch(/^[0-9a-f]{64}$/);
         expect(headers.get('x-amz-content-sha256')).toBe(nodeCrypto.createHash('sha256').update(JSON.stringify(body)).digest('hex'));
 
@@ -124,6 +124,44 @@ describe('booking site', () => {
         await user.click(within(dialog).getByRole('button', { name: 'Send request' }));
         expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'Someone has just asked for that time. Please pick another.');
         await waitFor(() => expect(within(dialog).getByRole('heading', { name: 'Choose a time' })).toBeTruthy());
+    });
+
+    it('reseals to the clinic\'s current key when the computer was replaced after the form opened', async () => {
+        const user = userEvent.setup();
+        const next = nodeCrypto.generateKeyPairSync('x25519');
+        const nextRaw = next.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
+        bookResponse = () => (bookCalls.length === 1
+            ? json({ error: 'clinic_key_changed', sealingPublicKey: nextRaw }, 409)
+            : json({ ref: 'X', status: 'Requested' }, 201));
+        render(<App />);
+        await user.click(await screen.findByRole('button', { name: 'Request a time at Arogya Family Clinic' }));
+        const dialog = await screen.findByRole('dialog');
+        await user.click(await within(dialog).findByRole('button', { name: '9:30 am' }));
+        await user.click(within(dialog).getByRole('button', { name: 'Continue' }));
+        await user.type(within(dialog).getByLabelText('Patient’s name'), 'Ravi');
+        await user.type(within(dialog).getByLabelText('Phone number'), '9876543210');
+        await user.click(within(dialog).getByRole('checkbox'));
+        await user.click(within(dialog).getByRole('button', { name: 'Send request' }));
+        expect(await within(dialog).findByText('Request sent')).toBeTruthy();
+        expect(bookCalls).toHaveLength(2);
+        const { body } = bookCalls[1]!;
+        expect(body.sealedTo).toBe(nextRaw);
+        expect(JSON.parse(open(body.sealed, next.privateKey, 'c1', 'booking-request').toString())).toMatchObject({ name: 'Ravi' });
+    });
+
+    it('says the clinic cannot take requests while its computer is being replaced', async () => {
+        const user = userEvent.setup();
+        bookResponse = () => json({ error: 'clinic_unavailable' }, 503);
+        render(<App />);
+        await user.click(await screen.findByRole('button', { name: 'Request a time at Kovai Child Care' }));
+        const dialog = await screen.findByRole('dialog');
+        await user.click(await within(dialog).findByRole('button', { name: /Ask for a call back/ }));
+        await user.click(within(dialog).getByRole('button', { name: 'Continue' }));
+        await user.type(within(dialog).getByLabelText('Patient’s name'), 'Ravi');
+        await user.type(within(dialog).getByLabelText('Phone number'), '9876543210');
+        await user.click(within(dialog).getByRole('checkbox'));
+        await user.click(within(dialog).getByRole('button', { name: 'Send request' }));
+        expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('setting up a new computer'));
     });
 
     it('shows a request status from the reference in the link', async () => {

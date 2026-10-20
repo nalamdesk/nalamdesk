@@ -127,6 +127,29 @@ describe('Relay stack', () => {
         });
     });
 
+    it('writes the mailbox, rings only clinic doorbells and manages device certificates', () => {
+        const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+            .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+        const actionsOn = (fragment: string) => statements
+            .filter((s: any) => JSON.stringify(s.Resource).includes(fragment))
+            .flatMap((s: any) => [s.Action].flat()).sort();
+        expect(actionsOn('mailboxtablename')).toEqual(['dynamodb:BatchWriteItem', 'dynamodb:PutItem', 'dynamodb:Query']);
+        expect(actionsOn('/mailbox/*')).toEqual(['s3:DeleteObject', 's3:GetObject', 's3:PutObject']);
+        const publish = statements.find((s: any) => s.Action === 'iot:Publish');
+        expect(JSON.stringify(publish.Resource)).toContain(':topic/');
+        expect(JSON.stringify(publish.Resource)).toContain('/*');
+        expect(actionsOn(':thing/dev_*')).toContain('iot:AttachThingPrincipal');
+        expect(statements.flatMap((s: any) => [s.Action].flat())).not.toContain('iot:*');
+        template.hasResourceProperties('AWS::Lambda::WebFunctionRevision', {
+            ServiceConfig: Match.objectLike({
+                EnvironmentVariables: Match.objectLike({
+                    MAILBOX_TABLE: Match.anyValue(), MAILBOX_BUCKET: Match.anyValue(), IOT_DATA_ENDPOINT: Match.anyValue(),
+                    IOT_POLICY_NAME: Match.anyValue(), DOORBELL_TOPIC_PREFIX: Match.anyValue()
+                })
+            })
+        });
+    });
+
     it('stamps the viewer IP on every request with a CloudFront Function', () => {
         template.hasResourceProperties('AWS::CloudFront::Function', {
             FunctionCode: Match.stringLikeRegexp("headers\\['x-nd-viewer-ip'\\] = \\{ value: event.viewer.ip \\}")

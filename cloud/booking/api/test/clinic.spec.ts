@@ -16,7 +16,7 @@ describe('signed clinic routes', () => {
         h.setAuth({ ok: true, deviceId: 'dev-2', clinicId: 'clinic-2', hipId: 'IN2' });
         const res = await h.clinicCall('PUT', '/api/clinic/listing', { name: '  Zen   Clinic ', city: 'Madurai', sealingPublicKey: h.clinic.publicRaw });
         expect(res.status).toBe(200);
-        expect(await h.clinics.get('clinic-2')).toMatchObject({ name: 'Zen Clinic', city: 'Madurai', specialty: 'General Practice', listed: true });
+        expect(await h.clinics.get('clinic-2')).toMatchObject({ name: 'Zen Clinic', city: 'Madurai', specialty: 'General Practice', listed: true, deviceId: 'dev-2' });
         expect((await h.clinicCall('DELETE', '/api/clinic/listing')).status).toBe(200);
         expect((await h.clinics.get('clinic-2'))!.listed).toBe(false);
         expect((await h.clinics.get(CLINIC_ID))!.listed).toBe(true);

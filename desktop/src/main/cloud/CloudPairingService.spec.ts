@@ -40,6 +40,7 @@ function memoryDb() {
         clearCloudDevice: () => { row = null; },
         saveAppointmentRequest: (r: any) => { requests.push(r); },
         updateAppointmentRequestStatus: vi.fn(),
+        acceptAppointmentRequest: vi.fn(),
         raw: () => row,
         requests
     };

@@ -67,23 +67,17 @@ describe('OnlineBookingComponent', () => {
 
     // ...
 
-    it('should accept request and create appointment', async () => {
+    it('accepts through main, which books the appointment with the decision', async () => {
         const dialogService = TestBed.inject(DialogService);
         vi.spyOn(dialogService, 'open').mockResolvedValue(true);
-        // Ensure request exists
         component.requests = [{ id: 1, patient_name: 'John', status: 'pending', date: '2025-01-01', time: '10:00' }];
-        const req = component.requests[0];
 
-        await component.accept(req);
+        await component.accept(component.requests[0]);
 
-        expect(mockPatientService.savePatient).toHaveBeenCalled(); // New patient created
-        expect(mockCloudService.saveAppointment).toHaveBeenCalledWith(expect.objectContaining({
-            patient_id: 100,
-            date: '2025-01-01'
-        }));
-        expect(mockCloudService.decide).toHaveBeenCalledWith(1, 'accepted');
-        expect(mockCloudService.decide.mock.invocationCallOrder[0])
-            .toBeLessThan(mockCloudService.saveAppointment.mock.invocationCallOrder[0]);
+        expect(mockCloudService.decide).toHaveBeenCalledWith(1, 'accepted', { date: '2025-01-01', time: '10:00' });
+        // No separate renderer write that a crash could cut off.
+        expect(mockCloudService.saveAppointment).not.toHaveBeenCalled();
+        expect(mockPatientService.savePatient).not.toHaveBeenCalled();
     });
 
     it('does not create an appointment when the cloud refuses the acceptance', async () => {
@@ -112,8 +106,7 @@ describe('OnlineBookingComponent', () => {
         component.callbackSlot(req.id).date = '2025-01-02';
         component.callbackSlot(req.id).time = '11:30';
         await component.accept(req);
-        expect(mockCloudService.decide).toHaveBeenCalledWith('ABCDEFGHJKMN', 'accepted');
-        expect(mockCloudService.saveAppointment).toHaveBeenCalledWith(expect.objectContaining({ date: '2025-01-02', time: '11:30' }));
+        expect(mockCloudService.decide).toHaveBeenCalledWith('ABCDEFGHJKMN', 'accepted', { date: '2025-01-02', time: '11:30' });
     });
 
     it('declines through the cloud', async () => {

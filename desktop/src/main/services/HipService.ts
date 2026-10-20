@@ -104,6 +104,12 @@ class HipRefusal extends Error {
 }
 
 export class HipService {
+    /**
+     * Live linking codes, held in memory only so no copy reaches the
+     * database or a backup. A restart drops them; the patient links again.
+     */
+    private readonly liveCodes = new Map<string, { otp: string; expiresAt: number }>();
+
     constructor(private readonly deps: HipDeps) {}
 
     private nowMs(): number {
@@ -222,13 +228,14 @@ export class HipService {
             otpHash: otpHash(linkRef, otp),
             expiresAt
         });
-        // This build sends no SMS: the code waits for the desk, which reads
-        // it to the patient at the counter.
+        // This build sends no SMS: the desk reads the code to the patient at
+        // the counter. The inbox entry says who is waiting; the code itself
+        // stays in memory (see linkCode).
+        this.liveCodes.set(linkRef, { otp, expiresAt });
         this.deps.store.receiveInboxCallback('hip-link-otp', {
             patientName: patient.name ?? null,
             mobile: patient.mobile ?? null,
             abhaAddress,
-            otp,
             expiresAt: new Date(expiresAt).toISOString()
         }, undefined, linkRef);
         return {
@@ -239,6 +246,22 @@ export class HipService {
                 meta: { communicationMedium: 'MOBILE', communicationHint: 'OTP', communicationExpiry: new Date(expiresAt).toISOString() }
             }
         };
+    }
+
+    /** The code the desk reads to the patient, while the attempt is live. */
+    linkCode(linkRef: string): string | null {
+        const live = this.liveCodes.get(String(linkRef || ''));
+        if (!live) return null;
+        if (live.expiresAt <= this.nowMs()) {
+            this.liveCodes.delete(String(linkRef));
+            return null;
+        }
+        return live.otp;
+    }
+
+    private endLinkAttempt(linkRef: string): void {
+        this.liveCodes.delete(linkRef);
+        this.deps.store.closeHipLinkOtp(linkRef);
     }
 
     private refuseLinkedElsewhere(refs: string[], abhaAddress: string): void {
@@ -255,20 +278,21 @@ export class HipService {
         if (!request || request.status !== 'pending') throw new HipRefusal(1000, 'Link request not found.');
         if (Number(request.expires_at) <= this.nowMs()) {
             this.deps.store.updateHipLinkRequest(linkRef, { status: 'expired' });
-            this.deps.store.closeHipLinkOtp(linkRef);
+            this.endLinkAttempt(linkRef);
             throw new HipRefusal(1000, 'The code has expired. Please start linking again.');
         }
         const attempts = Number(request.attempts) + 1;
         if (!sameHash(request.otp_hash, otpHash(linkRef, token))) {
             this.deps.store.updateHipLinkRequest(linkRef, { attempts, status: attempts >= MAX_OTP_ATTEMPTS ? 'failed' : 'pending' });
-            if (attempts >= MAX_OTP_ATTEMPTS) this.deps.store.closeHipLinkOtp(linkRef);
+            if (attempts >= MAX_OTP_ATTEMPTS) this.endLinkAttempt(linkRef);
             throw new HipRefusal(1000, 'The code does not match.');
         }
         const refs: string[] = JSON.parse(request.care_context_refs || '[]');
         this.refuseLinkedElsewhere(refs, request.abha_address);
-        this.deps.store.updateHipLinkRequest(linkRef, { attempts, status: 'linked' });
-        this.deps.store.closeHipLinkOtp(linkRef);
+        // Links first: if saving them fails, the request stays open for a retry.
         this.deps.store.saveHipLinks(request.abha_address, Number(request.patient_id), refs, 'patient');
+        this.deps.store.updateHipLinkRequest(linkRef, { attempts, status: 'linked' });
+        this.endLinkAttempt(linkRef);
         const contexts = this.deps.store.getHipCareContexts(Number(request.patient_id)).filter((row) => refs.includes(row.care_context_ref));
         const patient = this.deps.store.findHipPatientByReference(String(request.patient_id));
         return { patient: [patientEntry(patient ?? { id: request.patient_id }, contexts)] };

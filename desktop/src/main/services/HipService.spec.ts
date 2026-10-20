@@ -154,7 +154,7 @@ describe('HIP discovery and linking from the patient app', () => {
     });
 
     it('links with the one-time code the desk reads to the patient', async () => {
-        const { deliver, last, store, db } = await setup();
+        const { deliver, last, store, hip } = await setup();
         await deliver(HIP_DISCOVER_PATH, { transactionId: 'txn-l', patient: { id: 'ravi@sbx' } });
         await deliver(HIP_LINK_INIT_PATH, {
             transactionId: 'txn-l', abhaAddress: 'ravi@sbx',
@@ -166,12 +166,15 @@ describe('HIP discovery and linking from the patient app', () => {
             transactionId: 'txn-l',
             link: { authenticationType: 'DIRECT', meta: { communicationMedium: 'MOBILE', communicationHint: 'OTP', communicationExpiry: '2026-10-20T10:10:00.000Z' } }
         });
+        // The inbox says who is waiting; the code itself is never stored.
         const inbox = (store.getPendingInbox() as any[]).filter((row) => row.kind === 'hip-link-otp');
         expect(inbox.map((row) => [row.kind, JSON.parse(row.payload)])).toEqual([['hip-link-otp', {
-            patientName: 'Ravi Kumar', mobile: '+91 98765 43210', abhaAddress: 'ravi@sbx', otp: '123456', expiresAt: '2026-10-20T10:10:00.000Z'
+            patientName: 'Ravi Kumar', mobile: '+91 98765 43210', abhaAddress: 'ravi@sbx', expiresAt: '2026-10-20T10:10:00.000Z'
         }]]);
-
         const linkRefNumber = init.link.referenceNumber;
+        expect(inbox[0].request_id).toBe(linkRefNumber);
+        expect(hip.linkCode(linkRefNumber)).toBe('123456');
+
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '000000' } });
         expect(last().body.error.message).toBe('The code does not match.');
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '123456' } });
@@ -182,23 +185,24 @@ describe('HIP discovery and linking from the patient app', () => {
             hiType: 'OPConsultation', count: 1
         }]);
         expect(store.getHipLinkedRefs('RAVI@sbx')).toEqual(['OP-2026-0002']);
-        // The code leaves the desk inbox once linking ends.
+        // The entry leaves the desk inbox, and the code is forgotten, once linking ends.
         expect((store.getPendingInbox() as any[]).filter((row) => row.kind === 'hip-link-otp')).toEqual([]);
-        expect(JSON.parse((db.prepare(`SELECT payload FROM abdm_inbox WHERE kind = 'hip-link-otp'`).get() as any).payload)).not.toHaveProperty('otp');
+        expect(hip.linkCode(linkRefNumber)).toBeNull();
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '123456' } });
         expect(last().body.error.message).toBe('Link request not found.');
     });
 
     it('locks a link after three wrong codes and refuses an expired one', async () => {
-        const { deliver, last, store, db } = await setup();
+        const { deliver, last, store, db, hip } = await setup();
         await deliver(HIP_DISCOVER_PATH, { transactionId: 't', patient: { id: 'ravi@sbx' } });
         const body = { transactionId: 't', abhaAddress: 'ravi@sbx', patient: { referenceNumber: 'uuid-1', careContexts: [{ referenceNumber: 'OP-2026-0001' }] } };
         await deliver(HIP_LINK_INIT_PATH, body);
         const linkRefNumber = last().body.link.referenceNumber;
         for (let i = 0; i < 3; i += 1) await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '999999' } });
         expect(store.getHipLinkRequest(linkRefNumber)).toMatchObject({ attempts: 3, status: 'failed' });
-        const otpRows = () => (db.prepare(`SELECT payload, status FROM abdm_inbox WHERE kind = 'hip-link-otp'`).all() as any[]);
-        expect(otpRows().map((row) => [row.status, JSON.parse(row.payload).otp])).toEqual([['handled', undefined]]);
+        const otpRows = () => (db.prepare(`SELECT status FROM abdm_inbox WHERE kind = 'hip-link-otp'`).all() as any[]);
+        expect(otpRows().map((row) => row.status)).toEqual(['handled']);
+        expect(hip.linkCode(linkRefNumber)).toBeNull();
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '123456' } });
         expect(last().body.error.message).toBe('Link request not found.');
 
@@ -208,7 +212,8 @@ describe('HIP discovery and linking from the patient app', () => {
         await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber: second, token: '123456' } });
         expect(last().body.error.message).toContain('expired');
         expect(store.getHipLinkRequest(second).status).toBe('expired');
-        expect(otpRows().every((row) => row.status === 'handled' && !('otp' in JSON.parse(row.payload)))).toBe(true);
+        expect(otpRows().every((row) => row.status === 'handled')).toBe(true);
+        expect(hip.linkCode(second)).toBeNull();
     });
 
     it('refuses link requests it cannot honour', async () => {

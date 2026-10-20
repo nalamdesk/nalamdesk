@@ -1669,9 +1669,9 @@ export class DatabaseService {
         return (this.db.prepare('SELECT * FROM abdm_hip_discoveries WHERE transaction_id = ?').get(String(transactionId || '')) ?? null) as any;
     }
 
-    /** Once a link attempt ends, its code leaves the desk inbox for good. */
+    /** Once a link attempt ends, its entry leaves the desk inbox. */
     closeHipLinkOtp(linkRef: string) {
-        this.db.prepare(`UPDATE abdm_inbox SET payload = json_remove(payload, '$.otp'), status = 'handled'
+        this.db.prepare(`UPDATE abdm_inbox SET status = 'handled'
             WHERE kind = 'hip-link-otp' AND request_id = ?`).run(String(linkRef || ''));
     }
 

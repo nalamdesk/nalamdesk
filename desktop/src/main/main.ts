@@ -1440,7 +1440,14 @@ handleGuardedDb('db:abdmGetShareTokens', () => {
 handleGuardedDb('db:abdmGetInbox', () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
-    return databaseService.getPendingInbox();
+    // A health ID linking code is held in memory only; the desk on this
+    // computer sees it beside the patient waiting for it.
+    return (databaseService.getPendingInbox() as any[]).map((item) => {
+        if (item.kind !== 'hip-link-otp') return item;
+        let payload: any = {};
+        try { payload = JSON.parse(item.payload || '{}'); } catch { }
+        return { ...item, linkPatient: payload.patientName ?? null, linkCode: hipService.linkCode(item.request_id) };
+    });
 });
 handleGuardedDb('db:abdmAckInbox', (_, payload) => {
     const user = sessionService.getUser();

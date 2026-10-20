@@ -1602,7 +1602,7 @@ export class DatabaseService {
                 if (!Number.isInteger(year) || year < 1900) return true;
                 const dobYear = row.dob ? Number(String(row.dob).slice(0, 4)) : null;
                 const known = dobYear ?? (row.age != null ? thisYear - Number(row.age) : null);
-                return known == null || Math.abs(known - year) <= 1;
+                return known != null && Math.abs(known - year) <= 1;
             });
         return { matchedBy: rows.length > 0 ? 'MOBILE' : null, patients: rows };
     }

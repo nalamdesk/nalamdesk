@@ -120,7 +120,7 @@ describe('HIP discovery and linking from the patient app', () => {
     });
 
     it('matches on ABHA number, then on mobile, gender and birth year, and refuses no match or several', async () => {
-        const { deliver, last } = await setup();
+        const { db, deliver, last } = await setup();
         await deliver(HIP_DISCOVER_PATH, { transactionId: 't1', patient: { id: 'new@sbx', verifiedIdentifiers: [{ type: 'ABHA_NUMBER', value: '91111122223333' }] } });
         expect(last().body.matchedBy).toEqual(['ABHA_NUMBER']);
 
@@ -137,6 +137,10 @@ describe('HIP discovery and linking from the patient app', () => {
         expect(last().body.error.message).toContain('No matching patient');
 
         await deliver(HIP_DISCOVER_PATH, { transactionId: 't5', patient: { id: 'm@sbx', yearOfBirth: 1950, verifiedIdentifiers: [{ type: 'MOBILE', value: '9000000001' }] } });
+        expect(last().body.error.message).toContain('No matching patient');
+        // A patient with no birth date or age does not match a given birth year.
+        db.prepare(`INSERT INTO patients (id, uuid, mrn, name, mobile, gender) VALUES (4, 'uuid-4', 'ND-4', 'Ravi', '9111111111', 'Male')`).run();
+        await deliver(HIP_DISCOVER_PATH, { transactionId: 't5b', patient: { id: 'r@sbx', gender: 'M', yearOfBirth: 1990, verifiedIdentifiers: [{ type: 'MOBILE', value: '9111111111' }] } });
         expect(last().body.error.message).toContain('No matching patient');
         await deliver(HIP_DISCOVER_PATH, { transactionId: 't6', patient: {} });
         expect(last().body.error.message).toContain('No matching patient');

@@ -44,8 +44,8 @@ This will:
 Packaged Electron only (`app.isPackaged`). Unpackaged `npm start` skips the updater.
 
 ### Feed
-- Default: **generic** provider at `https://nalamdesk.com/updates/desktop`. The landing worker (`landing/src/pages/updates/desktop/[file].ts`) redirects each file to the public [`nalamdesk-releases`](https://github.com/sankara-sabapathy/nalamdesk-releases) GitHub Releases, so hosting can move (R2, another repo) by changing the redirect, without an app release.
-- Automated Release (`.github/workflows/build.yml`) publishes installers and `latest*.yml` to `nalamdesk-releases` using the `RELEASES_TOKEN` secret (fine-grained, Contents read/write on that repo only). The code repo is private and is not an update channel.
+- Default: **generic** provider at `https://nalamdesk.com/updates/desktop`. Not served yet: the public download host is still being chosen, and nothing on nalamdesk.com may link to a personal GitHub account.
+- Automated Release (`.github/workflows/build.yml`) currently publishes to `nalamdesk-releases` with `RELEASES_TOKEN`; this changes with the download host.
 - Override with `NALAMDESK_UPDATE_FEED_URL` (HTTPS directory serving `latest.yml` / `latest-mac.yml` / `latest-linux.yml` plus the packages they name). Plain HTTP is rejected except `localhost` / `127.0.0.1`.
 - `NALAMDESK_UPDATE_PROVIDER=generic` without a feed URL disables updates. `NALAMDESK_UPDATE_PROVIDER=github` reads GitHub Releases directly (optional `NALAMDESK_UPDATE_GITHUB_OWNER` / `NALAMDESK_UPDATE_GITHUB_REPO`, default `nalamdesk-releases`).
 - Optional: `NALAMDESK_UPDATE_DOWNLOAD_PAGE` (default `https://nalamdesk.com/#get`), opened where the app cannot install in place.

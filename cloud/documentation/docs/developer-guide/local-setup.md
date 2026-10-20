@@ -17,7 +17,7 @@ This guide describes how to set up the NalamDesk development environment.
 1.  **Clone the repository:**
 
     ```bash
-    git clone https://github.com/sankara-sabapathy/nalamdesk.git
+    git clone <NalamDesk repository URL>
     cd nalamdesk
     ```
 
@@ -42,7 +42,7 @@ This guide describes how to set up the NalamDesk development environment.
 
 ## Local development ports
 
-Default ports are defined in the repo-root [`.env.development`](https://github.com/sankara-sabapathy/nalamdesk/blob/main/.env.development). Override locally with `.env.local` (gitignored).
+Default ports are defined in the repo-root `.env.development`. Override locally with `.env.local` (gitignored).
 
 | Port | Service |
 |------|---------|

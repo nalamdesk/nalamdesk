@@ -1,6 +1,6 @@
 version: 1
 # Floor for the action release; the workflow `uses:` ref selects it.
-requires_action: ">=0.11.0"
+requires_action: ">=0.17.0"
 
 defaults:
   on: [opened, synchronize, ready_for_review]
@@ -11,7 +11,14 @@ defaults:
   max_diff_chars: 80000
 
 providers:
-  # Single reviewer: space-bunny-free on the OpenCode Go subscription key.
+  # Single reviewer: minimax-m3.1-flash-free on the OpenCode Go subscription
+  # key. space-bunny-free was MiniMax's stealth name for this same model;
+  # OpenCode retired that ID when MiniMax M3.1 Flash launched (2026-10-19)
+  # and lists it as minimax-m3.1-flash-free (free, limited time, no Go quota,
+  # no training, 0-day retention). Same model, so the measured reasoning cap
+  # below still applies. Fallback if it goes away: cat-jam-free, which
+  # openreview reviews itself with. Avoid longcat-2.5-preview-free: it answers
+  # prose instead of the JSON contract on real diffs.
   # Proven on openreview's own repo: reasoning models spend thinking from the
   # 2000-token output budget, and on an uncapped run both agents burned the
   # whole budget and bailed to {"findings":[]} on every PR. Capping the think
@@ -20,7 +27,7 @@ providers:
   # failure, no reason to pay for it here.
   opencode:
     protocol: openai-chat
-    model: space-bunny-free
+    model: minimax-m3.1-flash-free
     base_url: https://opencode.ai/zen/go/v1
     key_from: secrets.OPENCODE_API_KEY
     # Stays active (measured, do not remove): without it the think eats the
@@ -50,7 +57,7 @@ reviews:
         (significant bug, likely-wrong behavior, missing coverage on risky
         paths — should fix). Never emit P3/P4 or untagged findings.
     subagents:
-      - name: spacebunny-check
+      - name: minimax-check
         provider: opencode
         instructions: >-
           Independent correctness pass: real bugs, race conditions, null

@@ -14,8 +14,8 @@ permissions:
   issues: write
   contents: read
 
-# Full re-review on every push until upstream incremental mode lands
-# (openreview#18) — cancel superseded runs to avoid burning provider budget.
+# A superseding push cancels the stale run so provider budget isn't spent on
+# an outdated head.
 # Event name is part of the key: bot comments fire issue_comment runs in the
 # same PR, and without it they'd cancel the real pull_request review.
 concurrency:
@@ -62,7 +62,7 @@ jobs:
     runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: sankara-sabapathy/openreview@v1 # tracks latest release (moved per release; see openreview AGENTS.md invariant 4)
+      - uses: sankara-sabapathy/openreview@v0.17.0 # pinned: the v1 tag is moved by hand and lagged at v0.13.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           opencode-api-key: ${{ secrets.OPENCODE_API_KEY }}

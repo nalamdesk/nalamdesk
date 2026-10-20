@@ -34,6 +34,7 @@ function setup() {
     let respond: (method: string, path: string) => CloudResponse = () => ({ status: 200, body: {} });
     const saved: any[] = [];
     const statuses: Record<string, string> = {};
+    const accepted: { id: string; date: string; time: string }[] = [];
     let saveFails = false;
     const service = new BookingInboxService({
         transport: {
@@ -50,7 +51,8 @@ function setup() {
                 if (saveFails) throw new Error('disk full');
                 saved.push(req);
             },
-            updateAppointmentRequestStatus: (id, status) => { statuses[id] = status; }
+            updateAppointmentRequestStatus: (id, status) => { statuses[id] = status; },
+            acceptAppointmentRequest: (id, slot) => { accepted.push({ id, ...slot }); statuses[id] = 'accepted'; }
         }
     });
     const booking = (overrides: Record<string, unknown> = {}, clinicId = CLINIC) => seal(Buffer.from(JSON.stringify({
@@ -58,7 +60,7 @@ function setup() {
         name: 'Asha  Raman', phone: '9876543210', reason: 'Fever', sentAt: '2026-10-19T06:00:00Z', ...overrides
     })), publicRaw, clinicId, 'booking-request');
     return {
-        service, inbox, acked, sent, saved, statuses, booking, publicRaw, pair,
+        service, inbox, acked, sent, saved, statuses, accepted, booking, publicRaw, pair,
         respond: (fn: typeof respond) => { respond = fn; },
         failSaves: () => { saveFails = true; }
     };
@@ -129,13 +131,28 @@ describe('BookingInboxService', () => {
         expect(h.statuses[REF]).toBe('rejected');
     });
 
+    it('books the appointment with an acceptance, and once more when only the cloud saw it', async () => {
+        const h = setup();
+        h.respond(() => ({ status: 200, body: { ref: REF, status: 'Accepted' } }));
+        await h.service.decide(REF, 'accepted', { date: '2026-10-20', time: '10:00' });
+        expect(h.accepted).toEqual([{ id: REF, date: '2026-10-20', time: '10:00' }]);
+
+        // A crash after the cloud accepted: the retry finds it already accepted
+        // there and still books it here (the store ignores a repeat).
+        h.respond(() => ({ status: 409, body: { error: 'already_decided', status: 'Accepted' } }));
+        await h.service.decide(REF, 'accepted', { date: '2026-10-20', time: '10:00' });
+        expect(h.accepted).toHaveLength(2);
+        expect(h.statuses[REF]).toBe('accepted');
+    });
+
     it('does not record a decision the cloud refused', async () => {
         const h = setup();
         h.respond(() => ({ status: 409, body: { error: 'slot_lost' } }));
         await expect(h.service.decide(REF, 'accepted')).rejects.toMatchObject({ code: 'slot_lost' });
         h.respond(() => ({ status: 404, body: { error: 'unknown_ref' } }));
-        await expect(h.service.decide(REF, 'accepted')).rejects.toMatchObject({ code: 'expired' });
+        await expect(h.service.decide(REF, 'accepted', { date: '2026-10-20', time: '10:00' })).rejects.toMatchObject({ code: 'expired' });
         expect(h.statuses).toEqual({});
+        expect(h.accepted).toEqual([]);
         await expect(h.service.decide('not-a-ref', 'accepted')).rejects.toBeInstanceOf(BookingError);
     });
 

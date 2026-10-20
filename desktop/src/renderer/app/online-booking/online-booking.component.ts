@@ -2,7 +2,6 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CloudService } from '../services/cloud.service';
-import { PatientService } from '../services/patient.service';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 
@@ -127,7 +126,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
   // Date and time staff pick for callback requests, kept across list refreshes.
   private callbackSlots = new Map<string, { date: string; time: string }>();
 
-  constructor(public cloud: CloudService, private patientService: PatientService, private dialogService?: DialogService, private toastService?: ToastService) {
+  constructor(public cloud: CloudService, private dialogService?: DialogService, private toastService?: ToastService) {
     this.generateTimeSlots();
     this.setCalendarLimits();
   }
@@ -308,59 +307,20 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
       cancelText: 'Cancel'
     });
     if (!confirmed) return;
-    // 1. Tell the cloud first: it books the slot and updates the patient's
-    //    status page. A lapsed or taken slot stops here.
+    // The cloud books the slot and updates the patient's status page first
+    // (a lapsed or taken slot stops here); main then books the appointment
+    // and marks the request accepted in one step, so a crash cannot leave
+    // an accepted request without its appointment.
     try {
-      await this.cloud.decide(req.id, 'accepted');
+      await this.cloud.decide(req.id, 'accepted', { date, time });
     } catch (e) {
       await this.showDecisionError('Accept failed', e);
       await this.loadRequests();
       return;
     }
-    try {
-      // 2. Find or Create Patient
-      let patientId;
-      const existingPatients = await this.patientService.getPatients(req.phone);
-      const found = existingPatients.find(p => p.mobile === req.phone);
-
-      if (found) {
-        patientId = found.id;
-      } else {
-        // Create new "Lite" Patient
-        const newPatient = {
-          name: req.patient_name,
-          mobile: req.phone,
-          age: 0, // Incomplete
-          gender: 'Unknown',
-          address: '',
-          uuid: crypto.randomUUID()
-        };
-        const res = await this.patientService.savePatient(newPatient);
-        patientId = res.lastInsertRowid;
-      }
-
-      // 3. Create Appointment
-      if (patientId) {
-        await this.cloud.saveAppointment({
-          patient_id: patientId,
-          date,
-          time,
-          reason: req.reason,
-          status: 'CONFIRMED'
-        });
-
-        this.callbackSlots.delete(String(req.id));
-        await this.loadRequests();
-        this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
-      }
-    } catch (e) {
-      console.error('Accept flow failed', e);
-      await this.dialogService?.open({
-        title: 'Accept failed',
-        message: 'The patient was told the booking is accepted, but the appointment could not be added here. Add it from the appointments screen.',
-        type: 'error'
-      });
-    }
+    this.callbackSlots.delete(String(req.id));
+    await this.loadRequests();
+    this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
   }
 
   async reject(req: any) {

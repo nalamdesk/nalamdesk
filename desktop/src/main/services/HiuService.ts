@@ -25,11 +25,8 @@ export interface HiuDeps {
         storeFetchedRecord: (input: any, actingUserId?: number) => any;
         getPendingInbox?: () => any[];
     };
-    /** Gateway session snapshot for live calls. */
-    session?: {
-        getSessionToken: () => Promise<{ token: string; mock: boolean }>;
-        gatewayBaseUrl: () => string;
-    };
+    /** The relay connection (#160); without one the HIU runs against the mock gateway. */
+    relay?: { isMockMode: () => boolean };
 }
 
 export interface HiuConsentRequest {
@@ -58,7 +55,7 @@ const HIU_NOTIFY_KINDS = [
  * keypair used to receive encrypted health records under patient consent (M3).
  *
  * The private half is generated once, wrapped by the OS keychain, and stored
- * as an opaque blob — the same contract as the ABDM client secret: it never
+ * as an opaque blob: it never
  * appears in generic settings reads, IPC getters, or LAN responses. Only
  * the public half (Fidelius X.509 base64) is shareable.
  */
@@ -73,6 +70,10 @@ export class HiuService {
 
     private nowMs(): number {
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
+    }
+
+    private isMock(): boolean {
+        return this.deps.relay ? this.deps.relay.isMockMode() : true;
     }
 
     /** Shareable HIU public key (Fidelius X.509 base64), or null before first use. */
@@ -205,11 +206,7 @@ export class HiuService {
     async requestConsent(input: HiuConsentRequest, actingUserId?: number): Promise<any> {
         const store = this.deps.store;
         if (!store) throw new Error('Consent store is not configured.');
-        const session = this.deps.session;
-        const snapshot = session
-            ? await session.getSessionToken()
-            : { token: `mock-hiu-token-${this.nowMs()}`, mock: true };
-        if (!snapshot.mock) {
+        if (!this.isMock()) {
             throw new Error('Live HIU consent is not certified in this build; use the mock gateway.');
         }
         const created = store.createConsentRequest({
@@ -282,11 +279,7 @@ export class HiuService {
     async fetchForConsent(consentId: number, actingUserId?: number): Promise<any> {
         const store = this.deps.store;
         if (!store) throw new Error('Consent store is not configured.');
-        const session = this.deps.session;
-        const snapshot = session
-            ? await session.getSessionToken()
-            : { token: `mock-hiu-token-${this.nowMs()}`, mock: true };
-        if (!snapshot.mock) {
+        if (!this.isMock()) {
             throw new Error('Live HIU fetch is not certified in this build; use the mock gateway.');
         }
         const consent = store.getConsentById(Number(consentId));

@@ -143,9 +143,13 @@ callback secret again: callbacks now arrive sealed through the relay.
   direct data-push (`abdmTransferBundle`): fresh ephemeral key per
   transfer, tamper-rejecting envelopes, bounded timeouts. No endpoint
   configured means a flagged loopback receipt, never a silent drop.
-- **Session hardening (follow-up fixes):** gateway token, mode, and URL are
-  pinned per operation with atomic session snapshots, so concurrent
-  callbacks cannot cross-contaminate sessions.
+- **ABDM through the relay (#160):** `AbdmRelayService` sends every ABHA
+  and gateway call as a signed request to the relay (`/abdm/abha/...`,
+  `/abdm/gateway/...`), which adds the vendor token and facility headers.
+  No ABDM credential is stored on a clinic PC (migration v47 clears the old
+  Client ID, secret and gateway choice). Until the computer is paired, or
+  while an admin ticks "Use the mock gateway", every flow runs against the
+  in-process mock; mock or relay is decided once per operation.
 
 ## ABDM M3: HIU consent, inbound records, chart import (#66)
 
@@ -155,8 +159,7 @@ v27–v30 (v27 consent/record tables + HIU keypair columns + key grants, v28
 notify dedupe + flow grants, v29 read/clear grants, v30 import grant).
 
 - **HIU identity (`HiuService`):** one-time X25519 keypair per device; the
-  private half is keychain-wrapped under the client-secret contract (never
-  in reads, IPC, or LAN). The public half is shareable for incoming pushes.
+  private half is keychain-wrapped and never appears in reads, IPC, or LAN. The public half is shareable for incoming pushes.
 - **Consent flow:** `abdmHiuRequestConsent` records the request locally
   (mock gateway returns a mock id end-to-end; live calls refuse explicitly
   until gateway certification — never a guessed shape). Gateway

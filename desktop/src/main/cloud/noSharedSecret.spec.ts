@@ -25,3 +25,19 @@ describe('no shared app secret', () => {
         expect(hits).toEqual([]);
     });
 });
+
+// ABDM credentials live only on the relay (#160). Outside the migrations that
+// created and then cleared them, nothing on the desktop reads or writes them.
+const ABDM_CREDENTIALS = [['abdm', 'client', 'secret'].join('_'), ['abdm', 'client', 'id'].join('_'), ['x-callback', 'token'].join('-')];
+
+describe('no ABDM credentials on the clinic computer', () => {
+    it('appear nowhere in the desktop sources but the migrations', () => {
+        const hits = sources(ROOT)
+            .filter((file) => !/[\\/]schema[\\/]migrations\.ts$/.test(file) && !/\.spec\.ts$/.test(file))
+            .flatMap((file) => {
+                const text = fs.readFileSync(file, 'utf8');
+                return ABDM_CREDENTIALS.filter((word) => text.includes(word)).map((word) => `${path.relative(ROOT, file)}: ${word}`);
+            });
+        expect(hits).toEqual([]);
+    });
+});

@@ -155,7 +155,7 @@ describe('HiuService (consent flow, mock gateway)', () => {
                 updateConsentStatus: records.updateConsentStatus,
                 storeFetchedRecord: records.storeFetchedRecord
             },
-            session: { getSessionToken: async () => ({ token: 'mock', mock: true }), gatewayBaseUrl: () => '' },
+            relay: { isMockMode: () => true },
             keyStore: fakeKeyStore() as any
         });
         return { svc, store: records };
@@ -175,12 +175,10 @@ describe('HiuService (consent flow, mock gateway)', () => {
 
     it('refuses live consent without gateway certification', async () => {
         const { svc } = svcWithStore();
-        (svc as any).deps.session = {
-            getSessionToken: async () => ({ token: 'live', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example'
-        };
+        (svc as any).deps.relay = { isMockMode: () => false };
         await expect(svc.requestConsent({ abhaAddress: 'a@sbx', hiTypes: ['Prescription'] }))
             .rejects.toThrow('not certified');
+        await expect(svc.fetchForConsent(1)).rejects.toThrow('not certified');
     });
 
     it('issues unique mock request ids for rapid requests', async () => {
@@ -211,7 +209,7 @@ describe('HiuService (consent flow, mock gateway)', () => {
                 storeFetchedRecord: (input: any) => input,
                 getPendingInbox: () => pending
             },
-            session: { getSessionToken: async () => ({ token: 'mock', mock: true }), gatewayBaseUrl: () => '' },
+            relay: { isMockMode: () => true },
             keyStore: fakeKeyStore() as any
         });
         expect(svc.reconcilePendingNotifies()).toEqual({ applied: 0, skipped: 1 });

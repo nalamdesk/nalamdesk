@@ -1,21 +1,41 @@
+import * as crypto from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { AbdmAbhaService } from './AbdmAbhaService';
 
-function mockSession() {
-    return { token: 'mock-abdm-token-1', mock: true };
+function mockRelay() {
+    return { isMockMode: () => true, send: vi.fn() };
+}
+
+const { publicKey: ABHA_PUBLIC_KEY, privateKey: ABHA_PRIVATE_KEY } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+});
+
+const decrypt = (value: string) => crypto.privateDecrypt(
+    { key: ABHA_PRIVATE_KEY, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha1' },
+    Buffer.from(value, 'base64')
+).toString('utf8');
+
+/** A paired relay: the certificate route answers with the ABHA key, others from `answers` by path. */
+function liveRelay(answers: Record<string, unknown> = {}, cert: unknown = { publicKey: ABHA_PUBLIC_KEY }) {
+    const send = vi.fn(async (_upstream: string, _method: string, path: string, _body?: unknown) =>
+        (path === '/v3/profile/public/certificate' ? cert : answers[path] ?? {}));
+    return { isMockMode: vi.fn(() => false), send };
 }
 
 describe('AbdmAbhaService (mock gateway)', () => {
     it('validates identifiers before requesting enrollment codes', async () => {
-        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+        const svc = new AbdmAbhaService({ relay: mockRelay() });
         await expect(svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123' }))
             .rejects.toThrow('12 digits');
         await expect(svc.requestEnrollmentOtp({ via: 'mobile', identifier: '12' }))
             .rejects.toThrow('10 to 15 digits');
     });
 
-    it('runs the mock enrollment round trip with any 6-digit code', async () => {
-        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+    it('runs the mock enrollment round trip with any 6-digit code, and never calls the relay', async () => {
+        const relay = mockRelay();
+        const svc = new AbdmAbhaService({ relay });
         const started = await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
         expect(started.txnId.startsWith('mock-txn-')).toBe(true);
         expect(started.mock).toBe(true);
@@ -25,30 +45,39 @@ describe('AbdmAbhaService (mock gateway)', () => {
         expect(created.abhaAddress.endsWith('@sbx')).toBe(true);
         expect(created.name).toBe('Demo Patient');
         expect(created.mock).toBe(true);
+        expect(relay.send).not.toHaveBeenCalled();
+    });
+
+    it('serves the mock when no relay is wired at all', async () => {
+        const svc = new AbdmAbhaService();
+        expect(await svc.lookupAddress('demo.patient@sbx')).toMatchObject({ exists: true, mock: true });
     });
 
     it('rejects short codes before calling the gateway', async () => {
-        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+        const svc = new AbdmAbhaService({ relay: mockRelay() });
         await expect(svc.confirmEnrollmentOtp('mock-txn-1', '12')).rejects.toThrow('6-digit');
+        await expect(svc.confirmEnrollmentOtp('', '482916')).rejects.toThrow('transaction is missing');
     });
 
     it('looks up addresses and reports missing ones', async () => {
-        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+        const svc = new AbdmAbhaService({ relay: mockRelay() });
         const found = await svc.lookupAddress('demo.patient@sbx');
         expect(found).toMatchObject({ exists: true, mock: true });
         const missing = await svc.lookupAddress('unknown.person@sbx');
         expect(missing.exists).toBe(false);
+        await expect(svc.lookupAddress(' ')).rejects.toThrow('Health ID is required');
     });
 
     it('fetches a printable card payload', async () => {
-        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+        const svc = new AbdmAbhaService({ relay: mockRelay() });
         const card = await svc.getCard('demo.patient@sbx');
         expect(card).toMatchObject({ abhaAddress: 'demo.patient@sbx', mock: true });
         expect(card.name).toBeTruthy();
+        await expect(svc.getCard('')).rejects.toThrow('Health ID is required');
     });
 
     it('runs the mock profile-login round trip with any 6-digit code', async () => {
-        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+        const svc = new AbdmAbhaService({ relay: mockRelay() });
         await expect(svc.requestLoginOtp('')).rejects.toThrow('Health ID is required');
         const started = await svc.requestLoginOtp('asha.worker@sbx');
         expect(started.txnId.startsWith('mock-login-')).toBe(true);
@@ -63,288 +92,119 @@ describe('AbdmAbhaService (mock gateway)', () => {
     });
 
     it('falls back to the profile payload for unknown mock transactions', async () => {
-        const svc = new AbdmAbhaService({ getSessionToken: async () => mockSession() });
+        const svc = new AbdmAbhaService({ relay: mockRelay() });
         const verified = await svc.verifyLoginOtp('mock-login-unknown', '482916');
         expect(verified.abhaAddress).toBe('demo.patient@sbx');
     });
+});
 
-    it('sends profile-login calls to the login endpoints with the session token', async () => {
-        const { generateKeyPairSync } = await import('node:crypto');
-        const { publicKey } = generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' }
+describe('AbdmAbhaService (through the relay)', () => {
+    it('sends every call to the ABHA host through the relay, RSA-encrypting the identifier', async () => {
+        const relay = liveRelay({
+            '/v3/enrollment/enrol/byAadhaar': { txnId: 'live-txn-1' },
+            '/v3/enrollment/enrol/verify': { abhaAddress: 'real@abdm', name: 'Real Patient' }
         });
-        const fetchFn = vi.fn()
-            .mockResolvedValueOnce({ ok: true, json: async () => ({ publicKey }) })
-            .mockResolvedValueOnce({ ok: true, json: async () => ({ txnId: 'live-txn-9' }) })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({
-                    ABHAProfile: { preferredAbhaAddress: 'real@abdm', firstName: 'Real', lastName: 'Patient' }
-                })
-            });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example',
-            fetchFn
+        const svc = new AbdmAbhaService({ relay });
+
+        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '1234 5678 9012' });
+        expect(started).toEqual({ txnId: 'live-txn-1', mock: false });
+        const [upstream, method, path, body] = relay.send.mock.calls[1]!;
+        expect([upstream, method, path]).toEqual(['abha', 'POST', '/v3/enrollment/enrol/byAadhaar']);
+        expect(decrypt((body as any).aadhaar)).toBe('123456789012');
+        expect(relay.send.mock.calls[0]!.slice(0, 3)).toEqual(['abha', 'GET', '/v3/profile/public/certificate']);
+
+        expect(await svc.confirmEnrollmentOtp('live-txn-1', '482916')).toEqual({ abhaAddress: 'real@abdm', name: 'Real Patient', mock: false });
+    });
+
+    it('encrypts mobile enrollment and refuses an answer without a transaction', async () => {
+        const relay = liveRelay({ '/v3/enrollment/enrol/byMobile': {} });
+        const svc = new AbdmAbhaService({ relay });
+        await expect(svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' })).rejects.toThrow('did not return a transaction');
+        expect(decrypt((relay.send.mock.calls[1]![3] as any).mobile)).toBe('9876543210');
+    });
+
+    it('runs profile login with an encrypted login ID and OTP', async () => {
+        const relay = liveRelay({
+            '/v3/profile/login/request/otp': { txnId: 'live-txn-9' },
+            '/v3/profile/login/verify': { ABHAProfile: { preferredAbhaAddress: 'real@abdm', firstName: 'Real', lastName: 'Patient' } }
         });
-        await svc.requestLoginOtp('real@abdm');
-        expect(fetchFn).toHaveBeenCalledWith(
-            expect.stringContaining('/v3/profile/login/request/otp'),
-            expect.objectContaining({
-                headers: expect.objectContaining({ Authorization: 'Bearer live-token' }),
-                body: expect.stringContaining('abha-login')
-            })
-        );
+        const svc = new AbdmAbhaService({ relay });
+
+        expect(await svc.requestLoginOtp('real@abdm')).toEqual({ txnId: 'live-txn-9', mock: false });
+        const login = relay.send.mock.calls[1]![3] as any;
+        expect(login).toMatchObject({ scope: ['abha-login'], loginHint: 'abha-number', otpSystem: 'abdm' });
+        expect(decrypt(login.loginId)).toBe('real@abdm');
+
         const verified = await svc.verifyLoginOtp('live-txn-9', '482916');
-        expect(verified).toMatchObject({ abhaAddress: 'real@abdm', name: 'Real Patient', mock: false });
-        expect(fetchFn).toHaveBeenLastCalledWith(
-            expect.stringContaining('/v3/profile/login/verify'),
-            expect.objectContaining({ body: expect.stringContaining('authData') })
-        );
-    });
-    it('sends ABHA calls to the ABHA host, not the gateway', async () => {
-        const fetchFn = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ exists: true, name: 'Real Patient' }) });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example',
-            abhaBaseUrl: () => 'https://abha.example/abha/api',
-            fetchFn
-        });
-        await svc.lookupAddress('real@abdm');
-        expect(fetchFn.mock.calls[0][0]).toBe('https://abha.example/abha/api/v3/profile/account/verify');
+        expect(verified).toEqual({ abhaAddress: 'real@abdm', name: 'Real Patient', mock: false });
+        expect(decrypt((relay.send.mock.calls[2]![3] as any).authData.otp.otpValue)).toBe('482916');
     });
 
-    it('sends live calls with the session token when credentials exist', async () => {
-        const fetchFn = vi.fn().mockResolvedValue({
-            ok: true,
-            json: async () => ({ exists: true, name: 'Real Patient' })
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example',
-            fetchFn
-        });
-        const found = await svc.lookupAddress('real@abdm');
-        expect(found).toMatchObject({ exists: true, name: 'Real Patient', mock: false });
-        expect(fetchFn).toHaveBeenCalledWith(
-            expect.stringContaining('/v3/profile/account/verify'),
-            expect.objectContaining({
-                headers: expect.objectContaining({ Authorization: 'Bearer live-token' })
-            })
-        );
+    it('reads a login answer that lists addresses instead of a preferred one', async () => {
+        const svc = new AbdmAbhaService({ relay: liveRelay({ '/v3/profile/login/verify': { ABHAProfile: { phrAddress: ['first@abdm'], name: 'Asha' } } }) });
+        expect(await svc.verifyLoginOtp('t', '482916')).toEqual({ abhaAddress: 'first@abdm', name: 'Asha', mock: false });
+
+        const empty = new AbdmAbhaService({ relay: liveRelay({ '/v3/profile/login/verify': {} }) });
+        await expect(empty.verifyLoginOtp('t', '482916')).rejects.toThrow('could not verify');
+        await expect(new AbdmAbhaService({ relay: liveRelay({ '/v3/profile/login/request/otp': {} }) }).requestLoginOtp('a@abdm'))
+            .rejects.toThrow('did not return a transaction');
     });
 
-    it('RSA-encrypts live enrollment identifiers with the gateway key', async () => {
-        const { generateKeyPairSync, privateDecrypt, constants } = await import('node:crypto');
-        const { publicKey, privateKey } = generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    it('looks up an address and fetches the card with a GET the relay allows', async () => {
+        const relay = liveRelay({
+            '/v3/profile/account/verify': { exists: false },
+            '/v3/profile/account/abha-card': { name: 'Real', gender: 'M', dob: '1990-01-01', image: 'AAAA', mimeType: 'image/png' }
         });
-        const calls: any[] = [];
-        const fetchFn = vi.fn().mockImplementation(async (url: string, init: any) => {
-            calls.push([url, init]);
-            if (String(url).endsWith('/v3/profile/public/certificate')) {
-                return { ok: true, json: async () => ({ publicKey }) };
-            }
-            return { ok: true, json: async () => ({ txnId: 'live-txn-1' }) };
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example',
-            fetchFn
-        });
+        const svc = new AbdmAbhaService({ relay });
 
-        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
-        expect(started).toMatchObject({ txnId: 'live-txn-1', mock: false });
+        expect(await svc.lookupAddress('real@abdm')).toEqual({ exists: false, name: '', mock: false });
+        expect(relay.send).toHaveBeenLastCalledWith('abha', 'POST', '/v3/profile/account/verify', { abhaAddress: 'real@abdm' });
 
-        const enrolCall = calls.find(([url]) => String(url).endsWith('/byAadhaar'));
-        const sent = JSON.parse(enrolCall[1].body).aadhaar;
-        expect(sent).not.toContain('123456789012');
-        const decrypted = privateDecrypt(
-            { key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha1' },
-            Buffer.from(sent, 'base64')
-        ).toString('utf8');
-        expect(decrypted).toBe('123456789012');
+        expect(await svc.getCard('real@abdm')).toEqual({
+            abhaAddress: 'real@abdm', name: 'Real', gender: 'M', dateOfBirth: '1990-01-01', imageBase64: 'AAAA', mimeType: 'image/png', mock: false
+        });
+        expect(relay.send).toHaveBeenLastCalledWith('abha', 'GET', '/v3/profile/account/abha-card', undefined);
     });
 
-    it('fetches the gateway certificate once across enrollments', async () => {
-        const { generateKeyPairSync } = await import('node:crypto');
-        const { publicKey } = generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        });
-        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
-            if (String(url).endsWith('/v3/profile/public/certificate')) {
-                return { ok: true, json: async () => ({ publicKey }) };
-            }
-            return { ok: true, json: async () => ({ txnId: 'live-txn-9' }) };
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example',
-            fetchFn
-        });
+    it('fetches the certificate once a day, and again after invalidation', async () => {
+        let now = 1_000;
+        const relay = liveRelay({ '/v3/enrollment/enrol/byMobile': { txnId: 't' } });
+        const svc = new AbdmAbhaService({ relay, nowMs: () => now });
+        const certCalls = () => relay.send.mock.calls.filter((call) => call[2] === '/v3/profile/public/certificate').length;
 
         await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
-        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876500001' });
-        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/profile/public/certificate'))).toHaveLength(1);
-    });
-
-    it('fails plainly when the gateway certificate is unusable', async () => {
-        const fetchFn = vi.fn().mockResolvedValue({
-            ok: true,
-            json: async () => ({ publicKey: 'not-a-key' })
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example',
-            fetchFn
-        });
-        await expect(svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' }))
-            .rejects.toThrow('usable public key');
-    });
-
-    it('uses one session snapshot so a mid-flight flip cannot leak plaintext', async () => {
-        const fetchFn = vi.fn().mockResolvedValue({
-            ok: true,
-            json: async () => ({ txnId: 'should-not-happen' })
-        });
-        let calls = 0;
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => {
-                calls += 1;
-                return calls === 1 ? { token: 'mock-token', mock: true } : { token: 'live-token', mock: false };
-            },
-            gatewayBaseUrl: () => 'https://gateway.example',
-            fetchFn
-        });
-        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
-        expect(started.mock).toBe(true);
-        expect(fetchFn).not.toHaveBeenCalled();
-    });
-
-    it('scopes the certificate cache to the gateway environment', async () => {
-        const { generateKeyPairSync } = await import('node:crypto');
-        const keypair = (env: string) => generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        });
-        const sandboxKeys = keypair('sandbox');
-        const stagingKeys = keypair('staging');
-        let env = 'sandbox';
-        const certCalls: string[] = [];
-        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
-            if (String(url).endsWith('/v3/profile/public/certificate')) {
-                certCalls.push(env);
-                const keys = env === 'sandbox' ? sandboxKeys : stagingKeys;
-                return { ok: true, json: async () => ({ publicKey: keys.publicKey }) };
-            }
-            return { ok: true, json: async () => ({ txnId: 'live-txn-env' }) };
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => `https://${env}.example`,
-            fetchFn
-        });
-
-        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
-        env = 'staging';
-        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
-        expect(certCalls).toEqual(['sandbox', 'staging']);
-    });
-
-    it('refetches the certificate after explicit invalidation', async () => {
-        const { generateKeyPairSync } = await import('node:crypto');
-        const { publicKey } = generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        });
-        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
-            if (String(url).endsWith('/v3/profile/public/certificate')) {
-                return { ok: true, json: async () => ({ publicKey }) };
-            }
-            return { ok: true, json: async () => ({ txnId: 'live-txn-inv' }) };
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => 'https://gateway.example',
-            fetchFn
-        });
-
         await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        expect(certCalls()).toBe(1);
+
         svc.invalidateCert();
         await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
-        expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith('/v3/profile/public/certificate'))).toHaveLength(2);
+        expect(certCalls()).toBe(2);
+
+        now += 25 * 60 * 60 * 1000;
+        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        expect(certCalls()).toBe(3);
     });
 
-    it('pins token, mode, and gateway URL for the whole operation', async () => {
-        const { generateKeyPairSync } = await import('node:crypto');
-        const { publicKey } = generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        });
-        let env = 'sandbox';
-        const urls: string[] = [];
-        const fetchFn = vi.fn().mockImplementation(async (url: string, init: any) => {
-            urls.push(String(url));
-            if (String(url).endsWith('/v3/profile/public/certificate')) {
-                // Flip the environment while the operation is in flight.
-                env = 'staging';
-                return { ok: true, json: async () => ({ publicKey }) };
-            }
-            return { ok: true, json: async () => ({ txnId: 'live-txn-pinned' }) };
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: async () => ({ token: 'live-token', mock: false }),
-            gatewayBaseUrl: () => `https://${env}.example`,
-            fetchFn
-        });
-
-        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
-
-        expect(started).toMatchObject({ txnId: 'live-txn-pinned', mock: false });
-        expect(urls).toHaveLength(2);
-        expect(urls.every((u) => u.startsWith('https://sandbox.example'))).toBe(true);
+    it('fails plainly when the certificate is unusable', async () => {
+        const svc = new AbdmAbhaService({ relay: liveRelay({}, { publicKey: 'nope' }) });
+        await expect(svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' })).rejects.toThrow('usable public key');
     });
 
-    it('captures the gateway URL before awaiting the session', async () => {
-        const { generateKeyPairSync } = await import('node:crypto');
-        const { publicKey } = generateKeyPairSync('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding: { type: 'spki', format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        });
-        let env = 'sandbox';
-        let releaseSession!: (value: { token: string; mock: boolean }) => void;
-        const urls: string[] = [];
-        const fetchFn = vi.fn().mockImplementation(async (url: string) => {
-            urls.push(String(url));
-            if (String(url).endsWith('/v3/profile/public/certificate')) {
-                return { ok: true, json: async () => ({ publicKey }) };
-            }
-            return { ok: true, json: async () => ({ txnId: 'live-txn-atomic' }) };
-        });
-        const svc = new AbdmAbhaService({
-            getSessionToken: () => new Promise((resolve) => { releaseSession = resolve as any; }),
-            gatewayBaseUrl: () => `https://${env}.example`,
-            fetchFn
-        });
+    it('decides mock or relay once per operation, so pairing mid-flight never sends plaintext', async () => {
+        const relay = liveRelay({ '/v3/enrollment/enrol/byMobile': { txnId: 't' } });
+        relay.isMockMode.mockReturnValueOnce(true);
+        const svc = new AbdmAbhaService({ relay });
 
-        const pending = svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123456789012' });
-        await Promise.resolve();
-        // Flip the environment while the session request is still suspended.
-        env = 'staging';
-        releaseSession({ token: 'live-token', mock: false });
-        const started = await pending;
+        const started = await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
 
-        expect(started).toMatchObject({ txnId: 'live-txn-atomic', mock: false });
-        expect(urls.length).toBeGreaterThan(0);
-        expect(urls.every((u) => u.startsWith('https://sandbox.example'))).toBe(true);
+        expect(started.mock).toBe(true);
+        expect(relay.send).not.toHaveBeenCalled();
+        expect(relay.isMockMode).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes relay errors through to the desk', async () => {
+        const relay = { isMockMode: () => false, send: vi.fn(async () => { throw new Error('ABDM request rejected (HTTP 403 (path_not_allowed)).'); }) };
+        const svc = new AbdmAbhaService({ relay });
+        await expect(svc.lookupAddress('real@abdm')).rejects.toThrow('HTTP 403');
     });
 });

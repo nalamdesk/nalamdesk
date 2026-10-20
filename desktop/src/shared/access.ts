@@ -85,7 +85,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
             'getDemoSeedState', 'seedDemoData', 'clearDemoData',
             'getSettings', 'saveSettings', 'getAuditLogs',
             'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
-            'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity', 'abdmSimulateShare'
+            'abdmSaveConfig', 'abdmTestConnectivity', 'abdmSimulateShare'
         ]
     }
 ];
@@ -124,7 +124,7 @@ export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
     'saveRole', 'deleteRole',
     'getDemoSeedState', 'seedDemoData', 'clearDemoData',
     'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
-    'saveSettings', 'abdmSaveConfig', 'abdmSetSecret',
+    'saveSettings', 'abdmSaveConfig',
     'abdmTestConnectivity', 'abdmSimulateShare'
 ]);
 

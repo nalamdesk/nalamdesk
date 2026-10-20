@@ -16,7 +16,7 @@ import { requireExistingRestoreAuthorization } from './services/RestoreAuthoriza
 import { CrashService } from './services/CrashService';
 import { SecurityService } from './services/SecurityService';
 import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './services/DeviceKeyStore';
-import { AbdmSessionService, isAbdmGatewayEnv } from './services/AbdmSessionService';
+import { AbdmRelayService, abdmConfigView } from './services/AbdmRelayService';
 import { AbdmAbhaService } from './services/AbdmAbhaService';
 import { HiuService } from './services/HiuService';
 import { FideliusService, parseKeyMaterial } from './services/FideliusService';
@@ -159,18 +159,14 @@ autoUpdater.logger = log;
 // Services
 const securityService = new SecurityService(new ElectronSafeStorageDeviceKeyStore());
 const databaseService = new DatabaseService();
-const abdmSessionService = new AbdmSessionService({
+// ABDM goes through the relay as the paired facility (#160); this computer
+// holds no ABDM credentials. Unpaired, the flows run against the mock gateway.
+const abdmRelayService = new AbdmRelayService({
     getSettings: () => databaseService.getSettings(),
-    getSecretProtected: () => databaseService.getAbdmSecretProtected(),
-    saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
-    saveSecretProtected: (value) => databaseService.saveAbdmSecretProtected(value),
-    keyStore: new ElectronSafeStorageDeviceKeyStore()
+    relay: () => cloudLink.abdmRelay(),
+    pairedHfrId: () => cloudLink.pairing.status().hfrId ?? null
 });
-const abdmAbhaService = new AbdmAbhaService({
-    getSessionToken: () => abdmSessionService.getSessionToken(),
-    gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl(),
-    abhaBaseUrl: () => abdmSessionService.abhaBaseUrl()
-});
+const abdmAbhaService = new AbdmAbhaService({ relay: abdmRelayService });
 const hiuService = new HiuService({
     getSettings: () => databaseService.getSettings(),
     getHiuPrivateProtected: () => databaseService.getHiuPrivateProtected(),
@@ -187,10 +183,7 @@ const hiuService = new HiuService({
         storeFetchedRecord: (input, actingUserId) => databaseService.storeFetchedRecord(input, actingUserId),
         getPendingInbox: () => databaseService.getPendingInbox()
     },
-    session: {
-        getSessionToken: () => abdmSessionService.getSessionToken(),
-        gatewayBaseUrl: () => abdmSessionService.gatewayBaseUrl()
-    }
+    relay: abdmRelayService
 });
 const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
@@ -207,7 +200,10 @@ const cloudLink: CloudLink = new CloudLink({
     appVersion: app.getVersion(),
     baseUrl: (audience) => getCloudServiceUrl(audience, stampedIdentity),
     onNewRequests: (count) => notifyRenderer('cloud:newRequests', { count }),
-    onPairingChange: (status) => notifyRenderer('cloud:pairingChanged', status),
+    onPairingChange: (status) => {
+        abdmAbhaService.invalidateCert();
+        notifyRenderer('cloud:pairingChanged', status);
+    },
     onMailboxChange: () => notifyRenderer('cloud:pairingChanged', cloudStatus()),
     onAbdmItems: () => drainAbdmMailbox(),
     // A restore drains cloud work before replacing the database, and refuses it after.
@@ -241,7 +237,9 @@ if (!fs.existsSync(staticPath)) {
 const apiServer = new ApiServer(
     databaseService,
     staticPath,
-    isDev ? getDevUiProxyUrl() : undefined
+    isDev ? getDevUiProxyUrl() : undefined,
+    // LAN browsers share the desktop's relay connection and HIU identity.
+    { relay: abdmRelayService, abha: abdmAbhaService, hiu: hiuService }
 );
 const sessionService = new SessionService();
 const backupService = new BackupService(databaseService, googleDriveService, securityService, userDataPath, {
@@ -1236,38 +1234,17 @@ handleGuardedDb('db:saveSettings', async (_, settings) => {
 
 // ABDM gateway IPC handlers. Reads are open to any authenticated user (same
 // posture as settings reads); writes and connectivity checks are admin-only.
-// The plaintext secret never leaves the main process: readers only learn
-// whether one is stored.
+// No ABDM secret exists on this computer: the relay holds the credentials.
 handleGuardedDb('db:abdmGetConfig', () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
-    return {
-        gateway_env: abdmSessionService.gatewayEnv(),
-        client_id: abdmSessionService.hasClientId()
-            ? databaseService.getSettings()?.abdm_client_id || ''
-            : '',
-        has_secret: abdmSessionService.hasStoredSecret(),
-        mock: abdmSessionService.isMockMode(),
-        hip_id: databaseService.getSettings()?.abdm_hip_id || '',
-        counter_id: databaseService.getSettings()?.abdm_counter_id || '',
-        hfr_id: databaseService.getSettings()?.abdm_hfr_id || '',
-        hpr_id: databaseService.getSettings()?.abdm_hpr_id || '',
-        hip_endpoint: databaseService.getSettings()?.abdm_hip_endpoint || '',
-        has_recipient_key: !!databaseService.getSettings()?.abdm_recipient_key
-    };
+    return abdmConfigView(databaseService.getSettings(), abdmRelayService);
 });
 handleGuardedDb('db:abdmSaveConfig', (_, config) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (user.role !== 'admin') throw new Error('Forbidden');
     const patch: Record<string, unknown> = {};
-    if (config && typeof config['gateway_env'] === 'string'
-        && isAbdmGatewayEnv(config['gateway_env'])) {
-        patch['abdm_gateway_env'] = config['gateway_env'];
-    }
-    if (config && typeof config['client_id'] === 'string') {
-        patch['abdm_client_id'] = (config['client_id'] as string).trim();
-    }
     if (config && typeof config['hip_id'] === 'string') {
         patch['abdm_hip_id'] = (config['hip_id'] as string).trim();
     }
@@ -1299,23 +1276,13 @@ handleGuardedDb('db:abdmSaveConfig', (_, config) => {
     if (config && config['mock'] !== undefined) {
         patch['abdm_mock'] = config['mock'] ? 1 : 0;
     }
-    const result = databaseService.saveSettings(patch);
-    abdmSessionService.invalidate();
-    abdmAbhaService.invalidateCert();
-    return result;
-});
-handleGuardedDb('db:abdmSetSecret', (_, payload) => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    const secret = payload && typeof payload.secret === 'string' ? payload.secret : '';
-    return abdmSessionService.saveClientSecret(secret);
+    return databaseService.saveSettings(patch);
 });
 handleGuardedDb('db:abdmTestConnectivity', async () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (user.role !== 'admin') throw new Error('Forbidden');
-    return abdmSessionService.testConnectivity();
+    return abdmRelayService.testConnectivity();
 });
 
 // ABDM health-ID IPC handlers. Front-desk roles only (doctor, receptionist,
@@ -1491,7 +1458,7 @@ handleGuardedDb('db:abdmSimulateShare', () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (user.role !== 'admin') throw new Error('Forbidden');
-    if (!abdmSessionService.isMockMode()) {
+    if (!abdmRelayService.isMockMode()) {
         throw new Error('Demo scans are only available while the mock gateway is active.');
     }
     const demo = Math.floor(1000 + Math.random() * 9000);

@@ -1,11 +1,8 @@
-import { AbdmSessionService } from './AbdmSessionService';
+import { AbdmRelayService, type AbdmUpstream } from './AbdmRelayService';
 
 export interface AbdmAbhaDeps {
-    getSessionToken?: () => Promise<{ token: string; mock: boolean }>;
-    gatewayBaseUrl?: () => string;
-    /** ABHA v3 host; falls back to the gateway base URL when not supplied. */
-    abhaBaseUrl?: () => string;
-    fetchFn?: (url: string, init?: any) => Promise<any>;
+    /** The relay connection; without one every call is served by the mock. */
+    relay?: Pick<AbdmRelayService, 'isMockMode' | 'send'>;
     nowMs?: () => number;
 }
 
@@ -39,6 +36,11 @@ const PATHS = {
     authCert: '/v3/profile/public/certificate'
 };
 
+// Every ABHA call goes to the ABHA host through the relay.
+const UPSTREAM: AbdmUpstream = 'abha';
+
+type Snapshot = { mock: boolean };
+
 // Gateway certificates rotate infrequently; refetch at most daily.
 const CERT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -46,11 +48,12 @@ const MOCK_OTP_HINT = 'Mock gateway: any 6-digit code is accepted.';
 
 /**
  * ABHA enrollment, verification, and card fetch (main process).
- * Authenticates through AbdmSessionService; without credentials every call is
- * served by the sandbox-shaped mock responder, flagged on every result.
+ * Live calls go through the NalamDesk relay, which adds the ABDM token (#160);
+ * until this computer is paired every call is served by the sandbox-shaped
+ * mock responder, flagged on every result.
  */
 export class AbdmAbhaService {
-    private certCache: { pem: string; baseUrl: string; fetchedAt: number } | null = null;
+    private certCache: { pem: string; fetchedAt: number } | null = null;
     // Mock-mode login transactions, keyed so verification links back to the
     // address the code was requested for (the mock responder is stateless).
     private mockLoginTxns = new Map<string, string>();
@@ -61,22 +64,13 @@ export class AbdmAbhaService {
         return this.deps.nowMs ? this.deps.nowMs() : Date.now();
     }
 
-    // One operation snapshot per call: token, mock flag, and gateway URL are
-    // resolved together so a configuration flip mid-flight can never mix one
-    // environment's credentials with another's endpoint. The URL is captured
-    // synchronously before any await, so even a flip during session
-    // resolution cannot split the snapshot.
-    private async resolveSnapshot(): Promise<{ token: string; mock: boolean; baseUrl: string }> {
-        const resolveBase = this.deps.abhaBaseUrl ?? this.deps.gatewayBaseUrl;
-        const baseUrl = resolveBase ? resolveBase() : '';
-        const getSession = this.deps.getSessionToken;
-        const session = getSession
-            ? await getSession()
-            : { token: `mock-abdm-token-${this.nowMs()}`, mock: true };
-        return { ...session, baseUrl };
+    // Mock or relay is decided once per operation, so pairing changing
+    // mid-flight can never send a mock-shaped (unencrypted) value to ABDM.
+    private resolveSnapshot(): Snapshot {
+        return { mock: this.deps.relay ? this.deps.relay.isMockMode() : true };
     }
 
-    /** Drops the cached gateway certificate (call when gateway config changes). */
+    /** Drops the cached ABHA certificate (call when pairing changes). */
     invalidateCert(): void {
         this.certCache = null;
     }
@@ -84,39 +78,21 @@ export class AbdmAbhaService {
     private async authorized(
         path: string,
         body: unknown,
-        method = 'POST',
-        snapshot?: { token: string; mock: boolean; baseUrl: string }
+        method: 'GET' | 'POST' = 'POST',
+        snapshot: Snapshot = this.resolveSnapshot()
     ): Promise<{ json: any; mock: boolean }> {
-        const active = snapshot ?? await this.resolveSnapshot();
-        if (active.mock) {
+        if (snapshot.mock || !this.deps.relay) {
             return { json: this.mockRespond(path, body), mock: true };
         }
-        const fetchFn = this.deps.fetchFn || fetch;
-        let response: any;
-        try {
-            response = await fetchFn(`${active.baseUrl}${path}`, {
-                method,
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${active.token}` },
-                body: method === 'GET' ? undefined : JSON.stringify(body || {})
-            });
-        } catch (error) {
-            throw new Error(`ABDM gateway is unreachable: ${error instanceof Error ? error.message : String(error)}`);
-        }
-        if (!response || !response.ok) {
-            throw new Error(`ABDM request rejected (HTTP ${response?.status || 'unknown'}).`);
-        }
-        return { json: await response.json(), mock: false };
+        const json = await this.deps.relay.send(UPSTREAM, method, path, method === 'GET' ? undefined : body || {});
+        return { json, mock: false };
     }
 
     // Fetches (and caches) the ABHA public key used to encrypt enrollment
-    // identifiers on live calls. The cache is keyed by ABHA base URL so an
-    // environment switch never reuses the previous environment's key. Mock
-    // sessions never reach this path.
-    private async getGatewayPublicKey(
-        snapshot: { token: string; mock: boolean; baseUrl: string }
-    ): Promise<string> {
+    // identifiers on live calls. Mock sessions never reach this path.
+    private async getGatewayPublicKey(snapshot: Snapshot): Promise<string> {
         const cached = this.certCache;
-        if (cached && cached.baseUrl === snapshot.baseUrl && this.nowMs() - cached.fetchedAt < CERT_CACHE_TTL_MS) {
+        if (cached && this.nowMs() - cached.fetchedAt < CERT_CACHE_TTL_MS) {
             return cached.pem;
         }
         const { json } = await this.authorized(PATHS.authCert, null, 'GET', snapshot);
@@ -124,7 +100,7 @@ export class AbdmAbhaService {
         if (!pem.includes('BEGIN PUBLIC KEY')) {
             throw new Error('ABDM gateway did not return a usable public key.');
         }
-        this.certCache = { pem, baseUrl: snapshot.baseUrl, fetchedAt: this.nowMs() };
+        this.certCache = { pem, fetchedAt: this.nowMs() };
         return pem;
     }
 
@@ -142,10 +118,10 @@ export class AbdmAbhaService {
         // Live identifiers travel RSA-encrypted; mock traffic stays plaintext.
         // The session is resolved once so the decision and the request agree.
         const field = via === 'mobile' ? 'mobile' : 'aadhaar';
-        const snapshot = await this.resolveSnapshot();
+        const snapshot = this.resolveSnapshot();
         const value = snapshot.mock
             ? identifier
-            : AbdmSessionService.encryptWithPublicKey(identifier, await this.getGatewayPublicKey(snapshot));
+            : AbdmRelayService.encryptWithPublicKey(identifier, await this.getGatewayPublicKey(snapshot));
         const { json, mock } = await this.authorized(path, { [field]: value }, 'POST', snapshot);
         const txnId = String(json?.txnId || json?.txn_id || '');
         if (!txnId) throw new Error('ABDM enrollment did not return a transaction.');
@@ -170,10 +146,10 @@ export class AbdmAbhaService {
         // Documented v3 envelope (scope/loginHint/loginId/otpSystem). The
         // address-as-loginId mapping must be reconfirmed against the sandbox
         // at credential time; only mock traffic is exercised here.
-        const snapshot = await this.resolveSnapshot();
+        const snapshot = this.resolveSnapshot();
         const loginId = snapshot.mock
             ? address
-            : AbdmSessionService.encryptWithPublicKey(address, await this.getGatewayPublicKey(snapshot));
+            : AbdmRelayService.encryptWithPublicKey(address, await this.getGatewayPublicKey(snapshot));
         const { json, mock } = await this.authorized(PATHS.loginRequestOtp, {
             scope: ['abha-login'],
             loginHint: 'abha-number',
@@ -191,11 +167,11 @@ export class AbdmAbhaService {
         if (!String(txnId || '').trim()) throw new Error('Login transaction is missing. Request a new code.');
         const code = String(otp || '').replace(/\D/g, '');
         if (code.length !== 6) throw new Error('The 6-digit code is required.');
-        const snapshot = await this.resolveSnapshot();
+        const snapshot = this.resolveSnapshot();
         // ABDM requires RSA-encrypted OTPs on live calls; mock stays plaintext.
         const otpValue = snapshot.mock
             ? code
-            : AbdmSessionService.encryptWithPublicKey(code, await this.getGatewayPublicKey(snapshot));
+            : AbdmRelayService.encryptWithPublicKey(code, await this.getGatewayPublicKey(snapshot));
         const { json, mock } = await this.authorized(PATHS.loginVerify, {
             txnId,
             scope: ['abha-login'],
@@ -238,7 +214,7 @@ export class AbdmAbhaService {
     async getCard(abhaAddress: string): Promise<AbdmCard> {
         const address = String(abhaAddress || '').trim();
         if (!address) throw new Error('Health ID is required.');
-        const { json, mock } = await this.authorized(PATHS.abhaCard, { abhaAddress: address });
+        const { json, mock } = await this.authorized(PATHS.abhaCard, { abhaAddress: address }, 'GET');
         return {
             abhaAddress: address,
             name: String(json?.name || '').trim(),

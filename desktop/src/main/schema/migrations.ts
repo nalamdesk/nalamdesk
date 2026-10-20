@@ -1688,6 +1688,21 @@ export const MIGRATIONS = [
                 db.exec('UPDATE settings SET abdm_callback_secret = NULL');
             } catch (e) { }
         }
+    },
+    {
+        version: 47,
+        up: (db: any) => {
+            console.log('Running Migration v47 (ABDM through the relay)...');
+            // The relay holds the only ABDM credentials (#160): clear the
+            // Client ID and keychain-wrapped secret from existing installs,
+            // with the gateway choice the relay now makes. The mock switch is
+            // reset so a paired computer reaches ABDM unless an admin turns
+            // the mock back on.
+            try {
+                db.exec(`UPDATE settings SET abdm_client_id = NULL, abdm_client_secret_protected = NULL,
+                    abdm_gateway_env = NULL, abdm_mock = NULL`);
+            } catch (e) { }
+        }
     }
 ];
 

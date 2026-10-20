@@ -233,55 +233,27 @@
             </div>
 
             <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
-                <div *ngIf="abdmConfig.mock" class="mb-4 p-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm">
-                    Mock gateway is active — no ABDM credentials are configured yet. Health IDs and bookings keep working offline.
+                <h3 class="text-lg font-medium text-gray-800 mb-2">ABDM Connection</h3>
+                <p class="text-sm text-gray-500 mb-4">NalamDesk Cloud connects this computer to ABDM. No ABDM password is kept on this computer.</p>
+                <div *ngIf="abdmConfig.paired" class="p-3 rounded-lg border border-green-200 bg-green-50 text-green-800 text-sm">
+                    Paired with NalamDesk Cloud as facility <span class="font-mono font-medium">{{ abdmConfig.paired_hfr_id }}</span>.
+                    <span *ngIf="abdmConfig.forced_mock">The mock gateway is on, so ABDM is not being used.</span>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Gateway</label>
-                        <select [(ngModel)]="abdmConfig.gateway_env" (change)="saveAbdmConfig()"
-                            class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 bg-white">
-                            <option value="sandbox">Sandbox (testing)</option>
-                            <option value="staging">Staging</option>
-                            <option value="production">Production (after certification)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
-                        <input [(ngModel)]="abdmConfig.client_id" name="abdm_client_id" placeholder="Issued by the ABDM portal"
-                            class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
-                    </div>
-                </div>
-                <div class="mt-6 flex items-center gap-4">
-                    <button type="button" (click)="saveAbdmConfig()" [disabled]="abdmBusy" class="btn btn-primary px-6">Save Changes</button>
-                    <span *ngIf="abdmSaved" class="text-green-600 text-sm font-medium animate-pulse">✓ Saved successfully!</span>
+                <div *ngIf="!abdmConfig.paired" class="p-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm">
+                    Mock gateway is active. Pair this computer with NalamDesk Cloud under General to reach ABDM. Health IDs and bookings keep working offline.
                 </div>
                 <label class="mt-4 flex items-start gap-2 text-sm text-gray-600 cursor-pointer">
-                    <input type="checkbox" [(ngModel)]="abdmConfig.mock" (change)="saveAbdmConfig()"
+                    <input type="checkbox" [(ngModel)]="abdmConfig.forced_mock" (change)="saveAbdmConfig()"
                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4 mt-0.5">
-                    <span>Use mock gateway (testing). Turn off to talk to the real gateway once the ID and secret are saved.</span>
+                    <span>Use the mock gateway for testing, even while paired.</span>
                 </label>
-            </div>
-
-            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
-                <h3 class="text-lg font-medium text-gray-800 mb-2">Client Secret</h3>
-                <p class="text-sm text-gray-500 mb-4">
-                    Stored only in this device's secure key storage. It is never displayed again.
-                    <span *ngIf="abdmConfig.has_secret" class="font-medium text-green-700">A secret is saved.</span>
-                    <span *ngIf="!abdmConfig.has_secret" class="font-medium text-amber-700">No secret saved yet.</span>
-                </p>
-                <div class="flex flex-col md:flex-row gap-3">
-                    <input [(ngModel)]="abdmSecret" type="password" autocomplete="new-password" placeholder="Paste new secret to replace"
-                        class="flex-1 border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 font-mono text-sm">
-                    <button type="button" (click)="saveAbdmSecret()" [disabled]="abdmBusy || !abdmSecret" class="btn btn-outline w-full md:w-auto">Save Secret</button>
-                </div>
             </div>
 
             <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200">
                 <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                     <div>
                         <h3 class="text-lg font-medium text-gray-800">Connection Test</h3>
-                        <p class="text-sm text-gray-500">Checks a gateway session without touching patient data.</p>
+                        <p class="text-sm text-gray-500">Checks the route to ABDM through NalamDesk Cloud without touching patient data.</p>
                     </div>
                     <button type="button" class="btn btn-outline btn-sm" [disabled]="abdmBusy" (click)="testAbdm()">Test ABDM Connectivity</button>
                 </div>

@@ -10,7 +10,7 @@ import * as http from 'node:http';
 import { loadDevelopmentEnv } from '../shared/load-env';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { hashUrlForPathname } from '../shared/hash-app-path';
-import { AbdmSessionService, isAbdmGatewayEnv } from '../main/services/AbdmSessionService';
+import { AbdmRelayService, abdmConfigView } from '../main/services/AbdmRelayService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
 import { HiuService } from '../main/services/HiuService';
 import { AccessPolicy } from '../main/services/AccessPolicy';
@@ -28,7 +28,7 @@ if (process.env['NODE_ENV'] === 'production' && !process.env['JWT_SECRET']) {
 const JWT_SECRET = process.env['JWT_SECRET'] || crypto.randomBytes(64).toString('hex');
 
 const ABDM_SERVICE_METHODS = new Set([
-    'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
+    'abdmGetConfig', 'abdmSaveConfig', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmTransferBundle', 'abdmHiuGetPublicKey',
@@ -58,7 +58,7 @@ export const ALLOWED_IPC_METHODS = [
     'getPatientSafetyContext',
     'abdmGetShareTokens', 'findPatientByAbha', 'abdmAcceptShareToken',
     'abdmAcceptShareTokenAndCheckIn', 'abdmGetInbox', 'abdmAckInbox', 'abdmTransferBundle',
-    'abdmGetConfig', 'abdmSaveConfig', 'abdmSetSecret', 'abdmTestConnectivity',
+    'abdmGetConfig', 'abdmSaveConfig', 'abdmTestConnectivity',
     'abdmSimulateShare', 'abdmAbhaLookup', 'abdmAbhaRequestOtp',
     'abdmAbhaConfirmOtp', 'abdmAbhaRequestLoginOtp', 'abdmAbhaConfirmLoginOtp',
     'abdmAbhaCard', 'abdmLinkAbha', 'abdmHiuGetPublicKey', 'abdmHiuRequestConsent',
@@ -77,82 +77,58 @@ export const ALLOWED_IPC_METHODS = [
     'replaceConditionMedPresets'
 ];
 
-export class ApiServer {
-    private abdmSessionSvc: AbdmSessionService | null = null;
-    private abdmAbhaSvc: AbdmAbhaService | null = null;
-    private hiuSvc: HiuService | null = null;
+export interface ApiAbdmServices {
+    relay: AbdmRelayService;
+    abha: AbdmAbhaService;
+    hiu: HiuService;
+}
 
-    // ABDM services are built lazily: unit tests that never touch ABDM flows
-    // never pay for (or need) keychain access.
-    private abdmServices() {
-        if (!this.abdmSessionSvc || !this.abdmAbhaSvc || !this.hiuSvc) {
+export class ApiServer {
+    private abdm: ApiAbdmServices | null;
+
+    // Without services from the desktop (tests, the standalone server) ABDM
+    // runs against the mock gateway, built lazily so tests that never touch
+    // ABDM never pay for (or need) keychain access.
+    private abdmServices(): ApiAbdmServices {
+        if (!this.abdm) {
             const db = this.dbService as any;
-            const session = new AbdmSessionService({
-                getSettings: () => db.getSettings(),
-                getSecretProtected: () => db.getAbdmSecretProtected(),
-                saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
-                saveSecretProtected: (value: string) => db.saveAbdmSecretProtected(value),
-                keyStore: new ElectronSafeStorageDeviceKeyStore()
-            });
-            this.abdmSessionSvc = session;
-            this.abdmAbhaSvc = new AbdmAbhaService({
-                getSessionToken: () => session.getSessionToken(),
-                gatewayBaseUrl: () => session.gatewayBaseUrl(),
-                abhaBaseUrl: () => session.abhaBaseUrl()
-            });
-            this.hiuSvc = new HiuService({
-                getSettings: () => db.getSettings(),
-                getHiuPrivateProtected: () => db.getHiuPrivateProtected(),
-                saveHiuPrivateProtected: (value: string) => db.saveHiuPrivateProtected(value),
-                saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
-                saveHiuKeypair: (publicKey: string, protectedPrivate: string) =>
-                    db.saveHiuKeypair(publicKey, protectedPrivate),
-                keyStore: new ElectronSafeStorageDeviceKeyStore(),
-                store: {
-                    createConsentRequest: (input: any, actingUserId?: number) => db.createConsentRequest(input, actingUserId),
-                    getConsentById: (id: number) => db.getConsentById(id),
-                    getConsentByRequestId: (requestId: string) => db.getConsentByRequestId(requestId),
-                    updateConsentStatus: (id: number, status: string, handle?: string | null, actingUserId?: number) =>
-                        db.updateConsentStatus(id, status, handle, actingUserId),
-                    storeFetchedRecord: (input: any, actingUserId?: number) => db.storeFetchedRecord(input, actingUserId),
-                    getPendingInbox: () => db.getPendingInbox()
-                },
-                session: {
-                    getSessionToken: () => session.getSessionToken(),
-                    gatewayBaseUrl: () => session.gatewayBaseUrl()
-                }
-            });
+            const relay = new AbdmRelayService({ getSettings: () => db.getSettings() });
+            this.abdm = {
+                relay,
+                abha: new AbdmAbhaService({ relay }),
+                hiu: new HiuService({
+                    getSettings: () => db.getSettings(),
+                    getHiuPrivateProtected: () => db.getHiuPrivateProtected(),
+                    saveHiuPrivateProtected: (value: string) => db.saveHiuPrivateProtected(value),
+                    saveSettingsPatch: (patch: Record<string, unknown>) => db.saveSettings(patch),
+                    saveHiuKeypair: (publicKey: string, protectedPrivate: string) =>
+                        db.saveHiuKeypair(publicKey, protectedPrivate),
+                    keyStore: new ElectronSafeStorageDeviceKeyStore(),
+                    store: {
+                        createConsentRequest: (input: any, actingUserId?: number) => db.createConsentRequest(input, actingUserId),
+                        getConsentById: (id: number) => db.getConsentById(id),
+                        getConsentByRequestId: (requestId: string) => db.getConsentByRequestId(requestId),
+                        updateConsentStatus: (id: number, status: string, handle?: string | null, actingUserId?: number) =>
+                            db.updateConsentStatus(id, status, handle, actingUserId),
+                        storeFetchedRecord: (input: any, actingUserId?: number) => db.storeFetchedRecord(input, actingUserId),
+                        getPendingInbox: () => db.getPendingInbox()
+                    },
+                    relay
+                })
+            };
         }
-        return { session: this.abdmSessionSvc, abha: this.abdmAbhaSvc, hiu: this.hiuSvc };
+        return this.abdm;
     }
 
     private async invokeAbdmMethod(method: string, args: unknown[], user: any): Promise<unknown> {
-        const { session, abha, hiu } = this.abdmServices();
+        const { relay, abha, hiu } = this.abdmServices();
         const payload = ((args || [])[0] || {}) as Record<string, any>;
         const db = this.dbService as any;
         switch (method) {
-            case 'abdmGetConfig': {
-                const settings = db.getSettings() || {};
-                return {
-                    gateway_env: session.gatewayEnv(),
-                    client_id: session.hasClientId() ? settings.abdm_client_id || '' : '',
-                    has_secret: session.hasStoredSecret(),
-                    mock: session.isMockMode(),
-                    hip_id: settings.abdm_hip_id || '',
-                    counter_id: settings.abdm_counter_id || '',
-                    hfr_id: settings.abdm_hfr_id || '',
-                    hpr_id: settings.abdm_hpr_id || '',
-                    hip_endpoint: settings.abdm_hip_endpoint || '',
-                    has_recipient_key: !!settings.abdm_recipient_key
-                };
-            }
+            case 'abdmGetConfig':
+                return abdmConfigView(db.getSettings(), relay);
             case 'abdmSaveConfig': {
                 const patch: Record<string, unknown> = {};
-                if (typeof payload['gateway_env'] === 'string'
-                    && isAbdmGatewayEnv(payload['gateway_env'])) {
-                    patch['abdm_gateway_env'] = payload['gateway_env'];
-                }
-                if (typeof payload['client_id'] === 'string') patch['abdm_client_id'] = String(payload['client_id']).trim();
                 if (typeof payload['hip_id'] === 'string') patch['abdm_hip_id'] = String(payload['hip_id']).trim();
                 if (typeof payload['counter_id'] === 'string') patch['abdm_counter_id'] = String(payload['counter_id']).trim();
                 for (const key of ['hfr_id', 'hpr_id']) {
@@ -177,17 +153,12 @@ export class ApiServer {
                     }
                 }
                 if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
-                const result = db.saveSettings(patch);
-                session.invalidate();
-                abha.invalidateCert();
-                return result;
+                return db.saveSettings(patch);
             }
-            case 'abdmSetSecret':
-                return session.saveClientSecret(String(payload['secret'] || ''));
             case 'abdmTestConnectivity':
-                return session.testConnectivity();
+                return relay.testConnectivity();
             case 'abdmSimulateShare': {
-                if (!session.isMockMode()) {
+                if (!relay.isMockMode()) {
                     throw new Error('Demo scans are only available while the mock gateway is active.');
                 }
                 const demo = Math.floor(1000 + Math.random() * 9000);
@@ -284,7 +255,8 @@ export class ApiServer {
     private expectedOAuthState: string | null = null;
     private devUiProxyUrl?: string;
 
-    constructor(dbService: DatabaseService, staticPath: string, devUiProxyUrl?: string) {
+    constructor(dbService: DatabaseService, staticPath: string, devUiProxyUrl?: string, abdm?: ApiAbdmServices) {
+        this.abdm = abdm ?? null;
         this.dbService = dbService;
         this.staticPath = staticPath;
         this.devUiProxyUrl = devUiProxyUrl;

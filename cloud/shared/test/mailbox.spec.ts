@@ -98,6 +98,22 @@ describe('DynamoMailbox', () => {
         expect(s3.sent).toHaveLength(1);
     });
 
+    it('retries objects S3 reports it could not delete, and throws if they stay', async () => {
+        const id = newMailboxItemId(NOW);
+        const key = `mailbox/cln_1/${id}`;
+        let failures = 1;
+        const s3 = client(() => (failures-- > 0 ? { Errors: [{ Key: key, Code: 'InternalError' }] } : {}));
+        const mailbox = new DynamoMailbox({ table: 'mail', bucket: 'b', dynamo: client() as never, s3: s3 as never });
+        await mailbox.ack('cln_1', [id]);
+        expect(s3.sent).toHaveLength(2);
+        expect((s3.sent[1] as DeleteObjectsCommand).input.Delete!.Objects).toEqual([{ Key: key }]);
+
+        const stuck = client(() => ({ Errors: [{ Key: key, Code: 'AccessDenied' }] }));
+        const failing = new DynamoMailbox({ table: 'mail', bucket: 'b', dynamo: client() as never, s3: stuck as never });
+        await expect(failing.ack('cln_1', [id])).rejects.toThrow('mailbox_delete_incomplete');
+        expect(stuck.sent).toHaveLength(5);
+    });
+
     it('purges a clinic\'s mail stored before a replacement, and keeps what came after', async () => {
         const old = newMailboxItemId(NOW - 1);
         const fresh = newMailboxItemId(NOW + 1);

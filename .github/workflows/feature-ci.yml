@@ -11,6 +11,10 @@ name: Feature Branch CI
 # - Stacked PR pushes cancel superseded runs (master pushes never cancel:
 #   each merge must validate fully).
 # - Doc/config-only PRs skip CI entirely via paths-ignore.
+# - The repo variable CI_RUNNER (a JSON runs-on value, for example
+#   ["self-hosted","nalamdesk-laptop"]) moves the Linux jobs to a
+#   self-hosted runner and limits master pushes to Linux while it is set.
+#   Delete it to return to GitHub-hosted runners and the full matrix.
 on:
   push:
     branches:
@@ -34,7 +38,7 @@ jobs:
   # ABDM relay (cloud/relay): typecheck, tests and stack synth, ubuntu only.
   relay-check:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./cloud/relay
@@ -66,7 +70,7 @@ jobs:
   # Code shared by the relay and booking API (cloud/shared): signed requests.
   shared-check:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./cloud/shared
@@ -93,7 +97,7 @@ jobs:
   # Core CDK stacks (cloud/core): typecheck, assertions, synth.
   core-check:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./cloud/core
@@ -123,14 +127,16 @@ jobs:
           CDK_DEFAULT_ACCOUNT: '123456789012'
 
   build-check:
-    runs-on: ${{ matrix.os }}
+    # matrix.os stays the logical OS name; the step conditions below use it.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || matrix.os }}
     defaults:
       run:
         working-directory: ./desktop
     strategy:
       matrix:
-        # Full matrix on master (release artifacts); ubuntu-only on PRs.
-        os: ${{ github.event_name == 'push' && fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
+        # Full matrix on master (release artifacts); ubuntu-only on PRs and
+        # while CI_RUNNER points at a self-hosted runner.
+        os: ${{ github.event_name == 'push' && !vars.CI_RUNNER && fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
 
     steps:
       - name: Checkout code
@@ -199,7 +205,7 @@ jobs:
   # ===========================================================================
   sonar-analysis:
     needs: build-check
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./desktop

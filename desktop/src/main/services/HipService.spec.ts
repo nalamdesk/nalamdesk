@@ -21,7 +21,7 @@ const PUSH_URL = 'https://hiu.example.in/data/push';
 
 interface Call { path: string; body: any; headers: Record<string, string> }
 
-async function setup(options: { mock?: boolean; pushOk?: boolean } = {}) {
+async function setup(options: { mock?: boolean; pushOk?: boolean; pushHost?: string[] } = {}) {
     const db = new TestDatabase();
     const store = new DatabaseService();
     store.setDb(db);
@@ -61,6 +61,7 @@ async function setup(options: { mock?: boolean; pushOk?: boolean } = {}) {
     });
     const hip = new HipService({
         store, relay, hipId: () => 'IN3310000001', fetchFn: fetchFn as unknown as typeof fetch,
+        lookupHost: async () => options.pushHost ?? ['93.184.216.34'],
         nowMs: () => NOW, newRequestId: () => `req-${++n}`, newOtp: () => '123456'
     });
     let item = 0;
@@ -127,8 +128,11 @@ describe('HIP discovery and linking from the patient app', () => {
         await deliver(HIP_DISCOVER_PATH, { transactionId: 't3', patient: { id: 'x@sbx', gender: 'F', verifiedIdentifiers: [{ type: 'MOBILE', value: '9876543210' }] } });
         expect(last().body).toMatchObject({ transactionId: 't3', error: { message: 'No matching patient record at this facility.' } });
 
-        await deliver(HIP_DISCOVER_PATH, { transactionId: 't4', patient: { id: 'm@sbx', gender: 'F', yearOfBirth: 1986, unverifiedIdentifiers: [{ type: 'MOBILE', value: '9000000001' }] } });
+        await deliver(HIP_DISCOVER_PATH, { transactionId: 't4', patient: { id: 'm@sbx', gender: 'F', yearOfBirth: 1986, verifiedIdentifiers: [{ type: 'MOBILE', value: '9000000001' }] } });
         expect(last().body.error.message).toContain('More than one patient');
+        // An unverified number never matches a patient.
+        await deliver(HIP_DISCOVER_PATH, { transactionId: 't4b', patient: { id: 'x@sbx', gender: 'M', yearOfBirth: 1990, unverifiedIdentifiers: [{ type: 'MOBILE', value: '9876543210' }] } });
+        expect(last().body.error.message).toContain('No matching patient');
 
         await deliver(HIP_DISCOVER_PATH, { transactionId: 't5', patient: { id: 'm@sbx', yearOfBirth: 1950, verifiedIdentifiers: [{ type: 'MOBILE', value: '9000000001' }] } });
         expect(last().body.error.message).toContain('No matching patient');
@@ -145,6 +149,7 @@ describe('HIP discovery and linking from the patient app', () => {
 
     it('links with the one-time code the desk reads to the patient', async () => {
         const { deliver, last, store } = await setup();
+        await deliver(HIP_DISCOVER_PATH, { transactionId: 'txn-l', patient: { id: 'ravi@sbx' } });
         await deliver(HIP_LINK_INIT_PATH, {
             transactionId: 'txn-l', abhaAddress: 'ravi@sbx',
             patient: [{ referenceNumber: 'ND-1', careContexts: [{ referenceNumber: 'OP-2026-0002' }], hiType: 'OPConsultation', count: 1 }]
@@ -155,7 +160,7 @@ describe('HIP discovery and linking from the patient app', () => {
             transactionId: 'txn-l',
             link: { authenticationType: 'DIRECT', meta: { communicationMedium: 'MOBILE', communicationHint: 'OTP', communicationExpiry: '2026-10-20T10:10:00.000Z' } }
         });
-        const inbox = store.getPendingInbox() as any[];
+        const inbox = (store.getPendingInbox() as any[]).filter((row) => row.kind === 'hip-link-otp');
         expect(inbox.map((row) => [row.kind, JSON.parse(row.payload)])).toEqual([['hip-link-otp', {
             patientName: 'Ravi Kumar', mobile: '+91 98765 43210', abhaAddress: 'ravi@sbx', otp: '123456', expiresAt: '2026-10-20T10:10:00.000Z'
         }]]);
@@ -177,6 +182,7 @@ describe('HIP discovery and linking from the patient app', () => {
 
     it('locks a link after three wrong codes and refuses an expired one', async () => {
         const { deliver, last, store, db } = await setup();
+        await deliver(HIP_DISCOVER_PATH, { transactionId: 't', patient: { id: 'ravi@sbx' } });
         const body = { transactionId: 't', abhaAddress: 'ravi@sbx', patient: { referenceNumber: 'uuid-1', careContexts: [{ referenceNumber: 'OP-2026-0001' }] } };
         await deliver(HIP_LINK_INIT_PATH, body);
         const linkRefNumber = last().body.link.referenceNumber;
@@ -194,13 +200,22 @@ describe('HIP discovery and linking from the patient app', () => {
     });
 
     it('refuses link requests it cannot honour', async () => {
-        const { deliver, last } = await setup();
+        const { deliver, last, db } = await setup();
+        await deliver(HIP_DISCOVER_PATH, { transactionId: 'd', patient: { id: 'ravi@sbx' } });
+        await deliver(HIP_DISCOVER_PATH, { transactionId: 'old', patient: { id: 'ravi@sbx' } });
+        db.prepare('UPDATE abdm_hip_discoveries SET discovered_at = ? WHERE transaction_id = ?').run(NOW - 31 * 60 * 1000, 'old');
+        const context = { careContexts: [{ referenceNumber: 'OP-2026-0001' }] };
         const refusals: Array<[unknown, string]> = [
-            [{ patient: [{ referenceNumber: 'ND-1' }] }, 'names no health ID'],
-            [{ abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1' }, { referenceNumber: 'ND-2' }] }, 'one patient'],
-            [{ abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-404' }] }, 'Patient reference not found'],
-            [{ abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', careContexts: [{ referenceNumber: 'OP-2026-0004' }] }] }, 'Care context reference not found'],
-            [{ abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', careContexts: [] }] }, 'Care context reference not found']
+            [{ transactionId: 'd', patient: [{ referenceNumber: 'ND-1' }] }, 'names no health ID'],
+            [{ transactionId: 'd', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1' }, { referenceNumber: 'ND-2' }] }, 'one patient'],
+            [{ transactionId: 'd', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-404' }] }, 'Patient reference not found'],
+            // Linking must continue a discovery of the same patient under the same health ID.
+            [{ abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', ...context }] }, 'search for your records'],
+            [{ transactionId: 'd', abhaAddress: 'other@sbx', patient: [{ referenceNumber: 'ND-1', ...context }] }, 'search for your records'],
+            [{ transactionId: 'd', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-2', careContexts: [{ referenceNumber: 'OP-2026-0004' }] }] }, 'search for your records'],
+            [{ transactionId: 'old', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', ...context }] }, 'search for your records'],
+            [{ transactionId: 'd', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', careContexts: [{ referenceNumber: 'OP-2026-0004' }] }] }, 'Care context reference not found'],
+            [{ transactionId: 'd', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', careContexts: [] }] }, 'Care context reference not found']
         ];
         for (const [body, message] of refusals) {
             await deliver(HIP_LINK_INIT_PATH, body);
@@ -338,6 +353,38 @@ describe('HIP consent and data transfer', () => {
         });
         expect(fetchFn).not.toHaveBeenCalled();
         expect(calls.at(-1)!.body.notification.statusNotification).toMatchObject({ sessionStatus: 'TRANSFERRED', statusResponses: [] });
+    });
+
+    it('never pushes to a host that resolves to a private address, and refuses redirects', async () => {
+        const { deliver, calls, fetchFn } = await setup({ pushHost: ['93.184.216.34', '10.0.0.7'] });
+        await deliver(HIP_CONSENT_NOTIFY_PATH, granted());
+        await deliver(HIP_HI_REQUEST_PATH, {
+            transactionId: 'txn-p',
+            hiRequest: { consent: { id: 'hip-consent-1' }, dataPushUrl: PUSH_URL, keyMaterial: new FideliusService().generateKeyMaterial().keyMaterial }
+        });
+        expect(fetchFn).not.toHaveBeenCalled();
+        expect(calls.at(-1)!.body.notification.statusNotification).toMatchObject({
+            sessionStatus: 'FAILED', statusResponses: [{ hiStatus: 'ERRORED' }, { hiStatus: 'ERRORED' }]
+        });
+
+        for (const address of ['127.0.0.1', '::1', '::ffff:192.168.1.1', 'fd00::1', '169.254.169.254', 'not-an-ip']) {
+            const blocked = await setup({ pushHost: [address] });
+            await blocked.deliver(HIP_CONSENT_NOTIFY_PATH, granted());
+            await blocked.deliver(HIP_HI_REQUEST_PATH, {
+                transactionId: 'txn-q',
+                hiRequest: { consent: { id: 'hip-consent-1' }, dataPushUrl: PUSH_URL, keyMaterial: new FideliusService().generateKeyMaterial().keyMaterial }
+            });
+            expect(blocked.fetchFn).not.toHaveBeenCalled();
+        }
+
+        const open = await setup({ pushHost: ['2606:2800:220:1::1'] });
+        await open.deliver(HIP_CONSENT_NOTIFY_PATH, granted());
+        await open.deliver(HIP_HI_REQUEST_PATH, {
+            transactionId: 'txn-r',
+            hiRequest: { consent: { id: 'hip-consent-1' }, dataPushUrl: PUSH_URL, keyMaterial: new FideliusService().generateKeyMaterial().keyMaterial }
+        });
+        expect(open.fetchFn).toHaveBeenCalledTimes(2);
+        expect((open.fetchFn.mock.calls[0] as any[])[1]).toMatchObject({ redirect: 'error' });
     });
 
     it('refuses a records request it cannot honour, with the reason', async () => {

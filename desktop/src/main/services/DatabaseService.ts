@@ -1646,6 +1646,15 @@ export class DatabaseService {
             JSON.stringify(row.refs), row.otpHash, row.expiresAt);
     }
 
+    saveHipDiscovery(row: { transactionId: string; abhaAddress: string; patientId: number; discoveredAt: number }) {
+        this.db.prepare(`INSERT OR REPLACE INTO abdm_hip_discoveries (transaction_id, abha_address, patient_id, discovered_at)
+            VALUES (?, ?, ?, ?)`).run(String(row.transactionId), String(row.abhaAddress).toLowerCase(), Number(row.patientId), Number(row.discoveredAt));
+    }
+
+    getHipDiscovery(transactionId: string) {
+        return (this.db.prepare('SELECT * FROM abdm_hip_discoveries WHERE transaction_id = ?').get(String(transactionId || '')) ?? null) as any;
+    }
+
     getHipLinkRequest(linkRef: string) {
         return (this.db.prepare('SELECT * FROM abdm_hip_link_requests WHERE link_ref = ?').get(String(linkRef || '')) ?? null) as any;
     }

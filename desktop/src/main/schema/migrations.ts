@@ -1806,6 +1806,16 @@ export const MIGRATIONS = [
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
             `);
+            // A patient app may only start linking for the patient its
+            // discovery matched, under the same health ID.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS abdm_hip_discoveries (
+                    transaction_id TEXT PRIMARY KEY,
+                    abha_address TEXT NOT NULL,
+                    patient_id INTEGER NOT NULL,
+                    discovered_at INTEGER NOT NULL
+                );
+            `);
             // Linking a visit to the patient's health ID is a clinical act.
             const grants: Record<string, string[]> = { doctor: ['abdmHipLinkVisit'], admin: ['abdmHipLinkVisit'] };
             Object.entries(grants).forEach(([roleName, methods]) => {

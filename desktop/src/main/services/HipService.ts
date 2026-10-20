@@ -1,4 +1,6 @@
 import * as crypto from 'node:crypto';
+import * as dns from 'node:dns';
+import * as net from 'node:net';
 import { buildOpConsultRecord, type EncounterExportInput } from '../../shared/fhir/serializer';
 import { FideliusService, parseKeyMaterial, type FideliusKeyMaterial } from './FideliusService';
 
@@ -29,6 +31,7 @@ const LINK_CARE_CONTEXT = '/hip/v3/link/carecontext';
 // The only record type this clinic writes: one OP consultation per visit.
 const HI_TYPE = 'OPConsultation';
 const OTP_TTL_MS = 10 * 60 * 1000;
+const DISCOVERY_TTL_MS = 30 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 3;
 // Link tokens are reused for a while; a refused one is dropped and asked for again.
 const LINK_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -42,6 +45,8 @@ export interface HipStore {
     saveHipLinks(abhaAddress: string, patientId: number | null, refs: string[], via: 'patient' | 'clinic', actingUserId?: number): void;
     saveHipLinkRequest(row: { linkRef: string; transactionId: string | null; abhaAddress: string; patientId: number; refs: string[]; otpHash: string; expiresAt: number }): void;
     getHipLinkRequest(linkRef: string): any;
+    saveHipDiscovery(row: { transactionId: string; abhaAddress: string; patientId: number; discoveredAt: number }): void;
+    getHipDiscovery(transactionId: string): any;
     updateHipLinkRequest(linkRef: string, patch: { attempts?: number; status?: string }): void;
     saveHipConsent(row: { consentId: string; status: string; abhaAddress: string | null; hiTypes: string[]; refs: string[]; dateFrom: string | null; dateTo: string | null; dataEraseAt: string | null }): void;
     getHipConsent(consentId: string): any;
@@ -74,6 +79,8 @@ export interface HipDeps {
     /** The paired facility ID; it is this clinic's HIP ID. */
     hipId: () => string | null;
     fetchFn?: typeof fetch;
+    /** Resolves a host name to its addresses; records only go to public ones. */
+    lookupHost?: (host: string) => Promise<string[]>;
     nowMs?: () => number;
     newRequestId?: () => string;
     newOtp?: () => string;
@@ -149,10 +156,8 @@ export class HipService {
 
     private discover(body: any): Record<string, unknown> {
         const patient = body?.patient ?? {};
-        const identifiers = [
-            ...(Array.isArray(patient.verifiedIdentifiers) ? patient.verifiedIdentifiers : []),
-            ...(Array.isArray(patient.unverifiedIdentifiers) ? patient.unverifiedIdentifiers : [])
-        ];
+        // Only identifiers the gateway verified may match a patient here.
+        const identifiers = Array.isArray(patient.verifiedIdentifiers) ? patient.verifiedIdentifiers : [];
         const identifier = (type: string) => identifiers.find((item: any) => String(item?.type).toUpperCase() === type)?.value ?? null;
         const abhaAddress = typeof patient.id === 'string' ? patient.id.trim() : '';
         const found = this.deps.store.findHipPatients({
@@ -168,6 +173,10 @@ export class HipService {
         const linked = new Set(abhaAddress ? this.deps.store.getHipLinkedRefs(abhaAddress) : []);
         const contexts = this.deps.store.getHipCareContexts(Number(match.id)).filter((row) => !linked.has(row.care_context_ref));
         if (contexts.length === 0) throw new HipRefusal(1000, 'No new records to link at this facility.');
+        const transactionId = typeof body?.transactionId === 'string' ? body.transactionId.trim() : '';
+        if (transactionId && abhaAddress) {
+            this.deps.store.saveHipDiscovery({ transactionId, abhaAddress, patientId: Number(match.id), discoveredAt: this.nowMs() });
+        }
         return {
             transactionId: body?.transactionId,
             patient: [patientEntry(match, contexts)],
@@ -183,6 +192,13 @@ export class HipService {
         if (references.size !== 1) throw new HipRefusal(1000, 'A link request must name one patient.');
         const patient = this.deps.store.findHipPatientByReference([...references][0] as string);
         if (!patient) throw new HipRefusal(1000, 'Patient reference not found.');
+        // Linking continues the discovery that matched this patient to this health ID.
+        const discovery = typeof body?.transactionId === 'string' ? this.deps.store.getHipDiscovery(body.transactionId) : null;
+        if (!discovery || Number(discovery.patient_id) !== Number(patient.id)
+            || String(discovery.abha_address) !== abhaAddress.toLowerCase()
+            || this.nowMs() - Number(discovery.discovered_at) > DISCOVERY_TTL_MS) {
+            throw new HipRefusal(1000, 'Please search for your records at this facility again before linking.');
+        }
         const known = new Set(this.deps.store.getHipCareContexts(Number(patient.id)).map((row) => row.care_context_ref));
         const refs: string[] = entries.flatMap((entry: any) => (Array.isArray(entry?.careContexts) ? entry.careContexts : []))
             .map((context: any) => String(context?.referenceNumber ?? ''));
@@ -377,6 +393,14 @@ export class HipService {
         };
     }
 
+    /** True when every address the host resolves to is public. */
+    private async publicHost(host: string): Promise<boolean> {
+        const lookup = this.deps.lookupHost
+            ?? (async (name: string) => (await dns.promises.lookup(name, { all: true })).map((entry) => entry.address));
+        const addresses = await lookup(host);
+        return addresses.length > 0 && addresses.every(isPublicAddress);
+    }
+
     /** One FHIR document per care context the consent names and the date range covers. */
     private pagesFor(refs: string[], range: { from: number; to: number }): PushPage[] {
         const pages: PushPage[] = [];
@@ -398,14 +422,18 @@ export class HipService {
     private async transfer(consentId: string, transactionId: string, url: string, requester: FideliusKeyMaterial, pages: PushPage[]): Promise<void> {
         const fidelius = new FideliusService({ nowMs: () => this.nowMs() });
         const fetchFn = this.deps.fetchFn ?? fetch;
+        const reachable = await this.publicHost(new URL(url).hostname).catch(() => false);
         const statuses: Array<{ careContextReference: string; hiStatus: string; description: string }> = [];
         for (const [index, page] of pages.entries()) {
             const plaintext = JSON.stringify(page.bundle);
             const envelope = fidelius.encryptBundle(page.bundle, requester);
             let ok = false;
             try {
+                if (!reachable) throw new Error('The data push host is not public.');
                 const response = await fetchFn(url, {
                     method: 'POST',
+                    // A redirect could point at a private address; records never follow one.
+                    redirect: 'error',
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify({
                         pageNumber: index + 1,
@@ -537,6 +565,25 @@ function clampRange(requested: any, consentFrom: string | null, consentTo: strin
     const to = pick([requested?.to, consentTo], Math.min, Number.POSITIVE_INFINITY);
     if (from > to) throw new HipRefusal(1000, 'The requested dates fall outside the consent.');
     return { from, to };
+}
+
+const PRIVATE_RANGES = (() => {
+    const list = new net.BlockList();
+    for (const [prefix, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+        ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]] as const) {
+        list.addSubnet(prefix, bits, 'ipv4');
+    }
+    for (const [prefix, bits] of [['::', 127], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const) {
+        list.addSubnet(prefix, bits, 'ipv6');
+    }
+    return list;
+})();
+
+function isPublicAddress(address: string): boolean {
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+    const ip = mapped ? mapped[1] : address;
+    const family = net.isIPv4(ip) ? 'ipv4' : net.isIPv6(ip) ? 'ipv6' : null;
+    return family != null && !PRIVATE_RANGES.check(ip, family);
 }
 
 /** Records only ever go to an HTTPS address on a public host name. */

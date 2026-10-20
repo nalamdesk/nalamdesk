@@ -90,7 +90,8 @@ describe('CloudLinkComponent', () => {
         const paired = { state: 'paired' as const, hfrId: 'IN2710000123', label: 'PC', pairedAt: 1 };
         cloud.getStatus.mockResolvedValue(status({ ...paired, mailbox: { doorbell: 'connecting', lastCheckedAt: null } }));
         const fixture = TestBed.createComponent(CloudLinkComponent);
-        await fixture.componentInstance.ngOnInit();
+        fixture.componentInstance.ngOnInit();
+        await settle();
         fixture.detectChanges();
         expect(fixture.nativeElement.textContent).toContain('every 30 minutes');
 

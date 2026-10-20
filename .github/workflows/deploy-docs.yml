@@ -15,7 +15,8 @@ on:
 jobs:
   deploy:
     name: Build and deploy docs
-    runs-on: ubuntu-latest
+    # CI_RUNNER: see feature-ci.yml.
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     concurrency:
       group: "deploy-docs-${{ github.ref }}"
       cancel-in-progress: true
@@ -33,7 +34,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
+          # CI_RUNNER: self-hosted runners keep ~/.npm, so skip the GitHub cache (see feature-ci.yml).
+          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
           cache-dependency-path: cloud/documentation/package-lock.json
 
       - name: Install Dependencies

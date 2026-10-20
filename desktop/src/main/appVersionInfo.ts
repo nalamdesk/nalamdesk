@@ -5,6 +5,9 @@ export interface BuildIdentity {
     version?: string;
     commit?: string | null;
     buildId?: string | null;
+    /** NalamDesk Cloud addresses for this release (#154). */
+    relayUrl?: string | null;
+    bookingApiUrl?: string | null;
 }
 
 export interface AppVersionInfo {

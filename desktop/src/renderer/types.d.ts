@@ -1,6 +1,22 @@
 export { };
 
 declare global {
+    /** This computer's NalamDesk Cloud pairing (#154), as main reports it. */
+    interface CloudStatus {
+        state: 'unpaired' | 'requested' | 'paired' | 'revoked' | 'keys_unavailable';
+        configured: boolean;
+        listingEnabled: boolean;
+        hfrId?: string;
+        label?: string;
+        requestExpiresAt?: number;
+        deviceId?: string;
+        clinicId?: string;
+        pairedAt?: number;
+        revokedReason?: string;
+        keyFingerprint?: string;
+        message?: string;
+    }
+
     interface Window {
         electron: {
             login: (credentials: { username: string, password: string }) => Promise<{ success: boolean; user?: any; error?: string; pendingRecoveryCode?: string }>;
@@ -111,12 +127,19 @@ declare global {
                 onEvent: (callback: (status: any) => void) => () => void;
             };
             cloud: {
-                getStatus: () => Promise<{ enabled: boolean; clinicId: string | null }>;
-                onboard: (data: { name: string; city: string }) => Promise<{ success: boolean; clinicId: string }>;
-                toggle: (enabled: boolean) => Promise<void>;
-                syncNow: () => Promise<any>;
-                publishSlots: (slots: any, dates: string[]) => Promise<any>;
-                getPublishedSlots: (date: string) => Promise<any[]>;
+                getStatus: () => Promise<CloudStatus>;
+                requestPairing: (data: { hfrId: string; label: string }) => Promise<CloudStatus>;
+                cancelPairing: () => Promise<CloudStatus>;
+                activatePairing: (data: { code: string }) => Promise<CloudStatus>;
+                forgetPairing: () => Promise<CloudStatus>;
+                enableListing: (data: { name: string; city: string; specialty?: string }) => Promise<CloudStatus>;
+                disableListing: () => Promise<CloudStatus>;
+                syncNow: () => Promise<{ success: boolean; paired: boolean; saved: number }>;
+                publishSlots: (slots: { date: string; time: string }[], dates: string[]) => Promise<{ published: number }>;
+                getPublishedSlots: (date: string) => Promise<{ slotId: string; date: string; time: string; state: string; ref?: string }[]>;
+                decide: (data: { ref: string; decision: 'accepted' | 'declined'; date?: string; time?: string }) => Promise<{ success: boolean; local?: boolean }>;
+                onPairingChanged: (callback: (status: CloudStatus) => void) => () => void;
+                onNewRequests: (callback: (data: { count: number }) => void) => () => void;
             };
             clipboard: {
                 writeText: (text: string) => Promise<boolean>;

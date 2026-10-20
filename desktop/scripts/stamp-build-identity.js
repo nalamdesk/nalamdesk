@@ -20,7 +20,10 @@ function resolveCommit() {
 const identity = {
     version: pkg.version,
     commit: resolveCommit(),
-    buildId: process.env.GITHUB_RUN_ID || process.env.NALAMDESK_BUILD_ID || null
+    buildId: process.env.GITHUB_RUN_ID || process.env.NALAMDESK_BUILD_ID || null,
+    // NalamDesk Cloud addresses (#154); a build without them cannot pair.
+    relayUrl: process.env.NALAMDESK_RELAY_URL || null,
+    bookingApiUrl: process.env.NALAMDESK_BOOKING_API_URL || null
 };
 
 const dest = path.join(__dirname, '..', 'build-identity.json');

@@ -9,7 +9,7 @@ import log from 'electron-log';
 // It talks to the cloud only through ports owned by earlier iterations:
 //   ClinicCloudTransport -> #154 (signed device requests) and #155 (mailbox fetch/ack)
 //   ClinicSealingKey     -> #154 (the X25519 key created at pairing, in DeviceKeyStore)
-// main.ts keeps the old CloudSyncService until those adapters exist.
+// Both are wired in main/cloud/CloudLink.ts.
 
 const MAILBOX_LABEL = 'nalamdesk-mailbox-v1';
 const BOOKING_TYPE = 'booking-request';
@@ -49,6 +49,13 @@ export interface ClinicSealingKey {
 export interface BookingRequestStore {
     saveAppointmentRequest(req: { id: string; patient_name: string; phone: string; date: string | null; time: string | null; reason: string }): unknown;
     updateAppointmentRequestStatus(id: string, status: string): unknown;
+    /** Books the appointment and marks the request accepted in one transaction; a repeat does nothing. */
+    acceptAppointmentRequest(id: string, slot: AppointmentSlot): unknown;
+}
+
+export interface AppointmentSlot {
+    date: string;
+    time: string;
 }
 
 export interface BookingRequest {
@@ -129,6 +136,8 @@ export interface BookingInboxDeps {
     store: BookingRequestStore;
     /** Called after new requests are saved, so the UI can refresh. */
     onNewRequests?: (count: number) => void;
+    /** Each pass fetches, then saves; a restore drains passes before replacing the database. */
+    runWork?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 export class BookingInboxService {
@@ -197,7 +206,7 @@ export class BookingInboxService {
             try {
                 do {
                     this.rerun = false;
-                    saved += await this.syncOnce();
+                    saved += await (this.deps.runWork ? this.deps.runWork(() => this.syncOnce()) : this.syncOnce());
                 } while (this.rerun);
             } finally {
                 this.running = null;
@@ -250,14 +259,22 @@ export class BookingInboxService {
 
     /**
      * Tells the cloud first (which books or releases the slot and updates the
-     * patient's status page), then records the decision locally. A retried
-     * decision is fine; a slot that lapsed and was taken is reported.
+     * patient's status page), then records the decision locally. An
+     * acceptance with a slot books the appointment in the same local
+     * transaction that marks the request accepted. A retried decision is
+     * fine, and a retried acceptance the cloud already holds still books the
+     * appointment once; a slot that lapsed and was taken is reported.
      */
-    async decide(ref: string, decision: Decision): Promise<void> {
+    async decide(ref: string, decision: Decision, slot?: AppointmentSlot): Promise<void> {
         if (!REF_PATTERN.test(ref)) throw new BookingError('bad_ref', 'Not an online booking reference.');
         const response = await this.deps.transport.send('POST', `/api/clinic/bookings/${ref}/decision`, { decision });
         if (response.status === 409 && response.body?.error === 'already_decided') {
             const status = String(response.body?.status || '').toLowerCase();
+            if (status === 'accepted' && decision === 'accepted' && slot) {
+                // An earlier acceptance reached the cloud but not this computer.
+                this.deps.store.acceptAppointmentRequest(ref, slot);
+                return;
+            }
             if (status === 'accepted' || status === 'declined') this.deps.store.updateAppointmentRequestStatus(ref, status === 'declined' ? 'rejected' : status);
             throw new BookingError('already_decided', `This request was already ${status || 'decided'}.`);
         }
@@ -269,8 +286,9 @@ export class BookingInboxService {
             throw new BookingError('expired', 'This request has expired online. Call the patient directly.');
         }
         await this.expectOk(response);
+        if (decision === 'accepted' && slot) this.deps.store.acceptAppointmentRequest(ref, slot);
         // The renderer already uses `rejected` for a declined request.
-        this.deps.store.updateAppointmentRequestStatus(ref, decision === 'declined' ? 'rejected' : 'accepted');
+        else this.deps.store.updateAppointmentRequestStatus(ref, decision === 'declined' ? 'rejected' : 'accepted');
     }
 
     private async expectOk(response: CloudResponse): Promise<CloudResponse> {

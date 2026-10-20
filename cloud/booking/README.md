@@ -68,10 +68,9 @@ serves; these make silent tampering hard, not impossible.
 | Piece | Waiting on |
 | --- | --- |
 | `Mailbox`, `Doorbell` (sealed store, IoT Core) and presence events | #155 |
-| Desktop transport and the pairing-time X25519 key for `BookingInboxService` | #154, #155 |
 Until the adapters exist, `api/src/server.ts` serves a 503 holding app whose `/api/health` names
-what is missing, and `main.ts` keeps the old
-`CloudSyncService` until then.
+what is missing. The desktop side is wired (#154): a paired computer signs its calls and
+`BookingInboxService` uses the X25519 key created at pairing.
 
 **CloudFront rate rule.** The Free flat-rate plan includes WAF rate limiting but is not set
 through CloudFormation. After the first deploy, subscribe the distribution to the Free plan and

@@ -157,20 +157,7 @@
                 <p class="text-xs text-gray-500">Packaged desktop builds check a clinic update feed. This app does not claim full code-signature verification unless a later signed release channel is configured.</p>
             </div>
 
-            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mt-6" *ngIf="isElectron">
-                <div class="flex items-center justify-between mb-4">
-                    <div>
-                        <h3 class="text-lg font-medium text-blue-700">Online Booking</h3>
-                        <p class="text-sm text-gray-500">Enable public appointment booking on nalamdesk.com</p>
-                    </div>
-                    <input type="checkbox" class="toggle toggle-primary" [checked]="cloudEnabled"
-                        (change)="toggleCloud($event)" />
-                </div>
-                <div *ngIf="cloudClinicId"
-                    class="bg-blue-50 p-3 rounded border border-blue-100 text-blue-800 text-sm">
-                    <strong>Status:</strong> Active &bull; <strong>Clinic ID:</strong> {{ cloudClinicId }}
-                </div>
-            </div>
+            <app-cloud-link *ngIf="isElectron" [isAdmin]="currentUser?.role === 'admin'"></app-cloud-link>
         </div>
 
         <div *ngIf="activeTab === 'catalogs'" class="h-full overflow-hidden">
@@ -1066,25 +1053,6 @@
         <div class="flex justify-end gap-2">
             <button (click)="showDeviceRotationModal = false" class="btn btn-ghost">Cancel</button>
             <button (click)="rotateDeviceEnvelope()" class="btn btn-primary" [disabled]="!currentDevicePassword || isLoading">Rotate Device Envelope</button>
-        </div>
-    </div>
-</div>
-
-<!-- CLOUD MODAL (Legacy) -->
-<div *ngIf="showCloudModal" class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-    <div class="bg-white rounded-lg p-6 w-full max-w-sm">
-        <h3 class="text-xl font-bold mb-2">Setup Online Booking</h3>
-        <p class="text-sm text-gray-500 mb-4">Register your clinic on our public directory.</p>
-        <div class="space-y-4">
-            <div><label class="block text-sm font-medium text-gray-700">Clinic Name (Public)</label><input
-                    [(ngModel)]="cloudForm.name" class="input input-bordered w-full"></div>
-            <div><label class="block text-sm font-medium text-gray-700">City</label><input [(ngModel)]="cloudForm.city"
-                    class="input input-bordered w-full"></div>
-        </div>
-        <div class="mt-6 flex justify-end gap-2">
-            <button (click)="showCloudModal = false" class="btn btn-ghost" [disabled]="cloudLoading">Cancel</button>
-            <button (click)="submitCloudOnboard()" class="btn btn-primary" [disabled]="cloudLoading">{{ cloudLoading ?
-                'Registering...' : 'Enable' }}</button>
         </div>
     </div>
 </div>

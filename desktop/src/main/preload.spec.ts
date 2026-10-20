@@ -87,6 +87,22 @@ describe('preload bridge surface', () => {
         expect(electron.invoke).toHaveBeenCalledWith('cloud:getPublishedSlots', '2026-10-04');
     });
 
+    it('exposes pairing and booking decision IPC, and no app-secret onboarding', async () => {
+        await api.cloud.requestPairing({ hfrId: 'IN2710000123', label: 'Reception' });
+        await api.cloud.activatePairing({ code: 'ABCD-1234' });
+        await api.cloud.cancelPairing();
+        await api.cloud.decide({ ref: 'ABCDEFGHJKMN', decision: 'accepted' });
+        const off = api.cloud.onPairingChanged(() => undefined);
+        off();
+        expect(electron.invoke).toHaveBeenCalledWith('cloud:requestPairing', { hfrId: 'IN2710000123', label: 'Reception' });
+        expect(electron.invoke).toHaveBeenCalledWith('cloud:activatePairing', { code: 'ABCD-1234' });
+        expect(electron.invoke).toHaveBeenCalledWith('cloud:cancelPairing');
+        expect(electron.invoke).toHaveBeenCalledWith('cloud:decide', { ref: 'ABCDEFGHJKMN', decision: 'accepted' });
+        expect(electron.on).toHaveBeenCalledWith('cloud:pairingChanged', expect.any(Function));
+        expect(api.cloud.onboard).toBeUndefined();
+        expect(api.cloud.toggle).toBeUndefined();
+    });
+
     it('exposes per-user override admin IPC', async () => {
         const input = { userId: 20, action: 'updateQueueStatus', effect: 'allow', reason: 'Covers Tuesdays' };
         await api.db.getUserOverrides(20);

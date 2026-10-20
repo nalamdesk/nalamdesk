@@ -60,8 +60,8 @@ test.describe.serial('Online booking / availability', () => {
 
     test('publish path is wired: without cloud it fails loudly, not silently', async () => {
         // The preload bridge must expose publishSlots (regression: it was
-        // missing, so every publish died with a TypeError). Without a cloud
-        // backend the main process rejects with 'Cloud sync not enabled'.
+        // missing, so every publish died with a TypeError). Until this
+        // computer is paired with NalamDesk Cloud, the main process rejects.
         const outcome: string = await ctx.window.evaluate(async (date: string) => {
             try {
                 await (window as any).electron.cloud.publishSlots(
@@ -73,7 +73,7 @@ test.describe.serial('Online booking / availability', () => {
                 return String(e?.message || e);
             }
         }, day);
-        expect(outcome).toMatch(/Cloud sync not enabled/);
+        expect(outcome).toMatch(/not paired with NalamDesk Cloud/);
 
         // The UI surfaces the same failure through the error dialog.
         await ctx.window.getByRole('button', { name: 'Update Availability' }).click();
@@ -91,8 +91,7 @@ test.describe.serial('Online booking / availability', () => {
                 return [];
             }
         }, day);
-        // Cloud sync may be disabled in the test env; either empty or containing our slots
-        // is acceptable as long as the call itself does not crash.
+        // An unpaired computer reads no published slots; the call must not crash.
         expect(Array.isArray(slots)).toBe(true);
     });
 });

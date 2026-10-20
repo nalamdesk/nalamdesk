@@ -1469,40 +1469,8 @@ describe('SettingsComponent Validation', () => {
             });
         });
 
-        describe('cloud toggle', () => {
-            const cloudApi = () => {
-                const api = { getStatus: vi.fn(async () => ({ enabled: false, clinicId: null })), toggle: vi.fn(async () => undefined) };
-                setElectron({ cloud: api });
-                return api;
-            };
-
-            it('loads cloud status into the form', async () => {
-                cloudApi();
-                (window as any).electron.cloud.getStatus.mockResolvedValue({ enabled: true, clinicId: 'c1' });
-                await component.loadCloudStatus();
-                expect(component.cloudEnabled).toBe(true);
-                expect(component.cloudClinicId).toBe('c1');
-            });
-
-            it('opens the onboard modal when enabling without a clinic', async () => {
-                const api = cloudApi();
-                component.cloudClinicId = null;
-                const event = { target: { checked: true } };
-                await component.toggleCloud(event);
-                expect(component.showCloudModal).toBe(true);
-                expect(event.target.checked).toBe(false);
-                expect(api.toggle).not.toHaveBeenCalled();
-            });
-
-            it('toggles directly when a clinic exists', async () => {
-                const api = cloudApi();
-                component.cloudClinicId = 'c1';
-                await component.toggleCloud({ target: { checked: false } });
-                expect(api.toggle).toHaveBeenCalledWith(false);
-            });
-
-            it('runs the onboard stub and external links', async () => {
-                await component.submitCloudOnboard();
+        describe('external links', () => {
+            it('opens the Drive console and setup guide', async () => {
                 const openExternal = vi.fn(async () => undefined);
                 setElectron({ utils: { openExternal } });
                 const event = { preventDefault: vi.fn() } as any;

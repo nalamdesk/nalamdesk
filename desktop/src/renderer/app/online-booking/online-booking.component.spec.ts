@@ -19,7 +19,7 @@ describe('OnlineBookingComponent', () => {
             getAppointmentRequests: vi.fn().mockReturnValue(Promise.resolve([
                 { id: 1, patient_name: 'John', status: 'pending', date: '2025-01-01', time: '10:00' }
             ])),
-            updateRequestStatus: vi.fn().mockReturnValue(Promise.resolve()),
+            decide: vi.fn().mockReturnValue(Promise.resolve({ success: true })),
             saveAppointment: vi.fn().mockReturnValue(Promise.resolve())
         };
 
@@ -48,6 +48,15 @@ describe('OnlineBookingComponent', () => {
         expect(component.requests.length).toBe(1);
     });
 
+    it('still lists saved requests when the cloud refresh fails', async () => {
+        await fixture.whenStable();
+        mockCloudService.syncNow.mockReturnValueOnce(Promise.reject(new Error('offline')));
+        component.requests = [];
+        component.isRefreshing = false;
+        await component.loadRequests();
+        expect(component.requests.length).toBe(1);
+    });
+
     it('should toggle time slots', () => {
         const time = '10:00';
         component.toggleTime(time);
@@ -58,21 +67,58 @@ describe('OnlineBookingComponent', () => {
 
     // ...
 
-    it('should accept request and create appointment', async () => {
+    it('accepts through main, which books the appointment with the decision', async () => {
         const dialogService = TestBed.inject(DialogService);
         vi.spyOn(dialogService, 'open').mockResolvedValue(true);
-        // Ensure request exists
         component.requests = [{ id: 1, patient_name: 'John', status: 'pending', date: '2025-01-01', time: '10:00' }];
-        const req = component.requests[0];
+
+        await component.accept(component.requests[0]);
+
+        expect(mockCloudService.decide).toHaveBeenCalledWith(1, 'accepted', { date: '2025-01-01', time: '10:00' });
+        // No separate renderer write that a crash could cut off.
+        expect(mockCloudService.saveAppointment).not.toHaveBeenCalled();
+        expect(mockPatientService.savePatient).not.toHaveBeenCalled();
+    });
+
+    it('does not create an appointment when the cloud refuses the acceptance', async () => {
+        const dialogService = TestBed.inject(DialogService);
+        const open = vi.spyOn(dialogService, 'open').mockResolvedValue(true);
+        mockCloudService.decide.mockRejectedValueOnce(new Error("Error invoking remote method 'cloud:decide': Error: slot_lost: The request expired and the slot was taken by someone else."));
+        const req = { id: 'ABCDEFGHJKMN', patient_name: 'John', status: 'pending', date: '2025-01-01', time: '10:00' };
 
         await component.accept(req);
 
-        expect(mockPatientService.savePatient).toHaveBeenCalled(); // New patient created
-        expect(mockCloudService.saveAppointment).toHaveBeenCalledWith(expect.objectContaining({
-            patient_id: 100,
-            date: '2025-01-01'
+        expect(mockCloudService.saveAppointment).not.toHaveBeenCalled();
+        expect(open).toHaveBeenLastCalledWith(expect.objectContaining({
+            title: 'Accept failed', message: 'The request expired and the slot was taken by someone else.'
         }));
-        expect(mockCloudService.updateRequestStatus).toHaveBeenCalledWith(1, 'accepted');
+    });
+
+    it('asks for a date and time before accepting a callback request', async () => {
+        const dialogService = TestBed.inject(DialogService);
+        const open = vi.spyOn(dialogService, 'open').mockResolvedValue(true);
+        const req = { id: 'ABCDEFGHJKMN', patient_name: 'John', phone: '9876543210', status: 'pending', date: null, time: null };
+
+        await component.accept(req);
+        expect(mockCloudService.decide).not.toHaveBeenCalled();
+        expect(open).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Pick a date and time' }));
+
+        component.callbackSlot(req.id).date = '2025-01-02';
+        component.callbackSlot(req.id).time = '11:30';
+        await component.accept(req);
+        expect(mockCloudService.decide).toHaveBeenCalledWith('ABCDEFGHJKMN', 'accepted', { date: '2025-01-02', time: '11:30' });
+    });
+
+    it('declines through the cloud', async () => {
+        const dialogService = TestBed.inject(DialogService);
+        vi.spyOn(dialogService, 'open').mockResolvedValue(true);
+        await component.reject({ id: 'ABCDEFGHJKMN', patient_name: 'John', date: '2025-01-01', time: '10:00' });
+        expect(mockCloudService.decide).toHaveBeenCalledWith('ABCDEFGHJKMN', 'declined');
+    });
+
+    it('offers zero-padded half-hour slots the booking API accepts', () => {
+        expect(component.timeSlots[0]).toBe('09:00');
+        expect(component.timeSlots).toContain('19:30');
     });
 
     it('should skip accept when the dialog is cancelled', async () => {
@@ -83,6 +129,6 @@ describe('OnlineBookingComponent', () => {
         await component.accept(component.requests[0]);
 
         expect(mockCloudService.saveAppointment).not.toHaveBeenCalled();
-        expect(mockCloudService.updateRequestStatus).not.toHaveBeenCalled();
+        expect(mockCloudService.decide).not.toHaveBeenCalled();
     });
 });

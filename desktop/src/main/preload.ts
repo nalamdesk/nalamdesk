@@ -177,11 +177,26 @@ contextBridge.exposeInMainWorld('electron', {
     },
     cloud: {
         getStatus: () => ipcRenderer.invoke('cloud:getStatus'),
-        onboard: (data: { name: string, city: string }) => ipcRenderer.invoke('cloud:onboard', data),
-        toggle: (enabled: boolean) => ipcRenderer.invoke('cloud:toggle', enabled),
+        requestPairing: (data: { hfrId: string, label: string }) => ipcRenderer.invoke('cloud:requestPairing', data),
+        cancelPairing: () => ipcRenderer.invoke('cloud:cancelPairing'),
+        activatePairing: (data: { code: string }) => ipcRenderer.invoke('cloud:activatePairing', data),
+        forgetPairing: () => ipcRenderer.invoke('cloud:forgetPairing'),
+        enableListing: (data: { name: string, city: string, specialty?: string }) => ipcRenderer.invoke('cloud:enableListing', data),
+        disableListing: () => ipcRenderer.invoke('cloud:disableListing'),
         syncNow: () => ipcRenderer.invoke('cloud:syncNow'),
         publishSlots: (slots: any, dates: string[]) => ipcRenderer.invoke('cloud:publishSlots', slots, dates),
-        getPublishedSlots: (date: string) => ipcRenderer.invoke('cloud:getPublishedSlots', date)
+        getPublishedSlots: (date: string) => ipcRenderer.invoke('cloud:getPublishedSlots', date),
+        decide: (data: { ref: string, decision: 'accepted' | 'declined', date?: string, time?: string }) => ipcRenderer.invoke('cloud:decide', data),
+        onPairingChanged: (callback: (status: any) => void) => {
+            const listener = (_event: unknown, status: any) => callback(status);
+            ipcRenderer.on('cloud:pairingChanged', listener);
+            return () => ipcRenderer.removeListener('cloud:pairingChanged', listener);
+        },
+        onNewRequests: (callback: (data: { count: number }) => void) => {
+            const listener = (_event: unknown, data: any) => callback(data);
+            ipcRenderer.on('cloud:newRequests', listener);
+            return () => ipcRenderer.removeListener('cloud:newRequests', listener);
+        }
     },
     clipboard: {
         writeText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text)

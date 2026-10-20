@@ -2,7 +2,6 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CloudService } from '../services/cloud.service';
-import { PatientService } from '../services/patient.service';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 
@@ -78,10 +77,19 @@ import { ToastService } from '../shared/services/toast.service';
                    <h3 class="font-bold text-gray-800">{{ req.patient_name }}</h3>
                    <p class="text-sm text-gray-500">{{ req.phone }}</p>
                  </div>
-                 <div class="text-right">
+                 <div class="text-right" *ngIf="req.date; else callbackBadge">
                    <div class="badge badge-outline text-xs">{{ req.date }}</div>
                    <div class="text-lg font-bold text-blue-600">{{ req.time }}</div>
                  </div>
+                 <ng-template #callbackBadge>
+                   <div class="badge badge-warning text-xs">Callback request</div>
+                 </ng-template>
+               </div>
+
+               <!-- No slot was chosen online: staff set the appointment time when accepting. -->
+               <div *ngIf="!req.date" class="flex gap-2 mb-3">
+                 <input type="date" [(ngModel)]="callbackSlot(req.id).date" [min]="minDate" class="input input-bordered input-sm flex-1" aria-label="Appointment date" />
+                 <input type="time" [(ngModel)]="callbackSlot(req.id).time" class="input input-bordered input-sm w-32" aria-label="Appointment time" />
                </div>
                
                <p *ngIf="req.reason" class="text-sm text-gray-600 bg-gray-50 p-2 rounded mb-3">
@@ -115,8 +123,10 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
   selectedSlots: Set<string> = new Set();  // Slots currently selected (Blue/Green)
 
   private refreshInterval: any;
+  // Date and time staff pick for callback requests, kept across list refreshes.
+  private callbackSlots = new Map<string, { date: string; time: string }>();
 
-  constructor(public cloud: CloudService, private patientService: PatientService, private dialogService?: DialogService, private toastService?: ToastService) {
+  constructor(public cloud: CloudService, private dialogService?: DialogService, private toastService?: ToastService) {
     this.generateTimeSlots();
     this.setCalendarLimits();
   }
@@ -149,8 +159,9 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
     const start = 9; // 9 AM
     const end = 20;  // 8 PM
     for (let i = start; i < end; i++) {
-      this.timeSlots.push(`${i}:00`);
-      this.timeSlots.push(`${i}:30`);
+      const hour = String(i).padStart(2, '0');
+      this.timeSlots.push(`${hour}:00`);
+      this.timeSlots.push(`${hour}:30`);
     }
   }
 
@@ -244,13 +255,17 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
     this.isRefreshing = true;
     try {
-      // Trigger immediate sync from server
-      await this.cloud.syncNow();
-      // Then load from local DB
+      // Fetch from the cloud first; requests already saved here still show when that fails.
+      try {
+        await this.cloud.syncNow();
+      } catch (e) {
+        console.error('Failed to sync requests', e);
+        this.toastService?.warning('Could not reach NalamDesk Cloud. Showing the requests already on this computer.', 'Not refreshed');
+      }
       const allRequests = await this.cloud.getAppointmentRequests();
       this.requests = (allRequests || []).filter((r: any) => r.status === 'pending');
     } catch (e) {
-      console.error('Failed to sync requests', e);
+      console.error('Failed to load requests', e);
     } finally {
       // ensure distinct animation time
       setTimeout(() => this.isRefreshing = false, 500);
@@ -263,72 +278,74 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
 
 
+  callbackSlot(id: unknown): { date: string; time: string } {
+    const key = String(id);
+    let slot = this.callbackSlots.get(key);
+    if (!slot) {
+      slot = { date: '', time: '' };
+      this.callbackSlots.set(key, slot);
+    }
+    return slot;
+  }
+
   async accept(req: any) {
+    // A callback request has no slot: the appointment needs the date and time staff set.
+    const { date, time } = req.date ? { date: req.date, time: req.time } : this.callbackSlot(req.id);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || !/^\d{2}:\d{2}$/.test(time || '')) {
+      await this.dialogService?.open({
+        title: 'Pick a date and time',
+        message: `${req.patient_name} asked for a callback. Set the appointment date and time on the request before accepting it.`,
+        type: 'error'
+      });
+      return;
+    }
     const confirmed = await this.dialogService?.open({
       title: 'Accept booking?',
-      message: `${req.patient_name} gets a confirmed appointment for ${req.date} at ${req.time}.`,
+      message: `${req.patient_name} gets a confirmed appointment for ${date} at ${time}.`,
       type: 'confirm',
       confirmText: 'Accept',
       cancelText: 'Cancel'
     });
     if (!confirmed) return;
+    // The cloud books the slot and updates the patient's status page first
+    // (a lapsed or taken slot stops here); main then books the appointment
+    // and marks the request accepted in one step, so a crash cannot leave
+    // an accepted request without its appointment.
     try {
-      // 1. Find or Create Patient
-      let patientId;
-      const existingPatients = await this.patientService.getPatients(req.phone);
-      const found = existingPatients.find(p => p.mobile === req.phone);
-
-      if (found) {
-        patientId = found.id;
-      } else {
-        // Create new "Lite" Patient
-        const newPatient = {
-          name: req.patient_name,
-          mobile: req.phone,
-          age: 0, // Incomplete
-          gender: 'Unknown',
-          address: '',
-          uuid: crypto.randomUUID()
-        };
-        const res = await this.patientService.savePatient(newPatient);
-        patientId = res.lastInsertRowid;
-      }
-
-      // 2. Create Appointment
-      if (patientId) {
-        await this.cloud.saveAppointment({
-          patient_id: patientId,
-          date: req.date,
-          time: req.time,
-          reason: req.reason,
-          status: 'CONFIRMED'
-        });
-
-        // 3. Update Request Status (Server Sync)
-        await this.cloud.updateRequestStatus(req.id, 'accepted');
-        await this.loadRequests();
-        this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
-      }
+      await this.cloud.decide(req.id, 'accepted', { date, time });
     } catch (e) {
-      console.error('Accept flow failed', e);
-      await this.dialogService?.open({
-        title: 'Accept failed',
-        message: 'The booking could not be accepted. Please retry.',
-        type: 'error'
-      });
+      await this.showDecisionError('Accept failed', e);
+      await this.loadRequests();
+      return;
     }
+    this.callbackSlots.delete(String(req.id));
+    await this.loadRequests();
+    this.toastService?.success(`Appointment created for ${req.patient_name}.`, 'Booking accepted');
   }
 
   async reject(req: any) {
     const confirmed = await this.dialogService?.open({
       title: 'Reject booking?',
-      message: `${req.patient_name}'s request for ${req.date} at ${req.time} will be declined.`,
+      message: req.date
+        ? `${req.patient_name}'s request for ${req.date} at ${req.time} will be declined.`
+        : `${req.patient_name}'s callback request will be declined.`,
       type: 'confirm',
       confirmText: 'Reject',
       cancelText: 'Keep'
     });
     if (!confirmed) return;
-    await this.cloud.updateRequestStatus(req.id, 'rejected');
+    try {
+      await this.cloud.decide(req.id, 'declined');
+    } catch (e) {
+      await this.showDecisionError('Reject failed', e);
+    }
     this.loadRequests();
+  }
+
+  /** Main's errors arrive as "Error invoking remote method ...: Error: <code>: <message>". */
+  private async showDecisionError(title: string, e: unknown) {
+    const raw = String((e as any)?.message || e || '');
+    const message = raw.replace(/^.*?Error: /, '').replace(/^[a-z_]+: /, '') || 'Please retry.';
+    await this.dialogService?.open({ title, message, type: 'error' });
   }
 }

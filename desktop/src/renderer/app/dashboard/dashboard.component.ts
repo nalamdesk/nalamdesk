@@ -335,7 +335,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   async refresh() {
     this.isSyncing = true;
     try {
-      await this.cloudService.syncNow();
+      // The local dashboard still loads when the cloud can't be reached.
+      try {
+        await this.cloudService.syncNow();
+      } catch (e) {
+        console.error(e);
+      }
       await this.loadData();
     } catch (e) {
       console.error(e);

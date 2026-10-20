@@ -120,11 +120,11 @@ describe('BookingStack', () => {
         });
     });
 
-    it('lets the API put sealed requests in the mailbox and ring clinic doorbells, and nothing more', () => {
+    it('lets the API put and take back sealed requests in the mailbox and ring clinic doorbells, and nothing more', () => {
         const statements = Object.values(t.findResources('AWS::IAM::Policy'))
             .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
         const on = (fragment: string) => statements.filter((s: any) => JSON.stringify(s.Resource).includes(fragment)).flatMap((s: any) => [s.Action].flat());
-        expect(on('mailboxtablename')).toEqual(['dynamodb:PutItem']);
+        expect(on('mailboxtablename')).toEqual(['dynamodb:PutItem', 'dynamodb:DeleteItem']);
         expect(on('/mailbox/*')).toEqual(['s3:PutObject']);
         const publish = statements.find((s: any) => s.Action === 'iot:Publish');
         expect(JSON.stringify(publish.Resource)).toContain(':topic/');

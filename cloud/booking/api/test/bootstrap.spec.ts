@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adaptersFromEnv, buildServerApp, deviceAuthenticatorFromEnv, listenAddress } from '../src/bootstrap.js';
+import { activeDevicesFromEnv, adaptersFromEnv, buildServerApp, deviceAuthenticatorFromEnv, listenAddress, mailboxFromEnv } from '../src/bootstrap.js';
 import { MemoryBookingStore, MemoryClinicStore, MemorySlotStore } from '../src/memory.js';
 
 const base = { clinics: new MemoryClinicStore(), slots: new MemorySlotStore(), bookings: new MemoryBookingStore(), phonePepper: Buffer.alloc(32, 1) };
@@ -33,11 +33,22 @@ describe('bootstrap', () => {
     it('serves the booking app once the adapters are wired', async () => {
         const { app, missing } = buildServerApp(base, {
             devices: { authenticate: async () => ({ ok: false, status: 401, code: 'no' }) },
+            activeDevices: { isActive: async () => true },
             mailbox: { put: async () => undefined },
             doorbell: { ring: async () => undefined }
         } as any);
         expect(missing).toEqual([]);
         expect((await app.request('/api/health')).status).toBe(200);
+    });
+
+    it('checks the device row with a consistent read, and takes items back with a row delete', async () => {
+        const sent: any[] = [];
+        const dynamo = { send: async (command: any) => { sent.push(command); return {}; } };
+        const mailbox = mailboxFromEnv({ MAILBOX_TABLE: 'm', MAILBOX_BUCKET: 'b' }, dynamo as never)!;
+        await mailbox.remove('cln_1', ['item-a']);
+        expect(sent[0].input).toEqual({ TableName: 'm', Key: { clinicId: { S: 'cln_1' }, itemId: { S: 'item-a' } } });
+        expect(activeDevicesFromEnv({})).toBeUndefined();
+        expect(buildServerApp(base, { ...adaptersFromEnv({ NONCES_TABLE: 'n' }), devices: {} as never }).missing[0]).toContain('device authenticator');
     });
 
     it('listens where the Web Function runtime says, else on PORT locally', () => {

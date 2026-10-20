@@ -23,7 +23,7 @@ const demo = [
 for (const clinic of demo) {
     const { publicKey } = crypto.generateKeyPairSync('x25519');
     const sealingPublicKey = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
-    await clinics.upsertListing(clinic.clinicId, { ...clinic, sealingPublicKey }, now);
+    await clinics.upsertListing(clinic.clinicId, { ...clinic, sealingPublicKey, deviceId: `dev-${clinic.clinicId}` }, now);
     Object.assign(clinics.rows.get(clinic.clinicId)!, { online: clinic.online, lastSeenAt: clinic.online ? now : now - 60 * 60 * 1000 });
     const dates = [0, 1, 2].map((d) => addDays(istDate(now), d));
     const times = ['09:30', '10:00', '10:30', '11:00', '11:30', '16:00', '16:30', '17:00', '17:30'];
@@ -40,12 +40,14 @@ const app = createBookingApp({
             return clinicId ? { ok: true, deviceId: `dev-${clinicId}`, clinicId, hipId: 'dev' } : { ok: false, status: 401, code: 'unsigned' };
         }
     },
+    activeDevices: { isActive: async () => true },
     mailbox: {
         put: async (item) => {
             mailbox.push(item);
             process.stdout.write(`mailbox: ${item.type} for ${item.clinicId} (${item.sealed.length} sealed chars)\n`);
             return `item-${mailbox.length}`;
-        }
+        },
+        remove: async () => undefined
     },
     doorbell: { ring: async () => undefined },
     phonePepper: crypto.randomBytes(32)

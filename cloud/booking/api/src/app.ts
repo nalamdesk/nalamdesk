@@ -3,6 +3,7 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { stdoutLogger, type BookingLogEntry, type BookingLogger } from './log.js';
 import type {
+    ActiveDevices,
     Booking,
     BookingStatus,
     BookingStore,
@@ -32,6 +33,7 @@ export interface BookingDeps {
     slots: SlotStore;
     bookings: BookingStore;
     devices: DeviceAuthenticator;
+    activeDevices: ActiveDevices;
     mailbox: Mailbox;
     doorbell: Doorbell;
     /** Server secret that turns the browser's phone digest into a per-clinic key. */
@@ -161,12 +163,14 @@ export function createBookingApp(deps: BookingDeps): Hono {
         const slotId = body?.slotId ?? null;
         const digest = body?.phoneDigest;
         const sealed = body?.sealed;
+        const sealedTo = body?.sealedTo;
         if (
             typeof clinicId !== 'string' || !CLINIC_ID.test(clinicId)
             || typeof ref !== 'string' || !BOOKING_REF.test(ref)
             || (slotId !== null && (typeof slotId !== 'string' || slotId.length > 16))
             || typeof digest !== 'string' || !PHONE_DIGEST.test(digest)
             || !isSealedEnvelope(sealed)
+            || !isX25519PublicKey(sealedTo)
         ) {
             timed({ route: 'book', path: '/api/book', status: 400, code: 'bad_request' }, started);
             return refuse(c, 400, 'bad_request');
@@ -175,6 +179,19 @@ export function createBookingApp(deps: BookingDeps): Hono {
         if (!clinic || !clinic.listed) {
             timed({ route: 'book', path: '/api/book', status: 404, code: 'unknown_clinic' }, started);
             return refuse(c, 404, 'unknown_clinic');
+        }
+        // Only the listing's computer can open the request. After a replacement
+        // the old listing stays until the new computer lists the clinic again.
+        const deviceId = clinic.deviceId;
+        const current = () => (deviceId ? deps.activeDevices.isActive(deviceId, clinicId) : Promise.resolve(false));
+        if (!(await current().catch(() => false))) {
+            timed({ route: 'book', path: '/api/book', clinicId, status: 503, code: 'clinic_unavailable' }, started);
+            return refuse(c, 503, 'clinic_unavailable');
+        }
+        // A form opened before the clinic's key changed reseals with this one.
+        if (sealedTo !== clinic.sealingPublicKey) {
+            timed({ route: 'book', path: '/api/book', clinicId, status: 409, code: 'clinic_key_changed' }, started);
+            return refuse(c, 409, 'clinic_key_changed', { sealingPublicKey: clinic.sealingPublicKey });
         }
 
         const now = nowMs();
@@ -207,13 +224,21 @@ export function createBookingApp(deps: BookingDeps): Hono {
             return refuse(c, 409, 'ref_taken');
         }
 
-        try {
-            await deps.mailbox.put({ clinicId, type: 'booking-request', sealed });
-        } catch {
+        const rollBack = async (itemId: string | null, code: string) => {
+            if (itemId) await deps.mailbox.remove(clinicId, [itemId]).catch(() => undefined);
             await deps.bookings.delete(ref).catch(() => undefined);
             await undoHold();
-            timed({ route: 'book', path: '/api/book', clinicId, status: 503, code: 'mailbox_unavailable' }, started);
-            return refuse(c, 503, 'mailbox_unavailable');
+            timed({ route: 'book', path: '/api/book', clinicId, status: 503, code }, started);
+            return refuse(c, 503, code);
+        };
+        let itemId: string | null = null;
+        try {
+            itemId = await deps.mailbox.put({ clinicId, type: 'booking-request', sealed });
+            // A replacement purges mail stored before it. Checking after the put
+            // means this item is either covered by that purge or still readable.
+            if (!(await current())) return rollBack(itemId, 'clinic_unavailable');
+        } catch {
+            return rollBack(itemId, 'mailbox_unavailable');
         }
         // Best effort: the desktop also fetches on connect and every 30 minutes.
         deps.doorbell.ring(clinicId).catch(() => undefined);
@@ -238,7 +263,7 @@ export function createBookingApp(deps: BookingDeps): Hono {
 
     // ---- Signed by the clinic's paired desktop ----
 
-    type ClinicEnv = { Variables: { clinicId: string } };
+    type ClinicEnv = { Variables: { clinicId: string; deviceId: string } };
     const clinicApi = new Hono<ClinicEnv>();
 
     clinicApi.use('*', bodyLimit({
@@ -255,6 +280,7 @@ export function createBookingApp(deps: BookingDeps): Hono {
             return refuse(c, auth.status, auth.code, auth.serverTimeMs ? { serverTime: auth.serverTimeMs } : {});
         }
         c.set('clinicId', auth.clinicId);
+        c.set('deviceId', auth.deviceId);
         await deps.clinics.touch(auth.clinicId, nowMs());
         await next();
     });
@@ -271,7 +297,7 @@ export function createBookingApp(deps: BookingDeps): Hono {
             timed({ route: 'clinic', path: '/api/clinic/listing', clinicId, status: 400, code: 'bad_request' }, started);
             return refuse(c, 400, 'bad_request');
         }
-        await deps.clinics.upsertListing(clinicId, { name, city, specialty, sealingPublicKey }, nowMs());
+        await deps.clinics.upsertListing(clinicId, { name, city, specialty, sealingPublicKey, deviceId: c.get('deviceId') }, nowMs());
         timed({ route: 'clinic', path: '/api/clinic/listing', clinicId, status: 200 }, started);
         return c.json({ clinicId, listed: true });
     });

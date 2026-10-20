@@ -181,12 +181,13 @@ export class BookingStack extends cdk.Stack {
             resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: noncesTable })]
         }));
         // Sealed booking requests go to the clinic's 48-hour mailbox, then
-        // the doorbell rings (#155). Put only: the desktop reads through the relay.
+        // the doorbell rings (#155). Put, and delete for taking back a request
+        // whose computer was replaced meanwhile; the desktop reads through the relay.
         const mailboxTable = core('mailbox-table-name');
         const mailboxBucket = s3.Bucket.fromBucketName(this, 'MailboxBucket', core('mailbox-bucket-name'));
         const doorbellTopicPrefix = core('doorbell-topic-prefix');
         role.addToPolicy(new iam.PolicyStatement({
-            actions: ['dynamodb:PutItem'],
+            actions: ['dynamodb:PutItem', 'dynamodb:DeleteItem'],
             resources: [this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: mailboxTable })]
         }));
         role.addToPolicy(new iam.PolicyStatement({ actions: ['s3:PutObject'], resources: [mailboxBucket.arnForObjects('mailbox/*')] }));

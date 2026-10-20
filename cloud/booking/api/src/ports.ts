@@ -19,6 +19,14 @@ export interface MailboxItem {
 export interface Mailbox {
     /** Stores a sealed item for up to 48 hours; resolves with its item ID. */
     put(item: MailboxItem): Promise<string>;
+    /** Deletes items this API stored but must not deliver. */
+    remove(clinicId: string, itemIds: string[]): Promise<void>;
+}
+
+/** Status of a paired desktop in the Core devices table (#154), read consistently. */
+export interface ActiveDevices {
+    /** True while the device is the clinic's active, unrevoked computer. */
+    isActive(deviceId: string, clinicId: string): Promise<boolean>;
 }
 
 export interface Doorbell {
@@ -34,6 +42,8 @@ export interface ClinicListing {
     specialty: string;
     /** Clinic's X25519 sealing key, raw 32 bytes, base64. */
     sealingPublicKey: string;
+    /** The paired desktop that published the listing and holds the private key. */
+    deviceId: string;
 }
 
 export interface Clinic extends ClinicListing {

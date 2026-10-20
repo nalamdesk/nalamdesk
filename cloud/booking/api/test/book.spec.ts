@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLINIC_ID, harness, newRef, NOW, TOMORROW } from './helpers.js';
+import { CLINIC_ID, clinicKeys, harness, newRef, NOW, TOMORROW } from './helpers.js';
 import { open } from './sealReference.js';
 import { POLICY } from '../src/app.js';
 
@@ -115,6 +115,47 @@ describe('POST /api/book', () => {
         h.failMailbox();
         const res = await h.book();
         expect(res.status).toBe(503);
+        expect(h.bookings.rows.size).toBe(0);
+        expect((await h.slots.get(CLINIC_ID, `${TOMORROW}T10:00`))!.state).toBe('available');
+        expect(h.rings).toEqual([]);
+    });
+
+    it('answers with the current key when the request was sealed to an older one, before holding anything', async () => {
+        const h = await harness();
+        const older = clinicKeys().publicRaw;
+        const res = await h.book({ sealedTo: older });
+        expect(res.status).toBe(409);
+        expect(await res.json()).toEqual({ error: 'clinic_key_changed', sealingPublicKey: h.clinic.publicRaw });
+        expect((await h.slots.get(CLINIC_ID, `${TOMORROW}T10:00`))!.state).toBe('available');
+        expect(h.mailbox).toHaveLength(0);
+        expect((await h.book({ sealedTo: 'AAAA' })).status).toBe(400);
+    });
+
+    it('refuses a booking while the listing\'s computer is replaced and not yet listed again', async () => {
+        const h = await harness();
+        h.revoke('dev-1');
+        const res = await h.book();
+        expect(res.status).toBe(503);
+        expect(await res.json()).toEqual({ error: 'clinic_unavailable' });
+        expect(h.mailbox).toHaveLength(0);
+        expect(h.bookings.rows.size).toBe(0);
+        expect((await h.slots.get(CLINIC_ID, `${TOMORROW}T10:00`))!.state).toBe('available');
+
+        // The replacement lists the clinic again with its own key and device.
+        const next = clinicKeys();
+        h.setAuth({ ok: true, deviceId: 'dev-2', clinicId: CLINIC_ID, hipId: 'IN2710000123' });
+        await h.clinicCall('PUT', '/api/clinic/listing', { name: 'Arogya Clinic', city: 'Chennai', sealingPublicKey: next.publicRaw });
+        expect((await h.book()).status).toBe(409);
+        expect((await h.book({ sealedTo: next.publicRaw })).status).toBe(201);
+    });
+
+    it('takes the request back when the computer is replaced while it is stored', async () => {
+        const h = await harness();
+        h.revokeAfterPut('dev-1');
+        const res = await h.book();
+        expect(res.status).toBe(503);
+        expect(await res.json()).toEqual({ error: 'clinic_unavailable' });
+        expect(h.removed).toEqual(['item-1']);
         expect(h.bookings.rows.size).toBe(0);
         expect((await h.slots.get(CLINIC_ID, `${TOMORROW}T10:00`))!.state).toBe('available');
         expect(h.rings).toEqual([]);

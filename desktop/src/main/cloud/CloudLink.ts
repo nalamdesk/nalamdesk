@@ -8,12 +8,40 @@ import { Doorbell, type DoorbellDeps, type DoorbellState } from './Doorbell';
 import { MailboxReader, type ListedItem, type MailboxTransport } from './MailboxReader';
 import { SignedCloudClient, type Audience } from './SignedCloudClient';
 
-// Hourly: cheap when nothing is due, and it retries an unfinished rotation soon.
+// Hourly: cheap when nothing is due.
 const ROTATION_CHECK_MS = 60 * 60 * 1000;
 // A sealed envelope is base64 JSON around base64 ciphertext, so the relay's
 // 5 MiB data push grows to about 8.9 MiB.
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
+// A failed rotation may have reached the relay, which drops the old key 10
+// minutes later, so it is retried well inside that window.
+const ROTATION_RETRY_MS = 2 * 60 * 1000;
+
+/**
+ * Runs `rotate` now and hourly, and again shortly after any failure until it
+ * succeeds. Returns a function that stops it.
+ */
+export function scheduleRotation(rotate: () => Promise<unknown>, checkMs = ROTATION_CHECK_MS, retryMs = ROTATION_RETRY_MS): () => void {
+    let retry: NodeJS.Timeout | null = null;
+    let stopped = false;
+    const run = (): void => {
+        if (retry) clearTimeout(retry);
+        retry = null;
+        rotate().catch((error) => {
+            log.warn(`[Cloud] Key rotation deferred: ${(error as Error).message}`);
+            if (!stopped && !retry) retry = setTimeout(run, retryMs);
+        });
+    };
+    run();
+    const hourly = setInterval(run, checkMs);
+    return () => {
+        stopped = true;
+        clearInterval(hourly);
+        if (retry) clearTimeout(retry);
+        retry = null;
+    };
+}
 
 /** Signed booking API requests (#154). */
 export function bookingTransport(client: SignedCloudClient): ClinicCloudTransport {
@@ -82,7 +110,7 @@ export class CloudLink {
     readonly booking: BookingInboxService;
     readonly mailbox: MailboxReader;
     readonly doorbell: Doorbell;
-    private rotationTimer: NodeJS.Timeout | null = null;
+    private stopRotation: (() => void) | null = null;
 
     constructor(private readonly deps: CloudLinkDeps) {
         this.client = new SignedCloudClient({
@@ -162,8 +190,8 @@ export class CloudLink {
     stop(): void {
         this.mailbox.stop();
         this.doorbell.stop();
-        if (this.rotationTimer) clearInterval(this.rotationTimer);
-        this.rotationTimer = null;
+        this.stopRotation?.();
+        this.stopRotation = null;
     }
 
     private apply(status: PairingStatus): void {
@@ -173,10 +201,6 @@ export class CloudLink {
         }
         this.mailbox.start();
         this.doorbell.start();
-        if (!this.rotationTimer) {
-            const rotate = () => this.pairing.rotateSigningKeyIfDue().catch((error) => log.warn(`[Cloud] Key rotation deferred: ${(error as Error).message}`));
-            void rotate();
-            this.rotationTimer = setInterval(rotate, ROTATION_CHECK_MS);
-        }
+        if (!this.stopRotation) this.stopRotation = scheduleRotation(() => this.pairing.rotateSigningKeyIfDue());
     }
 }

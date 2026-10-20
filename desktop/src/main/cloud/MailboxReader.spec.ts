@@ -54,6 +54,29 @@ describe('MailboxReader', () => {
         expect(h.acked).toEqual([['a']]);
     });
 
+    it('lists the rest of a page again when slow downloads leave its links near expiry', async () => {
+        let clock = 0;
+        const items: ListedItem[] = ['a', 'b', 'c'].map((id) => ({ id, type: 'booking-request', url: `https://s3.test/${id}` }));
+        const lists: (string | undefined)[] = [];
+        const downloads: string[] = [];
+        const reader = new MailboxReader({
+            transport: {
+                list: async (after?: string) => {
+                    lists.push(after);
+                    return { items: items.filter((item) => after === undefined || item.id > after), more: false };
+                },
+                // Each download hits its 3-minute stall.
+                download: async (url: string) => { downloads.push(url); clock += 3 * 60_000; return 'sealed'; },
+                ack: async () => undefined
+            },
+            handlers: { 'booking-request': { handle: () => 'saved' } },
+            nowMs: () => clock
+        });
+        expect(await reader.sync()).toEqual({ 'booking-request': 3 });
+        expect(lists).toEqual([undefined, 'b']);
+        expect(downloads).toEqual(['https://s3.test/a', 'https://s3.test/b', 'https://s3.test/c']);
+    });
+
     it('keeps a handler failure in the mailbox for the next pass', async () => {
         const h = setup(() => { throw new Error('disk full'); });
         h.put({ id: 'a', type: 'booking-request', sealed: 's' });

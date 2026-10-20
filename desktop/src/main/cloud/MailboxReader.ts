@@ -14,6 +14,8 @@ import log from 'electron-log';
 export const FALLBACK_SYNC_MS = 30 * 60 * 1000;
 /** Pages one pass reads at most (50 items each); the rest wait for the next pass. */
 const MAX_PAGES = 20;
+/** The relay's download links last 5 minutes; past this, the rest of a page is listed again for fresh links. */
+const LINK_FRESH_MS = 4 * 60 * 1000;
 
 export interface ListedItem {
     id: string;
@@ -113,11 +115,17 @@ export class MailboxReader {
     }
 
     private async pass(saved: SyncCounts): Promise<void> {
+        const now = this.deps.nowMs ?? Date.now;
         let after: string | undefined;
         for (let page = 0; page < MAX_PAGES; page++) {
             const { items, more } = await this.deps.transport.list(after);
+            const listedAt = now();
             const done: string[] = [];
-            for (const listed of items) {
+            let reached = 0;
+            for (; reached < items.length; reached++) {
+                const listed = items[reached]!;
+                // Slow downloads earlier on the page must not leave later links expired.
+                if (!listed.sealed && listed.url && now() - listedAt > LINK_FRESH_MS) break;
                 const handler = this.deps.handlers[listed.type];
                 if (!handler) continue;
                 let sealed = listed.sealed;
@@ -140,6 +148,11 @@ export class MailboxReader {
                 if (result === 'saved') saved[listed.type] = (saved[listed.type] ?? 0) + 1;
             }
             for (let i = 0; i < done.length; i += 100) await this.deps.transport.ack(done.slice(i, i + 100));
+            if (reached < items.length) {
+                // Lists the rest again with fresh links, starting past the last item reached.
+                if (reached > 0) after = items[reached - 1]!.id;
+                continue;
+            }
             if (!more || items.length === 0) return;
             // Items kept for a retry stay ahead of the rest, so the next page
             // starts past this one; they are tried again on the next pass.

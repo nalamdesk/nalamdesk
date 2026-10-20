@@ -146,6 +146,7 @@ export class Doorbell {
 
         const { port, ALPNProtocols } = PORTS[this.portIndex]!;
         const connect = this.deps.connect ?? (await import('mqtt')).connect;
+        if (!wanted()) return;
         const client = connect({
             protocol: 'mqtts',
             host: identity.endpoint,

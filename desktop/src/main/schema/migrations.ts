@@ -1753,7 +1753,8 @@ export const MIGRATIONS = [
                     patient_id INTEGER,
                     via TEXT NOT NULL,
                     linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (care_context_ref, abha_address)
+                    -- A visit belongs to one patient, so it links to one health ID.
+                    PRIMARY KEY (care_context_ref)
                 );
             `);
             db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_hip_links_abha ON abdm_hip_links(abha_address);`);

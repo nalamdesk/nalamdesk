@@ -208,7 +208,7 @@ describe('HIP discovery and linking from the patient app', () => {
     });
 
     it('refuses link requests it cannot honour', async () => {
-        const { deliver, last, db } = await setup();
+        const { deliver, last, db, store } = await setup();
         await deliver(HIP_DISCOVER_PATH, { transactionId: 'd', patient: { id: 'ravi@sbx' } });
         await deliver(HIP_DISCOVER_PATH, { transactionId: 'old', patient: { id: 'ravi@sbx' } });
         db.prepare('UPDATE abdm_hip_discoveries SET discovered_at = ? WHERE transaction_id = ?').run(NOW - 31 * 60 * 1000, 'old');
@@ -229,6 +229,15 @@ describe('HIP discovery and linking from the patient app', () => {
             await deliver(HIP_LINK_INIT_PATH, body);
             expect(last().body.error.message).toContain(message);
         }
+
+        // A code issued before someone else linked the visit cannot complete.
+        await deliver(HIP_LINK_INIT_PATH, { transactionId: 'd', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', ...context }] });
+        const linkRefNumber = last().body.link.referenceNumber;
+        store.saveHipLinks('other@sbx', 1, ['OP-2026-0001'], 'clinic');
+        await deliver(HIP_LINK_CONFIRM_PATH, { confirmation: { linkRefNumber, token: '123456' } });
+        expect(last().body.error.message).toContain('already linked to another health ID');
+        await deliver(HIP_LINK_INIT_PATH, { transactionId: 'd', abhaAddress: 'ravi@sbx', patient: [{ referenceNumber: 'ND-1', ...context }] });
+        expect(last().body.error.message).toContain('already linked to another health ID');
     });
 });
 
@@ -280,6 +289,14 @@ describe('HIP-initiated linking of a visit', () => {
         await expect(hip.linkVisit(999)).rejects.toThrow('Visit not found');
         await expect(hip.linkVisit(12)).rejects.toThrow('finished visit');
         await expect(hip.linkVisit(13)).rejects.toThrow('health ID first');
+        // A visit links to one health ID only.
+        store.saveHipLinks('old@sbx', 1, ['OP-2026-0001'], 'clinic');
+        await expect(hip.linkVisit(10)).rejects.toThrow('already linked to another health ID');
+        expect(() => store.saveHipLinks('ravi@sbx', 1, ['OP-2026-0001'], 'patient')).toThrow('already linked to another health ID');
+        store.saveHipLinkToken('Ravi@SBX', 'tok-1', NOW + 1000);
+        store.saveHipLinkToken('ravi@sbx', 'tok-2', NOW + 1000);
+        expect(store.getHipLinkToken('RAVI@sbx', NOW)).toBe('tok-2');
+        store.clearHipLinkToken('ravi@sbx');
         const mock = await setup({ mock: true });
         await expect(mock.hip.linkVisit(11)).rejects.toThrow('paired');
 

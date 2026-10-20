@@ -1627,11 +1627,25 @@ export class DatabaseService {
             .all(String(abhaAddress || '').trim()) as any[]).map((row) => row.care_context_ref);
     }
 
+    /** The health ID each of these care contexts is linked to, if any. */
+    getHipLinkAddresses(refs: string[]): Record<string, string> {
+        const out: Record<string, string> = {};
+        const read = this.db.prepare('SELECT abha_address FROM abdm_hip_links WHERE care_context_ref = ?');
+        for (const ref of refs) {
+            const row = read.get(String(ref)) as any;
+            if (row) out[String(ref)] = String(row.abha_address);
+        }
+        return out;
+    }
+
     saveHipLinks(abhaAddress: string, patientId: number | null, refs: string[], via: 'patient' | 'clinic', actingUserId?: number) {
+        const address = String(abhaAddress).trim().toLowerCase();
         const save = this.db.transaction(() => {
             for (const ref of refs) {
+                const existing = this.db.prepare('SELECT abha_address FROM abdm_hip_links WHERE care_context_ref = ?').get(String(ref)) as any;
+                if (existing && existing.abha_address !== address) throw new Error(`Care context ${ref} is already linked to another health ID.`);
                 this.db.prepare(`INSERT OR IGNORE INTO abdm_hip_links (care_context_ref, abha_address, patient_id, via)
-                    VALUES (?, ?, ?, ?)`).run(String(ref), String(abhaAddress).trim(), patientId, via);
+                    VALUES (?, ?, ?, ?)`).run(String(ref), address, patientId, via);
             }
         });
         (save as any).immediate ? (save as any).immediate() : (save as any)();
@@ -1716,7 +1730,7 @@ export class DatabaseService {
     saveHipLinkToken(abhaAddress: string, linkToken: string, expiresAt: number) {
         this.db.prepare(`INSERT INTO abdm_hip_link_tokens (abha_address, link_token, expires_at) VALUES (?, ?, ?)
             ON CONFLICT(abha_address) DO UPDATE SET link_token = excluded.link_token, expires_at = excluded.expires_at,
-            updated_at = CURRENT_TIMESTAMP`).run(String(abhaAddress).trim(), String(linkToken), expiresAt);
+            updated_at = CURRENT_TIMESTAMP`).run(String(abhaAddress).trim().toLowerCase(), String(linkToken), expiresAt);
     }
 
     clearHipLinkToken(abhaAddress: string) {

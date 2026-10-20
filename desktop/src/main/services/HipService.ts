@@ -43,6 +43,7 @@ export interface HipStore {
     findHipPatientByReference(reference: string): any;
     getHipCareContexts(patientId: number): any[];
     getHipLinkedRefs(abhaAddress: string): string[];
+    getHipLinkAddresses(refs: string[]): Record<string, string>;
     saveHipLinks(abhaAddress: string, patientId: number | null, refs: string[], via: 'patient' | 'clinic', actingUserId?: number): void;
     saveHipLinkRequest(row: { linkRef: string; transactionId: string | null; abhaAddress: string; patientId: number; refs: string[]; otpHash: string; expiresAt: number }): void;
     getHipLinkRequest(linkRef: string): any;
@@ -173,8 +174,10 @@ export class HipService {
         if (found.patients.length === 0) throw new HipRefusal(1000, 'No matching patient record at this facility.');
         if (found.patients.length > 1) throw new HipRefusal(1000, 'More than one patient matches; please visit the facility to link records.');
         const match = found.patients[0];
-        const linked = new Set(abhaAddress ? this.deps.store.getHipLinkedRefs(abhaAddress) : []);
-        const contexts = this.deps.store.getHipCareContexts(Number(match.id)).filter((row) => !linked.has(row.care_context_ref));
+        const all = this.deps.store.getHipCareContexts(Number(match.id));
+        // A visit already linked to any health ID is not offered again.
+        const linked = this.deps.store.getHipLinkAddresses(all.map((row) => row.care_context_ref));
+        const contexts = all.filter((row) => !linked[row.care_context_ref]);
         if (contexts.length === 0) throw new HipRefusal(1000, 'No new records to link at this facility.');
         const transactionId = typeof body?.transactionId === 'string' ? body.transactionId.trim() : '';
         if (transactionId && abhaAddress) {
@@ -206,6 +209,7 @@ export class HipService {
         const refs: string[] = entries.flatMap((entry: any) => (Array.isArray(entry?.careContexts) ? entry.careContexts : []))
             .map((context: any) => String(context?.referenceNumber ?? ''));
         if (refs.length === 0 || refs.some((ref) => !known.has(ref))) throw new HipRefusal(1000, 'Care context reference not found.');
+        this.refuseLinkedElsewhere(refs, abhaAddress);
         const otp = this.deps.newOtp ? this.deps.newOtp() : String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
         const linkRef = crypto.randomUUID();
         const expiresAt = this.nowMs() + OTP_TTL_MS;
@@ -237,6 +241,13 @@ export class HipService {
         };
     }
 
+    private refuseLinkedElsewhere(refs: string[], abhaAddress: string): void {
+        const owners = this.deps.store.getHipLinkAddresses(refs);
+        if (refs.some((ref) => owners[ref] && owners[ref] !== abhaAddress.toLowerCase())) {
+            throw new HipRefusal(1000, 'A record here is already linked to another health ID.');
+        }
+    }
+
     private linkConfirm(body: any): Record<string, unknown> {
         const linkRef = String(body?.confirmation?.linkRefNumber ?? '').trim();
         const token = String(body?.confirmation?.token ?? '').trim();
@@ -254,6 +265,7 @@ export class HipService {
             throw new HipRefusal(1000, 'The code does not match.');
         }
         const refs: string[] = JSON.parse(request.care_context_refs || '[]');
+        this.refuseLinkedElsewhere(refs, request.abha_address);
         this.deps.store.updateHipLinkRequest(linkRef, { attempts, status: 'linked' });
         this.deps.store.closeHipLinkOtp(linkRef);
         this.deps.store.saveHipLinks(request.abha_address, Number(request.patient_id), refs, 'patient');
@@ -276,6 +288,8 @@ export class HipService {
         if (visit.status !== 'finished' || !visit.care_context_ref) throw new Error('Only a finished visit can be linked.');
         const abhaAddress = String(visit.abha_address ?? '').trim();
         if (!abhaAddress) throw new Error('Link the patient\'s health ID first.');
+        const owner = this.deps.store.getHipLinkAddresses([visit.care_context_ref])[visit.care_context_ref];
+        if (owner && owner !== abhaAddress.toLowerCase()) throw new Error('This visit is already linked to another health ID.');
         const token = this.deps.store.getHipLinkToken(abhaAddress, this.nowMs());
         if (token) {
             await this.sendCareContextLink(abhaAddress, Number(visit.patient_id), [visit.care_context_ref], token);

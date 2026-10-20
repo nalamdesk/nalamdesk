@@ -77,15 +77,24 @@ jobs:
   build-and-release:
     needs: [runner, bump-version]
     if: ${{ !cancelled() && needs.bump-version.result == 'success' }}
-    # matrix.os stays the logical OS name; only the ubuntu leg can move to
-    # CI_RUNNER. Windows and macOS always need GitHub-hosted runners.
-    runs-on: ${{ matrix.os != 'ubuntu-latest' && matrix.os || needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    # matrix.os stays the logical OS name. Out of GitHub-hosted minutes, the
+    # ubuntu leg moves to CI_RUNNER and the windows leg to CI_RUNNER_WINDOWS
+    # (a self-hosted Windows runner, e.g. ["self-hosted","Windows"]), and
+    # the macOS leg is dropped: it needs GitHub-hosted runners, and macOS
+    # downloads stay "coming soon" until the build is signed.
+    runs-on: >-
+      ${{ matrix.os == 'macos-latest' && 'macos-latest'
+      || needs.runner.outputs.hosted == 'true' && matrix.os
+      || matrix.os == 'windows-latest' && (vars.CI_RUNNER_WINDOWS && fromJSON(vars.CI_RUNNER_WINDOWS) || 'windows-latest')
+      || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./desktop
     strategy:
+      # One OS failing must not cancel the others mid-upload.
+      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(needs.runner.outputs.hosted == 'true' && '["windows-latest","ubuntu-latest","macos-latest"]' || '["windows-latest","ubuntu-latest"]') }}
 
     steps:
       - name: Checkout code

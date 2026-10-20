@@ -338,6 +338,9 @@ describe('HIP consent and data transfer', () => {
         expect(store.getHipConsent('hip-consent-1')).toMatchObject({
             status: 'REVOKED', abha_address: 'ravi@sbx', care_context_refs: '["OP-2026-0002"]', date_from: '2026-06-01T00:00:00Z'
         });
+        // A late GRANTED notification does not bring a revoked consent back.
+        await deliver(HIP_CONSENT_NOTIFY_PATH, granted());
+        expect(store.getHipConsent('hip-consent-1')).toMatchObject({ status: 'REVOKED', care_context_refs: '["OP-2026-0002"]' });
     });
 
     it('sends each visit as its own encrypted page to the HIU and reports the transfer', async () => {
@@ -474,9 +477,13 @@ describe('HIP consent and data transfer', () => {
         expect(fetchFn).not.toHaveBeenCalled();
     });
 
-    it('fails a consent notification that names no consent', async () => {
-        const { store, hip } = await setup();
-        expect(() => hip.applyCallback(HIP_CONSENT_NOTIFY_PATH, { notification: { status: 'GRANTED' } }, 'r')).toThrow('names no consent');
+    it('answers a consent notification that names no consent with an error', async () => {
+        const { store, deliver, last } = await setup();
+        const requestId = await deliver(HIP_CONSENT_NOTIFY_PATH, { notification: { status: 'GRANTED' } });
+        expect(last()).toMatchObject({
+            path: '/consent/v3/request/hip/on-notify',
+            body: { error: { code: 1000, message: 'Consent notification names no consent.' }, response: { requestId } }
+        });
         expect(store.getHipConsent('')).toBeNull();
     });
 });

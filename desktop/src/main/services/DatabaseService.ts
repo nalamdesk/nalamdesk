@@ -1697,7 +1697,10 @@ export class DatabaseService {
                 date_from = CASE WHEN excluded.status = 'GRANTED' THEN excluded.date_from ELSE date_from END,
                 date_to = CASE WHEN excluded.status = 'GRANTED' THEN excluded.date_to ELSE date_to END,
                 data_erase_at = CASE WHEN excluded.status = 'GRANTED' THEN excluded.data_erase_at ELSE data_erase_at END,
-                updated_at = CURRENT_TIMESTAMP`)
+                updated_at = CURRENT_TIMESTAMP
+            -- A revoked, expired or denied consent never comes back, even if
+            -- an older GRANTED notification arrives late.
+            WHERE abdm_hip_consents.status NOT IN ('REVOKED', 'EXPIRED', 'DENIED')`)
             .run(row.consentId, row.status, row.abhaAddress, JSON.stringify(row.hiTypes), JSON.stringify(row.refs),
                 row.dateFrom, row.dateTo, row.dataEraseAt);
         this.logAudit('UPDATE', 'abdm_hip_consents', 0, undefined, `HIP consent ${row.consentId} ${row.status}`);

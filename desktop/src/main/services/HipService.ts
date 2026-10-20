@@ -385,7 +385,10 @@ export class HipService {
     private consentNotify(body: any, requestId: string | null): HipCallbackResult {
         const notification = body?.notification ?? {};
         const consentId = String(notification.consentId ?? notification.consentDetail?.consentId ?? '').trim();
-        if (!consentId) throw new Error('Consent notification names no consent.');
+        if (!consentId) {
+            const refusal = { error: { code: 1000, message: 'Consent notification names no consent.' }, response: { requestId: requestId ?? '' } };
+            return { followUp: () => this.gateway(CONSENT_ON_NOTIFY, refusal) };
+        }
         const status = String(notification.status ?? '').toUpperCase();
         const detail = notification.consentDetail ?? {};
         const existing = this.deps.store.getHipConsent(consentId);

@@ -1,5 +1,5 @@
 import * as crypto from 'node:crypto';
-import { CloudUnavailableError, type AbdmRelaySend } from '../cloud/SignedCloudClient';
+import { CloudUnavailableError, type AbdmRelaySend, type AbdmRequestHeaders } from '../cloud/SignedCloudClient';
 
 export type AbdmUpstream = 'abha' | 'gateway';
 
@@ -79,12 +79,13 @@ export class AbdmRelayService {
      * One ABDM call through the relay. Resolves with the JSON body of a 2xx
      * answer; anything else throws a message fit for the front desk.
      */
-    async send(upstream: AbdmUpstream, method: 'GET' | 'POST', path: string, body?: unknown): Promise<any> {
+    async send(upstream: AbdmUpstream, method: 'GET' | 'POST', path: string, body?: unknown, headers?: AbdmRequestHeaders): Promise<any> {
         const send = this.sender();
         if (!send) throw new Error('This computer is not paired with NalamDesk Cloud, so ABDM is in mock mode.');
         let response: Awaited<ReturnType<AbdmRelaySend>>;
         try {
-            response = await send(method, `/abdm/${upstream}${path}`, method === 'GET' ? undefined : body ?? {});
+            const payload = method === 'GET' ? undefined : body ?? {};
+            response = await (headers ? send(method, `/abdm/${upstream}${path}`, payload, headers) : send(method, `/abdm/${upstream}${path}`, payload));
         } catch (error) {
             if (error instanceof CloudUnavailableError) throw new Error(`ABDM relay is unreachable: ${error.message}`);
             throw error;

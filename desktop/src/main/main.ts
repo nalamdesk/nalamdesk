@@ -181,9 +181,20 @@ const hiuService = new HiuService({
         updateConsentStatus: (id, status, handle, actingUserId) =>
             databaseService.updateConsentStatus(id, status, handle, actingUserId),
         storeFetchedRecord: (input, actingUserId) => databaseService.storeFetchedRecord(input, actingUserId),
-        getPendingInbox: () => databaseService.getPendingInbox()
+        getPendingInbox: () => databaseService.getPendingInbox(),
+        setConsentRequestId: (id, consentRequestId) => databaseService.setConsentRequestId(id, consentRequestId),
+        failConsentRequest: (id, error) => databaseService.failConsentRequest(id, error),
+        discardConsentRequest: (id) => databaseService.discardConsentRequest(id),
+        saveHiuArtefacts: (consentId, ids, status) => databaseService.saveHiuArtefacts(consentId, ids, status),
+        getHiuArtefacts: (consentId) => databaseService.getHiuArtefacts(consentId),
+        findHiuArtefact: (field, value) => databaseService.findHiuArtefact(field, value),
+        updateHiuArtefact: (id, patch) => databaseService.updateHiuArtefact(id, patch)
     },
-    relay: abdmRelayService
+    relay: abdmRelayService,
+    // Live consent goes out as the paired facility; HIPs push to the relay (#164).
+    hiuId: () => abdmRelayService.status().hfr_id,
+    dataPushUrl: () => databaseService.getCloudDevice()?.data_push_url ?? null,
+    requester: (actingUserId) => databaseService.getHiuRequester(actingUserId)
 });
 const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();

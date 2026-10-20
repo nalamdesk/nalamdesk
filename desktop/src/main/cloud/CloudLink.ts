@@ -176,7 +176,7 @@ export class CloudLink {
         const status = this.pairing.status();
         if (status.state !== 'paired' || !status.configured || !status.hfrId) return null;
         const hipId = status.hfrId;
-        return (method, path, body) => this.client.signed('relay', method, path, body, { hipId });
+        return (method, path, body, headers) => this.client.signed('relay', method, path, body, { hipId, headers });
     }
 
     /** For the settings screen: is the doorbell live, and when was mail last checked. */

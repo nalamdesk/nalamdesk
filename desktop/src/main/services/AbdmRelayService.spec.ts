@@ -43,6 +43,8 @@ describe('AbdmRelayService', () => {
 
         await relay.send('gateway', 'POST', '/consent/v3/request/init');
         expect(send).toHaveBeenLastCalledWith('POST', '/abdm/gateway/consent/v3/request/init', {});
+        await relay.send('gateway', 'POST', '/consent/v3/fetch', { consentId: 'a' }, { 'request-id': 'r-1' });
+        expect(send).toHaveBeenLastCalledWith('POST', '/abdm/gateway/consent/v3/fetch', { consentId: 'a' }, { 'request-id': 'r-1' });
         await relay.send('abha', 'GET', '/v3/profile/account', { ignored: true });
         expect(send).toHaveBeenLastCalledWith('GET', '/abdm/abha/v3/profile/account', undefined);
     });

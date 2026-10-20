@@ -9,7 +9,19 @@ export interface CloudResponse {
 }
 
 /** A signed ABDM call through the relay, such as `POST /abdm/gateway/...`, as the paired facility. */
-export type AbdmRelaySend = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<CloudResponse>;
+export type AbdmRelaySend = (method: 'GET' | 'POST', path: string, body?: unknown, headers?: AbdmRequestHeaders) => Promise<CloudResponse>;
+
+/**
+ * ABDM headers the desktop may set on a relayed call: the REQUEST-ID that
+ * gateway callbacks echo back, and the link token for HIP-initiated linking.
+ * The relay forwards them; everything else it sets itself.
+ */
+export interface AbdmRequestHeaders {
+    'request-id'?: string;
+    'x-link-token'?: string;
+}
+
+const ABDM_HEADER_NAMES = ['request-id', 'x-link-token'] as const;
 
 export interface SigningIdentity {
     deviceId: string;
@@ -36,6 +48,21 @@ export class CloudUnavailableError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 15_000;
+
+export interface SignedOptions {
+    hipId?: string;
+    /** Unsigned ABDM headers passed on to the gateway; only the names in `AbdmRequestHeaders` are sent. */
+    headers?: AbdmRequestHeaders;
+}
+
+function abdmHeaders(headers: AbdmRequestHeaders | undefined): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const name of ABDM_HEADER_NAMES) {
+        const value = headers?.[name];
+        if (typeof value === 'string' && /^[\x21-\x7e]{1,2048}$/.test(value)) out[name] = value;
+    }
+    return out;
+}
 
 /**
  * HTTP to the relay and booking API (#154). Paired calls carry an Ed25519
@@ -83,16 +110,17 @@ export class SignedCloudClient {
     }
 
     /** Signed call as the paired device. `path` may carry a query string. */
-    async signed(audience: Audience, method: string, path: string, body?: unknown, options: { hipId?: string } = {}): Promise<CloudResponse> {
+    async signed(audience: Audience, method: string, path: string, body?: unknown, options: SignedOptions = {}): Promise<CloudResponse> {
         const identity = this.deps.identity();
         if (!identity) throw new CloudUnavailableError('not_paired', 'This computer is not paired with NalamDesk Cloud.');
         return this.signedAs(identity, audience, method, path, body, options);
     }
 
-    private async signedAs(identity: SigningIdentity, audience: Audience, method: string, path: string, body?: unknown, options: { hipId?: string } = {}): Promise<CloudResponse> {
+    private async signedAs(identity: SigningIdentity, audience: Audience, method: string, path: string, body?: unknown, options: SignedOptions = {}): Promise<CloudResponse> {
         const encoded = body === undefined ? new Uint8Array() : Buffer.from(JSON.stringify(body), 'utf8');
         const [pathOnly, query = ''] = path.split('?', 2) as [string, string?];
         const attempt = () => this.send(audience, method, path, encoded, {
+            ...abdmHeaders(options.headers),
             ...(body === undefined ? {} : { 'content-type': 'application/json' }),
             ...signedHeaders({
                 privateKey: identity.privateKey,

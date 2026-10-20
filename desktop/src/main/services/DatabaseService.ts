@@ -1391,7 +1391,7 @@ export class DatabaseService {
         'data-ready'
     ] as const;
 
-    static readonly consentStatuses = ['requested', 'granted', 'denied', 'expired'] as const;
+    static readonly consentStatuses = ['requested', 'granted', 'denied', 'expired', 'failed'] as const;
 
     /** Records an HIU consent request; returns the stored row. */
     createConsentRequest(input: {
@@ -1448,8 +1448,11 @@ export class DatabaseService {
     getConsentByRequestId(gatewayRequestId: string) {
         const id = String(gatewayRequestId || '').trim();
         if (!id) return null;
-        return this.db.prepare(`SELECT * FROM abdm_consents
-            WHERE gateway_request_id = ?`).get(id) as any;
+        // Our REQUEST-ID first, then the consent manager's own request ID (on-init).
+        return (this.db.prepare(`SELECT * FROM abdm_consents
+            WHERE gateway_request_id = ?`).get(id)
+            ?? this.db.prepare(`SELECT * FROM abdm_consents
+            WHERE consent_request_id = ? ORDER BY id DESC LIMIT 1`).get(id)) as any;
     }
 
     getConsentById(id: number) {
@@ -1466,7 +1469,7 @@ export class DatabaseService {
         if (!existing) throw new Error('Consent request not found.');
         // Terminal states never reopen: a replayed grant after deny/expire
         // must not restore fetching. A fresh grant needs a fresh request.
-        if ((existing.status === 'denied' || existing.status === 'expired') && next !== existing.status) {
+        if (['denied', 'expired', 'failed'].includes(existing.status) && next !== existing.status) {
             throw new Error(`Consent is ${existing.status}; a new request is required.`);
         }
         this.db.prepare(`UPDATE abdm_consents
@@ -1475,6 +1478,82 @@ export class DatabaseService {
         const row = this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?').get(Number(id));
         this.logAudit('UPDATE', 'abdm_consents', Number(id), actingUserId, `HIU consent ${next}`);
         return row;
+    }
+
+    /** Records the consent manager's ID for a request it accepted (on-init). */
+    setConsentRequestId(id: number, consentRequestId: string) {
+        this.db.prepare(`UPDATE abdm_consents SET consent_request_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`).run(String(consentRequestId).slice(0, 128), Number(id));
+        return this.getConsentById(id);
+    }
+
+    /** Marks a request the consent manager refused; the error is shown to the desk. */
+    failConsentRequest(id: number, error: string, actingUserId?: number) {
+        const existing = this.getConsentById(id);
+        if (!existing) throw new Error('Consent request not found.');
+        if (existing.status !== 'requested') return existing;
+        this.db.prepare(`UPDATE abdm_consents SET status = 'failed', error = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`).run(String(error || 'Refused by the consent manager.').slice(0, 500), Number(id));
+        this.logAudit('UPDATE', 'abdm_consents', Number(id), actingUserId, 'HIU consent request failed');
+        return this.getConsentById(id);
+    }
+
+    /** Removes a request the gateway never accepted, so it does not linger as pending. */
+    discardConsentRequest(id: number) {
+        this.db.prepare(`DELETE FROM abdm_consents WHERE id = ? AND status = 'requested'
+            AND consent_request_id IS NULL`).run(Number(id));
+    }
+
+    /** Saves the consent artefacts a grant (or revocation) names; one per HIP. */
+    saveHiuArtefacts(consentId: number, artefactIds: string[], status: string) {
+        const save = this.db.transaction(() => {
+            for (const raw of artefactIds) {
+                const id = String(raw || '').trim().slice(0, 128);
+                if (!id) continue;
+                this.db.prepare(`INSERT INTO abdm_hiu_artefacts (id, consent_id, status) VALUES (?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET status = excluded.status, updated_at = CURRENT_TIMESTAMP`)
+                    .run(id, Number(consentId), status);
+            }
+        });
+        (save as any).immediate ? (save as any).immediate() : (save as any)();
+        return this.getHiuArtefacts(consentId);
+    }
+
+    getHiuArtefacts(consentId: number) {
+        return this.db.prepare(`SELECT * FROM abdm_hiu_artefacts WHERE consent_id = ? ORDER BY created_at, id`)
+            .all(Number(consentId)) as any[];
+    }
+
+    /** The artefact a gateway callback refers to, by the REQUEST-ID it echoes or a transfer ID. */
+    findHiuArtefact(field: 'id' | 'fetch_request_id' | 'hi_request_id' | 'transaction_id', value: string) {
+        const columns = ['id', 'fetch_request_id', 'hi_request_id', 'transaction_id'];
+        if (!columns.includes(field)) throw new Error('Unknown artefact lookup.');
+        const clean = String(value || '').trim();
+        if (!clean) return null;
+        return (this.db.prepare(`SELECT * FROM abdm_hiu_artefacts WHERE ${field} = ? LIMIT 1`).get(clean) ?? null) as any;
+    }
+
+    updateHiuArtefact(id: string, patch: Record<string, string | null>) {
+        const columns = ['status', 'hip_id', 'date_from', 'date_to', 'data_erase_at', 'fetch_request_id',
+            'hi_request_id', 'transaction_id', 'transfer_status', 'error'];
+        const entries = Object.entries(patch || {}).filter(([key]) => columns.includes(key));
+        if (entries.length === 0) return this.findHiuArtefact('id', id);
+        this.db.prepare(`UPDATE abdm_hiu_artefacts SET ${entries.map(([key]) => `${key} = ?`).join(', ')},
+            updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+            .run(...entries.map(([, value]) => (value == null ? null : String(value).slice(0, 500))), String(id));
+        return this.findHiuArtefact('id', id);
+    }
+
+    /** Name and HPR ID of the clinician asking for records, for the consent request. */
+    getHiuRequester(userId?: number | null): { name: string; hprId: string | null } {
+        const user = userId != null
+            ? this.db.prepare('SELECT name, username, abdm_hpr_id FROM users WHERE id = ?').get(Number(userId)) as any
+            : null;
+        const settings = this.db.prepare('SELECT doctor_name, abdm_hpr_id FROM settings LIMIT 1').get() as any;
+        return {
+            name: String(user?.name || settings?.doctor_name || user?.username || 'Clinic').trim(),
+            hprId: String(user?.abdm_hpr_id || settings?.abdm_hpr_id || '').trim() || null
+        };
     }
 
     /** Stores a decrypted inbound bundle against a consent (retention set by caller). */

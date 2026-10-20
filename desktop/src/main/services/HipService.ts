@@ -531,7 +531,7 @@ function toIso(value: unknown): string {
 function clampRange(requested: any, consentFrom: string | null, consentTo: string | null): { from: number; to: number } {
     const pick = (values: unknown[], choose: (a: number, b: number) => number, fallback: number) => {
         const times = values.map((value) => Date.parse(String(value ?? ''))).filter(Number.isFinite);
-        return times.length > 0 ? times.reduce((a, b) => choose(a, b)) : fallback;
+        return times.reduce((a, b) => choose(a, b), fallback);
     };
     const from = pick([requested?.from, consentFrom], Math.max, Number.NEGATIVE_INFINITY);
     const to = pick([requested?.to, consentTo], Math.min, Number.POSITIVE_INFINITY);

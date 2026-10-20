@@ -11,11 +11,12 @@ name: Feature Branch CI
 # - Stacked PR pushes cancel superseded runs (master pushes never cancel:
 #   each merge must validate fully).
 # - Doc/config-only PRs skip CI entirely via paths-ignore.
-# - The repo variable CI_RUNNER (a JSON runs-on value, for example
-#   ["self-hosted","nalamdesk-laptop"]) moves the Linux jobs to a
-#   self-hosted runner and limits master pushes to Linux while it is set.
-#   Delete it to return to GitHub-hosted runners and the full matrix.
-#   While it is set, setup-node skips the GitHub npm cache: self-hosted
+# - Every workflow starts with a `runner` job on a GitHub-hosted runner.
+#   If it runs, the account still has Actions minutes and the Linux jobs
+#   stay GitHub-hosted. If it fails to start (minutes used up), the jobs
+#   move to the repo variable CI_RUNNER (a JSON runs-on value, for example
+#   ["self-hosted","nalamdesk-laptop"]) and master pushes build Linux only.
+#   On CI_RUNNER, setup-node skips the GitHub npm cache: self-hosted
 #   runners keep ~/.npm on disk, and the cache upload/restore over the
 #   runner's home connection cost more than the install it saved.
 on:
@@ -37,10 +38,27 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Picks the runner for the jobs below: GitHub-hosted while the account
+  # has Actions minutes left, otherwise CI_RUNNER (see feature-ci.yml).
+  # Out of minutes, this job fails within seconds without running;
+  # continue-on-error keeps that from failing the run.
+  runner:
+    # Shows as failed on a PR while the account is out of minutes; expected.
+    name: GitHub-hosted minutes
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 2
+    outputs:
+      hosted: ${{ steps.probe.outputs.hosted }}
+    steps:
+      - id: probe
+        run: echo "hosted=true" >> "$GITHUB_OUTPUT"
+
   # ABDM relay (cloud/relay): typecheck, tests and stack synth, ubuntu only.
   relay-check:
-    if: github.event_name == 'pull_request'
-    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    needs: runner
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./cloud/relay
@@ -52,7 +70,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
+          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
           cache-dependency-path: cloud/relay/package-lock.json
 
       - name: Install Dependencies
@@ -71,8 +89,9 @@ jobs:
 
   # Code shared by the relay and booking API (cloud/shared): signed requests.
   shared-check:
-    if: github.event_name == 'pull_request'
-    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    needs: runner
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./cloud/shared
@@ -84,7 +103,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
+          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
           cache-dependency-path: cloud/shared/package-lock.json
 
       - name: Install Dependencies
@@ -98,8 +117,9 @@ jobs:
 
   # Core CDK stacks (cloud/core): typecheck, assertions, synth.
   core-check:
-    if: github.event_name == 'pull_request'
-    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    needs: runner
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./cloud/core
@@ -111,7 +131,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
+          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
           cache-dependency-path: cloud/core/package-lock.json
 
       - name: Install Dependencies
@@ -129,16 +149,18 @@ jobs:
           CDK_DEFAULT_ACCOUNT: '123456789012'
 
   build-check:
+    needs: runner
+    if: ${{ !cancelled() }}
     # matrix.os stays the logical OS name; the step conditions below use it.
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || matrix.os }}
+    runs-on: ${{ matrix.os != 'ubuntu-latest' && matrix.os || needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./desktop
     strategy:
       matrix:
-        # Full matrix on master (release artifacts); ubuntu-only on PRs and
-        # while CI_RUNNER points at a self-hosted runner.
-        os: ${{ github.event_name == 'push' && !vars.CI_RUNNER && fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
+        # Full matrix on master pushes; ubuntu-only on PRs and while the
+        # account is out of Actions minutes.
+        os: ${{ github.event_name == 'push' && needs.runner.outputs.hosted == 'true' && fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
 
     steps:
       - name: Checkout code
@@ -148,7 +170,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
+          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
           cache-dependency-path: desktop/package-lock.json
 
       - name: Install Dependencies
@@ -206,8 +228,9 @@ jobs:
   # SonarCloud Analysis (runs once on ubuntu, after build-check passes)
   # ===========================================================================
   sonar-analysis:
-    needs: build-check
-    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    needs: [runner, build-check]
+    if: ${{ !cancelled() && needs.build-check.result == 'success' }}
+    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: ./desktop
@@ -222,7 +245,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
+          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
           cache-dependency-path: desktop/package-lock.json
 
       - name: Install Dependencies

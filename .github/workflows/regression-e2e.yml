@@ -25,9 +25,24 @@ on:
           - '06 online booking'
 
 jobs:
+  # Picks the runner for the jobs below: GitHub-hosted while the account
+  # has Actions minutes left, otherwise CI_RUNNER (see feature-ci.yml).
+  # Out of minutes, this job fails within seconds without running;
+  # continue-on-error keeps that from failing the run.
+  runner:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 2
+    outputs:
+      hosted: ${{ steps.probe.outputs.hosted }}
+    steps:
+      - id: probe
+        run: echo "hosted=true" >> "$GITHUB_OUTPUT"
+
   regression-e2e:
-    # CI_RUNNER: see feature-ci.yml.
-    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    needs: runner
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 25
     defaults:
       run:
@@ -42,7 +57,7 @@ jobs:
         with:
           node-version: 22
           # CI_RUNNER: self-hosted runners keep ~/.npm, so skip the GitHub cache (see feature-ci.yml).
-          cache: ${{ !vars.CI_RUNNER && 'npm' || '' }}
+          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
           cache-dependency-path: desktop/package-lock.json
 
       - name: Install Dependencies

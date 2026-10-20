@@ -1526,21 +1526,35 @@ export class DatabaseService {
 
     /** The artefact a gateway callback refers to, by the REQUEST-ID it echoes or a transfer ID. */
     findHiuArtefact(field: 'id' | 'fetch_request_id' | 'hi_request_id' | 'transaction_id', value: string) {
-        const columns = ['id', 'fetch_request_id', 'hi_request_id', 'transaction_id'];
-        if (!columns.includes(field)) throw new Error('Unknown artefact lookup.');
+        const lookups: Record<string, string> = {
+            id: 'SELECT * FROM abdm_hiu_artefacts WHERE id = ? LIMIT 1',
+            fetch_request_id: 'SELECT * FROM abdm_hiu_artefacts WHERE fetch_request_id = ? LIMIT 1',
+            hi_request_id: 'SELECT * FROM abdm_hiu_artefacts WHERE hi_request_id = ? LIMIT 1',
+            transaction_id: 'SELECT * FROM abdm_hiu_artefacts WHERE transaction_id = ? LIMIT 1'
+        };
+        const sql = Object.prototype.hasOwnProperty.call(lookups, field) ? lookups[field] : null;
+        if (!sql) throw new Error('Unknown artefact lookup.');
         const clean = String(value || '').trim();
         if (!clean) return null;
-        return (this.db.prepare(`SELECT * FROM abdm_hiu_artefacts WHERE ${field} = ? LIMIT 1`).get(clean) ?? null) as any;
+        return (this.db.prepare(sql).get(clean) ?? null) as any;
     }
 
     updateHiuArtefact(id: string, patch: Record<string, string | null>) {
+        const current = this.findHiuArtefact('id', id);
+        if (!current) return null;
         const columns = ['status', 'hip_id', 'date_from', 'date_to', 'data_erase_at', 'fetch_request_id',
             'hi_request_id', 'transaction_id', 'transfer_status', 'error'];
-        const entries = Object.entries(patch || {}).filter(([key]) => columns.includes(key));
-        if (entries.length === 0) return this.findHiuArtefact('id', id);
-        this.db.prepare(`UPDATE abdm_hiu_artefacts SET ${entries.map(([key]) => `${key} = ?`).join(', ')},
-            updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-            .run(...entries.map(([, value]) => (value == null ? null : String(value).slice(0, 500))), String(id));
+        const changes = Object.keys(patch || {}).filter((key) => columns.includes(key));
+        if (changes.length === 0) return current;
+        const next = (key: string) => {
+            if (!changes.includes(key)) return current[key] ?? null;
+            const value = patch[key];
+            return value == null ? null : String(value).slice(0, 500);
+        };
+        this.db.prepare(`UPDATE abdm_hiu_artefacts SET status = ?, hip_id = ?, date_from = ?, date_to = ?,
+            data_erase_at = ?, fetch_request_id = ?, hi_request_id = ?, transaction_id = ?, transfer_status = ?,
+            error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+            .run(...columns.map(next), String(id));
         return this.findHiuArtefact('id', id);
     }
 

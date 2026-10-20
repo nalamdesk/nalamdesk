@@ -1711,9 +1711,8 @@ export const MIGRATIONS = [
             // The consent manager names a request with its own ID (on-init);
             // a grant carries one consent artefact per HIP, each fetched and
             // asked for records on its own (#164).
-            ['consent_request_id TEXT', 'error TEXT'].forEach((col) => {
-                try { db.exec(`ALTER TABLE abdm_consents ADD COLUMN ${col}`); } catch (e) { }
-            });
+            try { db.exec('ALTER TABLE abdm_consents ADD COLUMN consent_request_id TEXT'); } catch (e) { }
+            try { db.exec('ALTER TABLE abdm_consents ADD COLUMN error TEXT'); } catch (e) { }
             db.exec(`CREATE INDEX IF NOT EXISTS idx_abdm_consents_cm_request ON abdm_consents(consent_request_id);`);
             db.exec(`
                 CREATE TABLE IF NOT EXISTS abdm_hiu_artefacts (

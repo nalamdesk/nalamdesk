@@ -58,6 +58,32 @@ describe('appointment lifecycle integration', () => {
 
     afterEach(() => db.close());
 
+    it('accepts an online booking request with its appointment in one step, once', () => {
+        service.saveAppointmentRequest({ id: 'ABCDEFGHJKMN', patient_name: 'New Person', phone: '8888888888', date: null, time: null, reason: 'Fever' });
+        service.saveAppointmentRequest({ id: 'BCDEFGHJKMNP', patient_name: 'Patient One', phone: '9999999999', date: '2026-10-21', time: '10:00', reason: 'Review' });
+
+        expect(service.acceptAppointmentRequest('ABCDEFGHJKMN', { date: '2026-10-20', time: '11:30' }).created).toBe(true);
+        expect(service.acceptAppointmentRequest('ABCDEFGHJKMN', { date: '2026-10-20', time: '11:30' }).created).toBe(false);
+        expect(service.acceptAppointmentRequest('BCDEFGHJKMNP', { date: '2026-10-21', time: '10:00' }).created).toBe(true);
+
+        const appointments = db.prepare('SELECT a.date, a.time, a.reason, p.name, p.mobile FROM appointments a JOIN patients p ON p.id = a.patient_id ORDER BY a.date').all();
+        expect(appointments).toEqual([
+            { date: '2026-10-20', time: '11:30', reason: 'Fever', name: 'New Person', mobile: '8888888888' },
+            // An existing patient with that phone is reused.
+            { date: '2026-10-21', time: '10:00', reason: 'Review', name: 'Patient One', mobile: '9999999999' }
+        ]);
+        expect(db.prepare("SELECT COUNT(*) AS n FROM patients WHERE mobile = '9999999999'").get().n).toBe(1);
+        expect(db.prepare("SELECT status FROM appointment_requests WHERE id = 'ABCDEFGHJKMN'").get().status).toBe('accepted');
+    });
+
+    it('leaves the request pending when the appointment cannot be booked', () => {
+        service.saveAppointmentRequest({ id: 'ABCDEFGHJKMN', patient_name: 'New Person', phone: '8888888888', date: null, time: null, reason: 'Fever' });
+        db.exec('DROP TABLE appointments');
+        expect(() => service.acceptAppointmentRequest('ABCDEFGHJKMN', { date: '2026-10-20', time: '11:30' })).toThrow();
+        expect(db.prepare("SELECT status FROM appointment_requests WHERE id = 'ABCDEFGHJKMN'").get().status).toBe('pending');
+        expect(db.prepare("SELECT COUNT(*) AS n FROM patients WHERE mobile = '8888888888'").get().n).toBe(0);
+    });
+
     it('books, confirms, checks in, and fulfills with linked rows', () => {
         const created: any = service.saveAppointment({ patient_id: 1, date: '2026-10-05', time: '10:00', reason: 'Review' });
         const id = Number(created.lastInsertRowid);

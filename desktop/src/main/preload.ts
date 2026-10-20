@@ -186,7 +186,7 @@ contextBridge.exposeInMainWorld('electron', {
         syncNow: () => ipcRenderer.invoke('cloud:syncNow'),
         publishSlots: (slots: any, dates: string[]) => ipcRenderer.invoke('cloud:publishSlots', slots, dates),
         getPublishedSlots: (date: string) => ipcRenderer.invoke('cloud:getPublishedSlots', date),
-        decide: (data: { ref: string, decision: 'accepted' | 'declined' }) => ipcRenderer.invoke('cloud:decide', data),
+        decide: (data: { ref: string, decision: 'accepted' | 'declined', date?: string, time?: string }) => ipcRenderer.invoke('cloud:decide', data),
         onPairingChanged: (callback: (status: any) => void) => {
             const listener = (_event: unknown, status: any) => callback(status);
             ipcRenderer.on('cloud:pairingChanged', listener);

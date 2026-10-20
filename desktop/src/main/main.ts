@@ -1639,13 +1639,22 @@ handleCloud('cloud:decide', async (_, input) => {
     const ref = String(input?.ref ?? '');
     const decision = input?.decision === 'accepted' ? 'accepted' : input?.decision === 'declined' ? 'declined' : null;
     if (!decision) throw new Error('Decision must be accepted or declined.');
+    // An acceptance carries the appointment's slot, booked locally in the
+    // same transaction that marks the request accepted.
+    const date = String(input?.date ?? '');
+    const time = String(input?.time ?? '');
+    if (decision === 'accepted' && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time))) {
+        throw new Error('An accepted booking needs a date and time.');
+    }
+    const slot = decision === 'accepted' ? { date, time } : undefined;
     try {
-        await cloudLink.booking.decide(ref, decision);
+        await cloudLink.booking.decide(ref, decision, slot);
     } catch (error) {
         // Requests left over from the retired cloud sync have no online
         // reference; they are decided locally only.
         if (error instanceof BookingError && error.code === 'bad_ref') {
-            databaseService.updateAppointmentRequestStatus(ref, decision === 'declined' ? 'rejected' : 'accepted');
+            if (slot) databaseService.acceptAppointmentRequest(ref, slot);
+            else databaseService.updateAppointmentRequestStatus(ref, 'rejected');
             return { success: true, local: true };
         }
         if (error instanceof BookingError) throw new Error(`${error.code}: ${error.message}`);

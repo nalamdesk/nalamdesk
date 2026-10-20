@@ -3522,6 +3522,33 @@ export class DatabaseService {
         return this.db.prepare('UPDATE appointment_requests SET status = ? WHERE id = ?').run(status, id);
     }
 
+    /**
+     * Accepts a booking request: finds or creates the patient by phone, books
+     * the appointment and marks the request accepted, all in one transaction,
+     * so an accepted request always has its appointment. A request already
+     * accepted is left as it is, so a retry never books twice.
+     */
+    acceptAppointmentRequest(id: string, slot: { date: string; time: string }): { created: boolean; appointmentId?: number } {
+        if (!this.db) throw new Error('DB not initialized');
+        return this.db.transaction(() => {
+            const req = this.db.prepare('SELECT * FROM appointment_requests WHERE id = ?').get(id) as any;
+            if (!req) throw new Error('Booking request not found.');
+            if (req.status === 'accepted') return { created: false };
+            const phone = String(req.phone || '');
+            const existing = phone
+                ? this.db.prepare('SELECT id FROM patients WHERE mobile = ? AND merged_into IS NULL AND active != 0 ORDER BY id LIMIT 1').get(phone) as any
+                : undefined;
+            const patientId = existing
+                ? Number(existing.id)
+                : Number(this.savePatient({
+                    name: req.patient_name, mobile: phone, age: 0, gender: 'Unknown', address: ''
+                }).lastInsertRowid);
+            const appointment = this.saveAppointment({ patient_id: patientId, date: slot.date, time: slot.time, reason: req.reason });
+            this.db.prepare("UPDATE appointment_requests SET status = 'accepted' WHERE id = ?").run(id);
+            return { created: true, appointmentId: Number(appointment.lastInsertRowid) };
+        })();
+    }
+
     // Appointments (Bookings)
     getAppointments(date: string) {
         if (!this.db) throw new Error('DB not initialized');

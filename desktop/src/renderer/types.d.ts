@@ -139,7 +139,7 @@ declare global {
                 syncNow: () => Promise<{ success: boolean; paired: boolean; saved: number }>;
                 publishSlots: (slots: { date: string; time: string }[], dates: string[]) => Promise<{ published: number }>;
                 getPublishedSlots: (date: string) => Promise<{ slotId: string; date: string; time: string; state: string; ref?: string }[]>;
-                decide: (data: { ref: string; decision: 'accepted' | 'declined' }) => Promise<{ success: boolean; local?: boolean }>;
+                decide: (data: { ref: string; decision: 'accepted' | 'declined'; date?: string; time?: string }) => Promise<{ success: boolean; local?: boolean }>;
                 onPairingChanged: (callback: (status: CloudStatus) => void) => () => void;
                 onNewRequests: (callback: (data: { count: number }) => void) => () => void;
             };

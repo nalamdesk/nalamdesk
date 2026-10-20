@@ -27,11 +27,12 @@ export class CloudService {
 
     /**
      * Accepts or declines an online booking request. The cloud books or
-     * releases the slot first; main records the decision locally after.
+     * releases the slot first; main records the decision locally after,
+     * booking an accepted request's appointment for `slot` in the same step.
      */
-    async decide(ref: string, decision: 'accepted' | 'declined') {
+    async decide(ref: string, decision: 'accepted' | 'declined', slot?: { date: string; time: string }) {
         if ((window as any).electron) {
-            return (window as any).electron.cloud.decide({ ref, decision });
+            return (window as any).electron.cloud.decide({ ref, decision, ...slot });
         }
     }
 

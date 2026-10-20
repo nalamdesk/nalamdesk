@@ -43,6 +43,7 @@ function memoryDb() {
         saveAppointmentRequest: (r: any) => { requests.push(r); },
         saveAbdmInboxItem: (r: any) => { abdm.push(r); },
         updateAppointmentRequestStatus: vi.fn(),
+        acceptAppointmentRequest: vi.fn(),
         raw: () => row,
         requests,
         abdm

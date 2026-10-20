@@ -1,8 +1,9 @@
 name: Pages CI
 
-# Validates the docs site on PRs (Docusaurus, deployed to GitHub Pages
-# by deploy-docs.yml on master). Landing has its own pipeline in
-# deploy-landing.yml (build + wrangler dry-run on PR, deploy on master).
+# Validates the docs site on PRs (Docusaurus). On master, deploy-docs.yml
+# builds the same site before deploying it to Cloudflare, so no push run
+# here. Landing has its own pipeline in deploy-landing.yml (build +
+# wrangler dry-run on PR, deploy on master).
 on:
   pull_request:
     branches:
@@ -10,11 +11,6 @@ on:
     paths:
       - 'cloud/documentation/**'
       - '.github/workflows/pages-ci.yml'
-  push:
-    branches:
-      - master
-    paths:
-      - 'cloud/documentation/**'
 
 jobs:
   docs:

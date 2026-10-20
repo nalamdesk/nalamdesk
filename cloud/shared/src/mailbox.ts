@@ -172,10 +172,7 @@ export class DynamoMailbox {
             await this.batchDelete(clinicId, ids.slice(i, i + 25));
         }
         if (ids.length > 0) {
-            await this.s3.send(new DeleteObjectsCommand({
-                Bucket: this.options.bucket,
-                Delete: { Objects: ids.map((id) => ({ Key: mailboxObjectKey(clinicId, id) })), Quiet: true }
-            }));
+            await this.deleteObjects(ids.map((id) => mailboxObjectKey(clinicId, id)));
         }
     }
 
@@ -195,7 +192,7 @@ export class DynamoMailbox {
             const keys = (listing.Contents ?? []).map((object) => object.Key)
                 .filter((key): key is string => !!key && key.slice(prefix.length) < cut);
             if (keys.length) {
-                await this.s3.send(new DeleteObjectsCommand({ Bucket: this.options.bucket, Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true } }));
+                await this.deleteObjects(keys);
             }
             token = listing.IsTruncated ? listing.NextContinuationToken : undefined;
         } while (token);
@@ -224,6 +221,20 @@ export class DynamoMailbox {
             startKey = page.LastEvaluatedKey;
         } while (startKey);
         return removed;
+    }
+
+    /** DeleteObjects reports per-key failures in a successful response: retry those, then throw. */
+    private async deleteObjects(keys: string[]): Promise<void> {
+        let pending = keys;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            if (attempt > 0) await sleep(50 * 2 ** attempt);
+            const result = await this.s3.send(new DeleteObjectsCommand({
+                Bucket: this.options.bucket, Delete: { Objects: pending.map((Key) => ({ Key })), Quiet: true }
+            }));
+            pending = (result?.Errors ?? []).map((error) => error.Key).filter((key): key is string => !!key);
+            if (!pending.length) return;
+        }
+        throw new Error('mailbox_delete_incomplete');
     }
 
     private async batchDelete(clinicId: string, ids: string[]): Promise<void> {

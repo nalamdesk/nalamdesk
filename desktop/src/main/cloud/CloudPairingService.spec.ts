@@ -428,6 +428,26 @@ describe('signing key rotation', () => {
         expect(await pairing.rotateSigningKeyIfDue()).toBe(true);
         expect(db.raw()!.previous_signing_public).toBeNull();
     });
+    it('keeps a doorbell certificate saved while the rotation call was out', async () => {
+        const { pairing, clock, cloud, db } = await paired();
+        clock.now += SIGNING_KEY_MAX_AGE_MS + 1;
+        const real = cloud.fetchFn.getMockImplementation()!;
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        cloud.fetchFn.mockImplementationOnce(async (url: string, init: any) => { await held; return real(url, init); });
+        const rotation = pairing.rotateSigningKeyIfDue();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const deviceId = db.raw()!.device_id as string;
+        const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+        pairing.saveDoorbellIdentity(privateKey, { certificatePem: 'CERT', endpoint: 'x-ats.iot.test', clientId: deviceId, topic: 't/cln/mail' });
+        release();
+        expect(await rotation).toBe(true);
+        const row = db.raw()!;
+        expect(row.previous_signing_public).toBeNull();
+        expect(row).toMatchObject({ iot_certificate_pem: 'CERT', iot_client_id: deviceId, iot_topic: 't/cln/mail' });
+        expect(pairing.doorbellIdentity()?.certificatePem).toBe('CERT');
+    });
 });
 
 describe('cloud link', () => {
@@ -472,6 +492,34 @@ describe('cloud link', () => {
         await vi.waitFor(() => expect(inboxCalls()).toBeGreaterThan(before));
         link.stop();
         expect(client.ended).toBe(true);
+        expect(link.mailboxStatus().doorbell).toBe('off');
+    });
+
+    it('lets a restore drain a certificate request in flight, and saves nothing after stop', async () => {
+        const database = new DatabaseService();
+        const { pairing, cloud, link, db } = setup({ runWork: (work) => database.runWork(work) });
+        const real = cloud.fetchFn.getMockImplementation()!;
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let asked = false;
+        cloud.fetchFn.mockImplementation(async (url: string, init: any) => {
+            if (new URL(url).pathname === '/device/iot-certificate') { asked = true; await held; }
+            return real(url, init);
+        });
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        await pairing.activate({ code: cloud.approve() });
+        await vi.waitFor(() => expect(asked).toBe(true));
+
+        let drained = false;
+        const fence = database.fence(1_000).then(() => { drained = true; });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(drained).toBe(false);
+        link.stop();
+        release();
+        await fence;
+        expect(cloud.state.csrs).toHaveLength(1);
+        expect(db.raw()!.iot_client_id ?? null).toBeNull();
+        expect(db.raw()!.iot_certificate_pem ?? null).toBeNull();
         expect(link.mailboxStatus().doorbell).toBe('off');
     });
 

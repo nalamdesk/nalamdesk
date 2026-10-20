@@ -32,7 +32,8 @@ export interface MailboxItem {
 }
 
 export interface MailboxTransport {
-    list(): Promise<{ items: ListedItem[]; more: boolean }>;
+    /** Oldest items first; `after` (an item ID) starts the page past it. */
+    list(after?: string): Promise<{ items: ListedItem[]; more: boolean }>;
     /** Fetches a large item's sealed envelope from its link. */
     download(url: string): Promise<string>;
     ack(ids: string[]): Promise<void>;
@@ -112,8 +113,9 @@ export class MailboxReader {
     }
 
     private async pass(saved: SyncCounts): Promise<void> {
+        let after: string | undefined;
         for (let page = 0; page < MAX_PAGES; page++) {
-            const { items, more } = await this.deps.transport.list();
+            const { items, more } = await this.deps.transport.list(after);
             const done: string[] = [];
             for (const listed of items) {
                 const handler = this.deps.handlers[listed.type];
@@ -138,8 +140,10 @@ export class MailboxReader {
                 if (result === 'saved') saved[listed.type] = (saved[listed.type] ?? 0) + 1;
             }
             for (let i = 0; i < done.length; i += 100) await this.deps.transport.ack(done.slice(i, i + 100));
-            // A page with nothing acknowledged would come back unchanged.
-            if (!more || done.length === 0) return;
+            if (!more || items.length === 0) return;
+            // Items kept for a retry stay ahead of the rest, so the next page
+            // starts past this one; they are tried again on the next pass.
+            after = items[items.length - 1]!.id;
         }
     }
 }

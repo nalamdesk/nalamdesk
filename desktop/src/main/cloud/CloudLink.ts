@@ -25,8 +25,9 @@ export function bookingTransport(client: SignedCloudClient): ClinicCloudTranspor
 /** The mailbox on the relay (#155): signed list and acknowledge; large items from short-lived links. */
 export function mailboxTransport(client: SignedCloudClient, fetchFn: typeof fetch = fetch): MailboxTransport {
     return {
-        async list() {
-            const response = await client.signed('relay', 'GET', '/inbox');
+        async list(after) {
+            // Item IDs are [a-z0-9], so the query needs no escaping and signs as sent.
+            const response = await client.signed('relay', 'GET', after ? `/inbox?after=${encodeURIComponent(after)}` : '/inbox');
             if (response.status !== 200) throw new Error(`Mailbox fetch failed (${response.body?.error || response.status}).`);
             const raw = Array.isArray(response.body?.items) ? response.body.items : [];
             const items: ListedItem[] = raw.filter((item: any) => typeof item?.id === 'string' && typeof item?.type === 'string'
@@ -133,7 +134,8 @@ export class CloudLink {
             onConnected: () => this.mailbox.onDoorbell(),
             onRing: () => this.mailbox.onDoorbell(),
             onStateChange: () => deps.onMailboxChange?.(),
-            connect: deps.mqttConnect
+            connect: deps.mqttConnect,
+            runWork: deps.runWork
         });
     }
 

@@ -10,7 +10,10 @@ function setup(handler: MailboxHandler['handle'] = () => 'saved', pageSize = 50)
     const handled: string[] = [];
     const synced: Record<string, number>[] = [];
     const transport = {
-        list: vi.fn(async () => ({ items: items.slice(0, pageSize), more: items.length > pageSize })),
+        list: vi.fn(async (after?: string) => {
+            const rest = after === undefined ? items : items.filter((item) => item.id > after);
+            return { items: rest.slice(0, pageSize), more: rest.length > pageSize };
+        }),
         download: vi.fn(async (url: string) => {
             downloads.push(url);
             if (url.includes('broken')) throw new Error('403');
@@ -66,11 +69,25 @@ describe('MailboxReader', () => {
         expect(h.transport.list).toHaveBeenCalledTimes(3);
     });
 
-    it('stops paging when a page has nothing it can acknowledge', async () => {
-        const h = setup(() => 'retry', 1);
-        h.put({ id: 'a', type: 'booking-request', sealed: 's' }, { id: 'b', type: 'booking-request', sealed: 's' });
+    it('pages past items it keeps for a retry, so newer mail is not starved', async () => {
+        const h = setup((item) => (item.id === 'a' || item.id === 'b' ? 'retry' : 'saved'), 2);
+        h.put(...['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, type: 'booking-request', sealed: 's' })));
+        expect(await h.reader.sync()).toEqual({ 'booking-request': 3 });
+        expect(h.transport.list.mock.calls.map((call) => call[0])).toEqual([undefined, 'b', 'd']);
+        expect(h.acked).toEqual([['c', 'd'], ['e']]);
+        // The next pass starts from the oldest again and retries what was kept.
+        h.transport.list.mockClear();
         await h.reader.sync();
-        expect(h.transport.list).toHaveBeenCalledTimes(1);
+        expect(h.transport.list.mock.calls[0]![0]).toBeUndefined();
+        expect(h.handled.filter((entry) => entry.startsWith('a:'))).toHaveLength(2);
+    });
+
+    it('stops paging at the last page, and after a bounded number of pages', async () => {
+        const h = setup(() => 'retry', 1);
+        h.put(...Array.from({ length: 30 }, (_, i) => ({ id: `i${String(i).padStart(2, '0')}`, type: 'booking-request', sealed: 's' })));
+        await h.reader.sync();
+        expect(h.transport.list).toHaveBeenCalledTimes(20);
+        expect(h.acked).toEqual([]);
     });
 
     it('folds a doorbell that rings mid-fetch into one more pass', async () => {

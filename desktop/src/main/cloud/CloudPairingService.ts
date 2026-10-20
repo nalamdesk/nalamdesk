@@ -474,7 +474,12 @@ export class CloudPairingService {
             || (response.status === 400 && response.body?.error === 'same_key')
             || (response.status === 401 && response.body?.error === 'bad_signature');
         if (!done) throw failure(response);
-        this.save({ ...row, previous_signing_public: null, previous_signing_private_protected: null, updated_at: this.nowMs() });
+        // Re-read the row: the doorbell certificate (or a revocation) may have
+        // been saved while the relay call was out, and must not be written over.
+        const current = this.deps.store.getCloudDevice();
+        if (current && current.signing_public === row.signing_public && current.previous_signing_public === oldKey) {
+            this.save({ ...current, previous_signing_public: null, previous_signing_private_protected: null, updated_at: this.nowMs() });
+        }
         return true;
     }
 }

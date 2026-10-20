@@ -71,7 +71,7 @@ export interface InboxItem {
 
 /** The desktop's side of the mailbox (#155): list, acknowledge, and purge on revocation. */
 export interface Inbox {
-    list(clinicId: string): Promise<{ items: InboxItem[]; more: boolean }>;
+    list(clinicId: string, after?: string): Promise<{ items: InboxItem[]; more: boolean }>;
     ack(clinicId: string, ids: string[]): Promise<void>;
     /** Drops mail stored before `beforeMs`, which only a replaced key could open. */
     purge(clinicId: string, beforeMs: number): Promise<number>;

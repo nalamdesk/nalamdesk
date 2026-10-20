@@ -127,18 +127,22 @@ export class DynamoMailbox {
     /**
      * The clinic's oldest unexpired items, up to the item and inline-byte
      * limits. `more` says another listing would return further items.
+     * `after` (an item ID) starts the page past it, so a reader holding items
+     * it cannot handle yet still reaches the newer ones behind them.
      */
-    async list(clinicId: string): Promise<{ items: StoredMailboxItem[]; more: boolean }> {
+    async list(clinicId: string, after?: string): Promise<{ items: StoredMailboxItem[]; more: boolean }> {
         const now = this.nowMs();
         // The key condition starts at the 48-hour cut, so expired rows still
         // waiting for TTL deletion never use up the page's Limit.
+        const floor = itemIdFloor(now - MAILBOX_LIMITS.ttlMs);
+        const past = after !== undefined && isMailboxItemId(after) && after >= floor ? after : null;
         const result = await this.dynamo.send(new QueryCommand({
             TableName: this.options.table,
-            KeyConditionExpression: 'clinicId = :c AND itemId >= :from',
+            KeyConditionExpression: past ? 'clinicId = :c AND itemId > :from' : 'clinicId = :c AND itemId >= :from',
             FilterExpression: 'expiresAt > :now',
             ExpressionAttributeValues: {
                 ':c': { S: clinicId },
-                ':from': { S: itemIdFloor(now - MAILBOX_LIMITS.ttlMs) },
+                ':from': { S: past ?? floor },
                 ':now': { N: String(Math.floor(now / 1000)) }
             },
             ConsistentRead: true,

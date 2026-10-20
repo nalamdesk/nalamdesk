@@ -41,10 +41,15 @@ export interface DoorbellDeps {
     onStateChange?: (state: DoorbellState) => void;
     /** mqtt.connect, injectable for tests. */
     connect?: (options: IClientOptions) => MqttClient;
+    /** DatabaseService.runWork: certificate issuance writes the database, so a restore drains it. */
+    runWork?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
-/** Asks the relay for a certificate for a fresh P-256 key, and stores both. */
-export async function issueDoorbellIdentity(deps: Pick<DoorbellDeps, 'identity' | 'client'>): Promise<DoorbellIdentity> {
+/**
+ * Asks the relay for a certificate for a fresh P-256 key, and stores both,
+ * unless `wanted` says the doorbell stopped while the relay was answering.
+ */
+export async function issueDoorbellIdentity(deps: Pick<DoorbellDeps, 'identity' | 'client'>, wanted: () => boolean = () => true): Promise<DoorbellIdentity> {
     const deviceId = deps.identity.deviceId();
     if (!deviceId) throw new Error('This computer is not paired.');
     const key = newDoorbellKey();
@@ -54,6 +59,7 @@ export async function issueDoorbellIdentity(deps: Pick<DoorbellDeps, 'identity' 
         || typeof body.topic !== 'string' || body.clientId !== deviceId) {
         throw new Error(`Doorbell certificate refused (${body.error || response.status}).`);
     }
+    if (!wanted()) throw new Error('The doorbell stopped.');
     deps.identity.saveDoorbellIdentity(key, { certificatePem: body.certificatePem, endpoint: body.endpoint, clientId: body.clientId, topic: body.topic });
     const stored = deps.identity.doorbellIdentity();
     if (!stored) throw new Error('The doorbell certificate could not be stored.');
@@ -65,6 +71,8 @@ export class Doorbell {
     private retryTimer: NodeJS.Timeout | null = null;
     private connectTimer: NodeJS.Timeout | null = null;
     private running = false;
+    /** Bumped on each start and stop, so work from an earlier run saves nothing. */
+    private run = 0;
     private current: DoorbellState = 'off';
     private portIndex = 0;
     private failures = 0;
@@ -78,12 +86,14 @@ export class Doorbell {
     start(): void {
         if (this.running) return;
         this.running = true;
+        this.run++;
         this.failures = 0;
         void this.attempt();
     }
 
     stop(): void {
         this.running = false;
+        this.run++;
         if (this.retryTimer) clearTimeout(this.retryTimer);
         if (this.connectTimer) clearTimeout(this.connectTimer);
         this.retryTimer = this.connectTimer = null;
@@ -111,19 +121,28 @@ export class Doorbell {
         if (!this.running) return;
         this.setState('connecting');
         let identity: DoorbellIdentity | null;
+        const run = this.run;
+        const wanted = () => this.running && this.run === run;
+        const work = <T>(task: () => Promise<T>) => (this.deps.runWork ? this.deps.runWork(task) : task());
         try {
-            if (this.failures >= REISSUE_AFTER_FAILURES) {
-                this.deps.identity.clearDoorbellIdentity();
-                this.failures = 0;
-            }
-            identity = this.deps.identity.doorbellIdentity() ?? await issueDoorbellIdentity(this.deps);
+            // Inside the restore fence: a restore waits for an issuance in
+            // flight, and one finishing after stop() writes nothing.
+            identity = await work(async () => {
+                if (!wanted()) return null;
+                if (this.failures >= REISSUE_AFTER_FAILURES) {
+                    this.deps.identity.clearDoorbellIdentity();
+                    this.failures = 0;
+                }
+                return this.deps.identity.doorbellIdentity() ?? await issueDoorbellIdentity(this.deps, wanted);
+            });
         } catch (error) {
+            if (!wanted()) return;
             log.warn(`[Doorbell] No certificate yet: ${(error as Error).message}`);
             this.failures++;
             this.retry();
             return;
         }
-        if (!this.running) return;
+        if (!identity || !wanted()) return;
 
         const { port, ALPNProtocols } = PORTS[this.portIndex]!;
         const connect = this.deps.connect ?? (await import('mqtt')).connect;

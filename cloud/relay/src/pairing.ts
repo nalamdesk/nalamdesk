@@ -155,12 +155,17 @@ export function verifyEd25519(publicKeyRaw: string, message: string, signature: 
     }
 }
 
+// Any X25519 private key will do: a key exchange with it rejects the
+// low-order points that would make every later seal fail.
+const X25519_PROBE = crypto.generateKeyPairSync('x25519').privateKey;
+
 function validX25519(raw: string): boolean {
     if (!KEY.test(raw)) return false;
     const bytes = Buffer.from(raw, 'base64');
-    if (bytes.length !== 32 || bytes.every((b) => b === 0)) return false;
+    if (bytes.length !== 32) return false;
     try {
-        crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), bytes]), format: 'der', type: 'spki' });
+        const publicKey = crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), bytes]), format: 'der', type: 'spki' });
+        crypto.diffieHellman({ privateKey: X25519_PROBE, publicKey });
         return true;
     } catch {
         return false;

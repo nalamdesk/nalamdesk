@@ -154,7 +154,15 @@ export class MailboxReader {
                         log.error(`[Mailbox] Handler for ${item.type} failed`, error);
                         outcome = 'retry';
                     }
-                    if (outcome !== 'retry') await this.deps.transport.ack([item.id]);
+                    if (outcome !== 'retry') {
+                        // A failed delete leaves the item to be saved again
+                        // (saves are idempotent) and must not stop newer mail.
+                        try {
+                            await this.deps.transport.ack([item.id]);
+                        } catch (error) {
+                            log.warn(`[Mailbox] Could not acknowledge item ${item.id}: ${(error as Error).message}`);
+                        }
+                    }
                     return outcome;
                 });
                 if (result === 'saved') saved[item.type] = (saved[item.type] ?? 0) + 1;

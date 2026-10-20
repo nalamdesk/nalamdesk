@@ -121,6 +121,14 @@ describe('MailboxReader', () => {
         expect(log).toEqual(['download:0', 'save:1', 'ack:a:1']);
     });
 
+    it('keeps saving newer mail when acknowledgements fail', async () => {
+        const h = setup();
+        h.put({ id: 'a', type: 'booking-request', sealed: 's' }, { id: 'b', type: 'booking-request', sealed: 's' });
+        h.transport.ack.mockRejectedValue(new Error('503'));
+        expect(await h.reader.sync()).toEqual({ 'booking-request': 2 });
+        expect(h.handled).toEqual(['a:s', 'b:s']);
+    });
+
     it('keeps a handler failure in the mailbox for the next pass', async () => {
         const h = setup(() => { throw new Error('disk full'); });
         h.put({ id: 'a', type: 'booking-request', sealed: 's' });

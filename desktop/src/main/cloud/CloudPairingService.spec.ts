@@ -323,6 +323,17 @@ describe('pairing this computer', () => {
         link.stop();
     });
 
+    it('ignores a revocation reply for a device that is no longer the stored one', async () => {
+        const { pairing, cloud, link, db } = setup();
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        await pairing.activate({ code: cloud.approve() });
+        await pairing.markRevoked('revoked', 'dev_restored_elsewhere');
+        expect(pairing.status().state).toBe('paired');
+        await pairing.markRevoked('revoked', db.raw()!.device_id!);
+        expect(pairing.status().state).toBe('revoked');
+        link.stop();
+    });
+
     it('reports keys it cannot read (a backup restored on another computer)', async () => {
         const { pairing, cloud, keys, link } = setup();
         await pairing.request({ hfrId: HFR, label: 'PC' });

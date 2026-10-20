@@ -403,13 +403,18 @@ export class CloudPairingService {
     /**
      * Called by the signed client when the cloud says this device is revoked
      * or unknown: another computer was paired for the HFR ID, or staff
-     * revoked it. Cloud work stops until the admin pairs again.
+     * revoked it. Cloud work stops until the admin pairs again. A late reply
+     * for a device that is no longer the stored one (a restore installed
+     * another) changes nothing, and the write is drained by a restore.
      */
-    markRevoked(reason: string): void {
-        const row = this.deps.store.getCloudDevice();
-        if (!row || row.state !== 'paired') return;
-        this.save({ ...row, state: 'revoked', revoked_reason: reason, updated_at: this.nowMs() });
-        this.changed();
+    markRevoked(reason: string, deviceId?: string): Promise<void> {
+        return this.work(async () => {
+            const row = this.deps.store.getCloudDevice();
+            if (!row || row.state !== 'paired') return;
+            if (deviceId !== undefined && row.device_id !== deviceId) return;
+            this.save({ ...row, state: 'revoked', revoked_reason: reason, updated_at: this.nowMs() });
+            this.changed();
+        });
     }
 
     /**

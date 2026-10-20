@@ -116,7 +116,8 @@ export class CloudLink {
         this.client = new SignedCloudClient({
             baseUrl: deps.baseUrl,
             identity: () => this.pairing.signingIdentity(),
-            onRevoked: (code) => this.pairing.markRevoked(code === 'device_revoked' ? 'revoked' : 'unknown'),
+            onRevoked: (code, deviceId) => this.pairing.markRevoked(code === 'device_revoked' ? 'revoked' : 'unknown', deviceId)
+                .catch((error) => log.warn(`[Cloud] Revocation not recorded: ${(error as Error).message}`)),
             fetchFn: deps.fetchFn,
             nowMs: deps.nowMs
         });

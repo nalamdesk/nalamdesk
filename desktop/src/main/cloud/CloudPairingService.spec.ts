@@ -140,6 +140,7 @@ function fakeCloud(clock: { now: number }) {
             return json(200, { certificatePem: 'CERT', endpoint: 'iot.test', clientId: d.deviceId, topic: 'nalamdesk/sandbox/clinic/cln_1/mail' });
         }
         if (u.pathname === '/api/clinic/listing') return json(200, { ok: true });
+        if (u.pathname.startsWith('/abdm/')) return json(200, { hipId: h['x-hip-id'] ?? null, body });
         return json(404, { error: 'not_found' });
     });
     const approve = () => {
@@ -482,6 +483,18 @@ describe('cloud link', () => {
         // Only what was saved is acknowledged; an unknown type waits for an app that can read it.
         expect(cloud.state.mailbox.map((m) => m.id)).toEqual(['m3']);
         expect(link.mailboxStatus().lastCheckedAt).not.toBeNull();
+        link.stop();
+    });
+
+    it('signs ABDM relay calls as the paired facility, and offers none before pairing', async () => {
+        const { pairing, cloud, link } = setup();
+        expect(link.abdmRelay()).toBeNull();
+        await pairing.request({ hfrId: HFR, label: 'PC' });
+        expect(link.abdmRelay()).toBeNull();
+        await pairing.activate({ code: cloud.approve() });
+        const send = link.abdmRelay()!;
+        expect(await send('POST', '/abdm/gateway/patient-share/v3/on-share', { a: 1 })).toEqual({ status: 200, body: { hipId: HFR, body: { a: 1 } } });
+        expect(cloud.state.calls.at(-1)).toEqual({ method: 'POST', path: '/abdm/gateway/patient-share/v3/on-share', audience: 'relay' });
         link.stop();
     });
 

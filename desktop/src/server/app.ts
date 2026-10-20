@@ -143,8 +143,7 @@ export class ApiServer {
                     hfr_id: settings.abdm_hfr_id || '',
                     hpr_id: settings.abdm_hpr_id || '',
                     hip_endpoint: settings.abdm_hip_endpoint || '',
-                    has_recipient_key: !!settings.abdm_recipient_key,
-                    has_callback_secret: db.hasCallbackSecret()
+                    has_recipient_key: !!settings.abdm_recipient_key
                 };
             }
             case 'abdmSaveConfig': {
@@ -175,15 +174,6 @@ export class ApiServer {
                     const key = String(payload['recipient_key']).trim();
                     if (key) {
                         patch['abdm_recipient_key'] = JSON.stringify(parseKeyMaterial(key));
-                    }
-                }
-                if (typeof payload['callback_secret'] === 'string') {
-                    const secret = String(payload['callback_secret']).trim();
-                    if (secret) {
-                        if (secret.length < 16) {
-                            throw new Error('Callback password must be at least 16 characters.');
-                        }
-                        patch['abdm_callback_secret'] = secret;
                     }
                 }
                 if (payload['mock'] !== undefined) patch['abdm_mock'] = payload['mock'] ? 1 : 0;
@@ -286,22 +276,6 @@ export class ApiServer {
     }
     private fastify: FastifyInstance;
     private dbService: DatabaseService;
-    // Sliding-window hit timestamps per source IP for the public callback.
-    private shareCallbackHits = new Map<string, number[]>();
-
-    // Rejects floods on the unauthenticated share route. Tune conservatively:
-    // a reception counter scans at human pace; bursts above this are abuse.
-    private shareCallbackAllowed(ip: string, limit = 30, windowMs = 60_000): boolean {
-        const now = Date.now();
-        const hits = (this.shareCallbackHits.get(ip) || []).filter((t) => now - t < windowMs);
-        if (hits.length >= limit) {
-            this.shareCallbackHits.set(ip, hits);
-            return false;
-        }
-        hits.push(now);
-        this.shareCallbackHits.set(ip, hits);
-        return true;
-    }
     private staticPath: string;
     private _started = false;
     private oauthResolver: ((code: string) => void) | null = null;
@@ -388,105 +362,8 @@ export class ApiServer {
             capturedReject?.(new Error('No authorization code received'));
         });
 
-        // ABDM Scan & Share profile callback (gateway-initiated, unauthenticated
-        // by design: the gateway cannot hold clinic credentials). The payload
-        // is strictly validated and stored as a numbered queue token; nothing
-        // executes from it. Rate-limited per source IP with a small body cap,
-        // and documented tunnel setup is required for sandbox callbacks to
-        // reach this port (see DEVELOPER_GUIDE). Intake still needs an
-        // explicit human accept before any patient record is created.
-        this.fastify.post('/abdm/v0.5/patients/profile/share',
-            { bodyLimit: 8192 },
-            async (request: any, reply: any) => {
-                if (!this.shareCallbackAllowed(request.ip || 'unknown')) {
-                    return reply.code(429).send({ error: 'Too many share requests. Slow down and retry.' });
-                }
-                try {
-                    const token = this.dbService.receiveAbhaShare(request.body);
-                    return reply.code(202).send({ status: 'queued', tokenNo: (token as any)?.token_no });
-                } catch (e: any) {
-                    return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid share payload.' });
-                }
-            });
-
-        // Generic ABDM callback inbox (consent events, data-share notices).
-        // Same posture as the share route: validated, rate-limited, and
-        // stored for explicit human handling — never auto-applied. When a
-        // callback secret is configured, the sender must prove knowledge of
-        // it; otherwise the route stays open for sandbox testing.
-        this.fastify.post('/abdm/v0.5/callbacks/:kind',
-            { bodyLimit: 8192 },
-            async (request: any, reply: any) => {
-                if (!this.shareCallbackAllowed(`${request.ip || 'unknown'}:inbox`)) {
-                    return reply.code(429).send({ error: 'Too many callbacks. Slow down and retry.' });
-                }
-                const liveCallbacks = !this.abdmServices().session.isMockMode();
-                if (!this.dbService.callbackSecretMatches(request.headers?.['x-callback-token'], liveCallbacks)) {
-                    return reply.code(401).send({ error: 'Callback authentication required.' });
-                }
-                try {
-                    const kind = (request.params as any)?.kind;
-                    const row = this.dbService.receiveInboxCallback(kind, request.body);
-                    // Consent bookkeeping applies automatically; clinical data
-                    // never does. Best-effort: the 202 stands either way.
-                    try {
-                        const { hiu } = this.abdmServices();
-                        if ((DatabaseService.inboxConsentKinds as readonly string[]).includes(String(kind))) {
-                            hiu.handleNotify(kind, request.body);
-                        }
-                    } catch (notifyError) {
-                        console.error('[HIU notify]', notifyError);
-                    }
-                    return reply.code(202).send({ status: 'queued', id: (row as any)?.id });
-                } catch (e: any) {
-                    return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid callback.' });
-                }
-            });
-
-        // HIU direct data push (M3): gateway-delivered encrypted records for
-        // granted consents. Same posture as the inbox route — validated,
-        // rate-limited, secret-gated — but bundles may reach 256 KB, so the
-        // body cap is larger. Each record is decrypted on receipt (proving
-        // the HIU keypair) and cached encrypted-at-rest; nothing is
-        // auto-applied to the chart.
-        this.fastify.post('/abdm/hiu/data/transfer',
-            { bodyLimit: 262144 },
-            async (request: any, reply: any) => {
-                if (!this.shareCallbackAllowed(`${request.ip || 'unknown'}:hiu-data`)) {
-                    return reply.code(429).send({ error: 'Too many data pushes. Slow down and retry.' });
-                }
-                const liveCallbacks = !this.abdmServices().session.isMockMode();
-                if (!this.dbService.callbackSecretMatches(request.headers?.['x-callback-token'], liveCallbacks)) {
-                    return reply.code(401).send({ error: 'Callback authentication required.' });
-                }
-                try {
-                    const { hiu } = this.abdmServices();
-                    const body = (request.body || {}) as any;
-                    const requestId = String(body.requestId || body.gatewayRequestId || '').trim();
-                    // Consent-gated storage: unknown, missing, or non-granted
-                    // requests never retain clinical data.
-                    const consent = requestId ? this.dbService.getConsentByRequestId(requestId) : null;
-                    if (!consent || consent.status !== 'granted') {
-                        throw new Error('Push requires a matching granted consent.');
-                    }
-                    const records = Array.isArray(body.records) ? body.records : [body.envelope || body.record].filter(Boolean);
-                    if (records.length === 0) throw new Error('No record envelopes in this push.');
-                    const decrypted = [];
-                    for (const envelope of records) {
-                        decrypted.push({
-                            consentId: consent.id,
-                            patientId: consent.patient_id,
-                            careContextRef: null,
-                            bundleJson: JSON.stringify(hiu.decryptRecord(envelope)),
-                            expiresAt: HiuService.retentionExpiry()
-                        });
-                    }
-                    const stored = this.dbService.storeFetchedRecordBatch(decrypted);
-                    return reply.code(202).send({ status: 'cached', received: stored.length });
-                } catch (e: any) {
-                    return reply.code(400).send({ error: e instanceof Error ? e.message : 'Invalid data push.' });
-                }
-            });
+        // ABDM callbacks and HIU data pushes reach this computer through the
+        // relay's sealed mailbox (#160), never as public routes here.
 
         // Protected Routes
         this.fastify.register(async (instance) => {

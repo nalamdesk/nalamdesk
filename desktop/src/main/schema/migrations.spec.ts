@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 45 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(45);
+        it('should have 46 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(46);
         });
     });
 

@@ -70,6 +70,32 @@ describe('QueueComponent', () => {
         });
     });
 
+    it('shows a scan the moment the clinic computer announces it', async () => {
+        let announce: (() => void) | null = null;
+        const stop = vi.fn();
+        (window as any).electron = { cloud: { onAbdmShare: vi.fn((callback: () => void) => { announce = callback; return stop; }) } };
+        const zone = { run: vi.fn((fn: () => void) => fn()) };
+        const zoned = new QueueComponent(mockRouter, mockDataService, mockDialogService, mockAuthService, undefined, undefined, zone as any);
+        try {
+            zoned.ngOnInit();
+            mockDataService.invoke.mockClear();
+            announce!();
+            expect(zone.run).toHaveBeenCalled();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('abdmGetShareTokens');
+            zoned.ngOnDestroy();
+            expect(stop).toHaveBeenCalled();
+
+            // Without a zone (as in tests elsewhere) it still refreshes.
+            component.ngOnInit();
+            mockDataService.invoke.mockClear();
+            announce!();
+            expect(mockDataService.invoke).toHaveBeenCalledWith('abdmGetShareTokens');
+            component.ngOnDestroy();
+        } finally {
+            delete (window as any).electron;
+        }
+    });
+
     it('should create and load queue', async () => {
         component.ngOnInit();
         // Wait for async refreshQueue

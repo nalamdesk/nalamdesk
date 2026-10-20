@@ -6,7 +6,7 @@ import { CloudPairingService, type PairingStatus } from './CloudPairingService';
 import type { CloudDeviceStore } from './DeviceIdentity';
 import { Doorbell, type DoorbellDeps, type DoorbellState } from './Doorbell';
 import { MailboxReader, type ListedItem, type MailboxTransport } from './MailboxReader';
-import { SignedCloudClient, type Audience } from './SignedCloudClient';
+import { SignedCloudClient, type AbdmRelaySend, type Audience } from './SignedCloudClient';
 
 // Hourly: cheap when nothing is due.
 const ROTATION_CHECK_MS = 60 * 60 * 1000;
@@ -166,6 +166,17 @@ export class CloudLink {
             connect: deps.mqttConnect,
             runWork: deps.runWork
         });
+    }
+
+    /**
+     * Signed ABDM calls through the relay as this clinic's facility (#160),
+     * or null while this computer is not paired.
+     */
+    abdmRelay(): AbdmRelaySend | null {
+        const status = this.pairing.status();
+        if (status.state !== 'paired' || !status.configured || !status.hfrId) return null;
+        const hipId = status.hfrId;
+        return (method, path, body) => this.client.signed('relay', method, path, body, { hipId });
     }
 
     /** For the settings screen: is the doorbell live, and when was mail last checked. */

@@ -714,22 +714,11 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 .toThrow('already linked');
         });
 
-        it('matches callback secrets in constant time and stays open without one', () => {
-            expect(service.callbackSecretMatches(undefined)).toBe(true);
-
-            service.saveSettings({ abdm_callback_secret: 's3cret-shared-token' });
-            expect(service.hasCallbackSecret()).toBe(true);
-            expect(service.callbackSecretMatches('s3cret-shared-token')).toBe(true);
-            expect(service.callbackSecretMatches('wrong')).toBe(false);
-            expect(service.callbackSecretMatches(undefined)).toBe(false);
-        });
-
-        it('requires the callback password in strict live mode', () => {
-            expect(service.callbackSecretMatches(undefined, true)).toBe(false);
-
-            service.saveSettings({ abdm_callback_secret: 's3cret-shared-token' });
-            expect(service.callbackSecretMatches('s3cret-shared-token', true)).toBe(true);
-            expect(service.callbackSecretMatches('wrong', true)).toBe(false);
+        it('keeps no callback password: callbacks arrive sealed through the relay', () => {
+            service.saveSettings({ clinic_name: 'Test Clinic', abdm_callback_secret: 's3cret-shared-token' });
+            const row: any = db.prepare('SELECT clinic_name, abdm_callback_secret FROM settings LIMIT 1').get();
+            expect(row.clinic_name).toBe('Test Clinic');
+            expect(row.abdm_callback_secret).toBeNull();
         });
 
         it('persists backup schedules through the settings whitelist', () => {

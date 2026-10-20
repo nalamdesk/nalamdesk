@@ -10,6 +10,9 @@ import * as jwt from 'jsonwebtoken';
 import * as os from 'node:os';
 import { ApiServer } from './app';
 import { FideliusService } from '../main/services/FideliusService';
+import { AbdmRelayService } from '../main/services/AbdmRelayService';
+import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
+import { HiuService } from '../main/services/HiuService';
 
 function authHeader(user: { id: number; role: string; username?: string }) {
     const token = jwt.sign(
@@ -218,7 +221,6 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
                 savedSettings.push(patch);
                 return { changes: 1 };
             }),
-            saveAbdmSecretProtected: vi.fn(),
             linkAbhaAddress: vi.fn().mockReturnValue({ id: 7 }),
             expireFetchedRecords: vi.fn(),
             getFetchedRecords: vi.fn().mockReturnValue([{
@@ -264,25 +266,43 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         expect(lookup.json().mock).toBe(true);
     });
 
-    it('saves ABDM config over LAN for admins', async () => {
+    it('saves ABDM config over LAN for admins, with no ABDM credentials to save', async () => {
         const response = await postIpc('abdmSaveConfig', [{
-            gateway_env: 'staging', client_id: 'CID', mock: false
+            gateway_env: 'staging', client_id: 'CID', mock: false, hip_id: ' H1 '
         }]);
         expect(response.statusCode).toBe(200);
-        expect(savedSettings[0]).toMatchObject({
-            abdm_gateway_env: 'staging', abdm_client_id: 'CID', abdm_mock: 0
-        });
+        expect(savedSettings[0]).toEqual({ abdm_hip_id: 'H1', abdm_mock: 0 });
+        const removed = await postIpc('abdmSetSecret', [{ secret: 'x' }]);
+        expect(removed.statusCode).not.toBe(200);
     });
 
-    it('accepts the production gateway and ignores unknown environments', async () => {
-        await postIpc('abdmSaveConfig', [{ gateway_env: 'production' }]);
-        await postIpc('abdmSaveConfig', [{ gateway_env: 'elsewhere' }]);
-        expect(savedSettings[0]).toMatchObject({ abdm_gateway_env: 'production' });
-        expect(savedSettings[1]).not.toHaveProperty('abdm_gateway_env');
+    it('shares the desktop relay connection with LAN browsers', async () => {
+        const send = vi.fn(async () => ({ status: 200, body: { exists: true, name: 'Real Patient' } }));
+        const relay = new AbdmRelayService({ getSettings: () => ({}), relay: () => send, pairedHfrId: () => 'IN2710000123' });
+        const paired = new ApiServer(db, os.tmpdir(), undefined, {
+            relay, abha: new AbdmAbhaService({ relay }), hiu: new HiuService({ relay })
+        });
+        try {
+            const config = await paired.inject({
+                method: 'POST', url: '/api/ipc/abdmGetConfig',
+                headers: { authorization: authHeader({ id: 1, role: 'receptionist' }), 'content-type': 'application/json' },
+                payload: []
+            });
+            expect(config.json()).toMatchObject({ mock: false, paired: true, paired_hfr_id: 'IN2710000123' });
+            const lookup = await paired.inject({
+                method: 'POST', url: '/api/ipc/abdmAbhaLookup',
+                headers: { authorization: authHeader({ id: 1, role: 'receptionist' }), 'content-type': 'application/json' },
+                payload: [{ abhaAddress: 'real@abdm' }]
+            });
+            expect(lookup.json()).toEqual({ exists: true, name: 'Real Patient', mock: false });
+            expect(send).toHaveBeenCalledWith('POST', '/abdm/abha/v3/profile/account/verify', { abhaAddress: 'real@abdm' });
+        } finally {
+            await paired.close();
+        }
     });
 
     it('forbids ABDM config writes for non-admin LAN roles', async () => {
-        const response = await postIpc('abdmSaveConfig', [{ gateway_env: 'staging' }], 'doctor');
+        const response = await postIpc('abdmSaveConfig', [{ hip_id: 'H1' }], 'doctor');
         expect(response.statusCode).toBe(403);
     });
 

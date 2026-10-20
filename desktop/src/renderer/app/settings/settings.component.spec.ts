@@ -301,10 +301,10 @@ describe('SettingsComponent Validation', () => {
         expect(updates.check).toHaveBeenCalledWith('manual');
     });
 
-    it('loads the ABDM config into the tab state', async () => {
+    it('loads the relay connection into the tab state', async () => {
         mockData.invoke.mockImplementation((method: string) => {
             if (method === 'abdmGetConfig') return Promise.resolve({
-                gateway_env: 'staging', client_id: 'CID-1', has_secret: true, mock: false
+                mock: false, forced_mock: false, paired: true, paired_hfr_id: 'IN2710000123'
             });
             return Promise.resolve(null);
         });
@@ -312,25 +312,8 @@ describe('SettingsComponent Validation', () => {
         await component.loadAbdmConfig();
 
         expect(component.abdmConfig).toMatchObject({
-            gateway_env: 'staging', client_id: 'CID-1', has_secret: true, mock: false
+            mock: false, forced_mock: false, paired: true, paired_hfr_id: 'IN2710000123', hip_id: ''
         });
-    });
-
-    it('saves the secret without ever displaying it, then reloads config', async () => {
-        mockData.invoke.mockImplementation((method: string) => {
-            if (method === 'abdmSetSecret') return Promise.resolve({ stored: true });
-            if (method === 'abdmGetConfig') return Promise.resolve({
-                gateway_env: 'sandbox', client_id: '', has_secret: true, mock: true
-            });
-            return Promise.resolve(null);
-        });
-        component.abdmSecret = 'super-secret';
-
-        await component.saveAbdmSecret();
-
-        expect(mockData.invoke).toHaveBeenCalledWith('abdmSetSecret', { secret: 'super-secret' });
-        expect(component.abdmSecret).toBe('');
-        expect(component.abdmConfig.has_secret).toBe(true);
     });
 
     it('stores the connectivity test result for display', async () => {
@@ -363,19 +346,19 @@ describe('SettingsComponent Validation', () => {
         expect(component.abdmSimResult).toContain('Token #7');
     });
 
-    it('sends the mock gateway choice with the config', async () => {
+    it('forces the mock only when an admin ticks it, never because the computer is unpaired', async () => {
         mockData.invoke.mockResolvedValue(null);
-        component.abdmConfig.gateway_env = 'staging';
-        component.abdmConfig.client_id = 'CID';
-        component.abdmConfig.mock = false;
+        component.abdmConfig.mock = true;
+        component.abdmConfig.forced_mock = false;
 
         await component.saveAbdmConfig();
+        expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({ mock: false }));
+        expect(mockData.invoke.mock.calls[0][1]).not.toHaveProperty('client_id');
 
-        expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({
-            gateway_env: 'staging',
-            client_id: 'CID',
-            mock: false
-        }));
+        component.abdmConfig.forced_mock = true;
+        await component.saveAbdmConfig();
+        const saves = mockData.invoke.mock.calls.filter((call: any[]) => call[0] === 'abdmSaveConfig');
+        expect(saves[1][1]).toMatchObject({ mock: true });
     });
 
     it('sends registry identifiers with the config', async () => {
@@ -1179,19 +1162,20 @@ describe('SettingsComponent Validation', () => {
             it('loads config and clears key fields', async () => {
                 invokeImpl({
                     abdmGetConfig: {
-                        gateway_env: 'prod', client_id: 'cid', has_secret: true, mock: false,
+                        mock: false, paired: true, paired_hfr_id: 'IN2710000123',
                         hip_id: 'H1', counter_id: 'C1', hfr_id: 'F', hpr_id: 'P',
                         hip_endpoint: 'https://x', has_recipient_key: true
                     }
                 });
                 component.abdmRecipientKey = 'stale';
                 await component.loadAbdmConfig();
-                expect(component.abdmConfig.client_id).toBe('cid');
+                expect(component.abdmConfig.paired_hfr_id).toBe('IN2710000123');
+                expect(component.abdmConfig.forced_mock).toBe(false);
                 expect(component.abdmRecipientKey).toBe('');
             });
 
             it('saves config with new secrets only when provided', async () => {
-                component.abdmConfig = { gateway_env: 'sandbox', client_id: 'c', mock: true } as any;
+                component.abdmConfig = { mock: true, forced_mock: false } as any;
                 component.abdmRecipientKey = '  newkey ';
                 invokeImpl({ abdmSaveConfig: true, abdmGetConfig: null });
                 await component.saveAbdmConfig();
@@ -1199,14 +1183,6 @@ describe('SettingsComponent Validation', () => {
                     recipient_key: 'newkey'
                 }));
                 expect(component.abdmBusy).toBe(false);
-            });
-
-            it('saves the gateway secret and clears the field', async () => {
-                component.abdmSecret = 's3cret';
-                invokeImpl({ abdmSetSecret: true, abdmGetConfig: null });
-                await component.saveAbdmSecret();
-                expect(mockData.invoke).toHaveBeenCalledWith('abdmSetSecret', { secret: 's3cret' });
-                expect(component.abdmSecret).toBe('');
             });
 
             it('tests connectivity and reports failures', async () => {
@@ -1587,23 +1563,13 @@ describe('SettingsComponent Validation', () => {
             it('guards busy ABDM saves and reports failures', async () => {
                 component.abdmBusy = true;
                 await component.saveAbdmConfig();
-                component.abdmSecret = 'x';
-                await component.saveAbdmSecret();
                 expect(mockData.invoke).not.toHaveBeenCalled();
                 component.abdmBusy = false;
 
-                component.abdmSecret = '';
-                await component.saveAbdmSecret();
-                expect(mockData.invoke).not.toHaveBeenCalled();
-
-                component.abdmConfig = { gateway_env: 'sandbox', client_id: 'c', mock: true } as any;
+                component.abdmConfig = { mock: true, forced_mock: false } as any;
                 mockData.invoke.mockRejectedValueOnce(new Error('down'));
                 await component.saveAbdmConfig();
                 expect(component.abdmBusy).toBe(false);
-
-                mockData.invoke.mockRejectedValueOnce(new Error('down'));
-                component.abdmSecret = 's';
-                await component.saveAbdmSecret();
             });
 
             it('tolerates synchronous inbox failures', async () => {

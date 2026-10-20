@@ -59,9 +59,8 @@ export class SettingsComponent implements OnInit {
   isElectron = !!(window as any).electron;
 
   // ABDM gateway (separate tab; secret handled via its own IPC, never in settings)
-  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string; hfr_id: string; hpr_id: string; hip_endpoint: string; has_recipient_key: boolean } =
-    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '', hfr_id: '', hpr_id: '', hip_endpoint: '', has_recipient_key: false };
-  abdmSecret = '';
+  abdmConfig: { mock: boolean; forced_mock: boolean; paired: boolean; paired_hfr_id: string; hip_id: string; counter_id: string; hfr_id: string; hpr_id: string; hip_endpoint: string; has_recipient_key: boolean } =
+    { mock: true, forced_mock: false, paired: false, paired_hfr_id: '', hip_id: '', counter_id: '', hfr_id: '', hpr_id: '', hip_endpoint: '', has_recipient_key: false };
   abdmRecipientKey = '';
   abdmTest: { ok: boolean; mode: string; detail: string; latencyMs?: number } | null = null;
   abdmBusy = false;
@@ -475,10 +474,10 @@ export class SettingsComponent implements OnInit {
       this.ngZone.run(() => {
         if (config) {
           this.abdmConfig = {
-            gateway_env: config.gateway_env || 'sandbox',
-            client_id: config.client_id || '',
-            has_secret: !!config.has_secret,
             mock: config.mock !== false,
+            forced_mock: !!config.forced_mock,
+            paired: !!config.paired,
+            paired_hfr_id: config.paired_hfr_id || '',
             hip_id: config.hip_id || '',
             counter_id: config.counter_id || '',
             hfr_id: config.hfr_id || '',
@@ -498,14 +497,14 @@ export class SettingsComponent implements OnInit {
     this.abdmBusy = true;
     try {
       const payload: Record<string, unknown> = {
-        gateway_env: this.abdmConfig.gateway_env,
-        client_id: this.abdmConfig.client_id,
         hip_id: this.abdmConfig.hip_id || '',
         counter_id: this.abdmConfig.counter_id || '',
         hfr_id: this.abdmConfig.hfr_id || '',
         hpr_id: this.abdmConfig.hpr_id || '',
         hip_endpoint: this.abdmConfig.hip_endpoint || '',
-        mock: this.abdmConfig.mock !== false
+        // Only an admin's explicit choice forces the mock; otherwise ABDM
+        // follows pairing.
+        mock: !!this.abdmConfig.forced_mock
       };
       // Only send a recipient key when the field holds a new one; an empty
       // field must never wipe the stored key.
@@ -513,21 +512,6 @@ export class SettingsComponent implements OnInit {
       await this.dataService.invoke('abdmSaveConfig', payload);
       this.ngZone.run(() => {
         this.abdmRecipientKey = '';
-        this.abdmSaved = true;
-        setTimeout(() => this.abdmSaved = false, 3000);
-      });
-      await this.loadAbdmConfig();
-    } catch (e) { console.error(e); }
-    finally { this.abdmBusy = false; }
-  }
-
-  async saveAbdmSecret() {
-    if (this.abdmBusy || !this.abdmSecret) return;
-    this.abdmBusy = true;
-    try {
-      await this.dataService.invoke('abdmSetSecret', { secret: this.abdmSecret });
-      this.ngZone.run(() => {
-        this.abdmSecret = '';
         this.abdmSaved = true;
         setTimeout(() => this.abdmSaved = false, 3000);
       });

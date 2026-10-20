@@ -113,7 +113,6 @@ contextBridge.exposeInMainWorld('electron', {
         // ABDM gateway (M1): config, secrets, connectivity, health IDs, share tokens
         abdmGetConfig: () => ipcRenderer.invoke('db:abdmGetConfig'),
         abdmSaveConfig: (config: any) => ipcRenderer.invoke('db:abdmSaveConfig', config),
-        abdmSetSecret: (input: any) => ipcRenderer.invoke('db:abdmSetSecret', input),
         abdmTestConnectivity: () => ipcRenderer.invoke('db:abdmTestConnectivity'),
         abdmAbhaRequestOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaRequestOtp', input),
         abdmAbhaConfirmOtp: (input: any) => ipcRenderer.invoke('db:abdmAbhaConfirmOtp', input),

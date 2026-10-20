@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AbdmMailboxProcessor } from '../cloud/AbdmMailboxProcessor';
+import { MIGRATIONS } from '../schema/migrations';
 import { DatabaseService } from './DatabaseService';
 
 const { DatabaseSync } = require('node:sqlite');
@@ -81,6 +82,31 @@ describe('cloud mailbox ABDM items on a real database', () => {
         expect(db.prepare('SELECT id, status FROM abdm_mailbox ORDER BY id').all())
             .toEqual([{ id: 'm1', status: 'processed' }, { id: 'm2', status: 'processed' }]);
         expect(service.getNewAbdmMailboxItems(10)).toEqual([]);
+        db.close();
+    });
+});
+
+describe('ABDM credentials after the move to the relay', () => {
+    it('clears the Client ID, secret, callback password and gateway choice from an existing install', async () => {
+        const db = new TestDatabase();
+        const service = new DatabaseService();
+        service.setDb(db);
+        await service.migrate();
+        db.prepare(`INSERT INTO settings (clinic_name, abdm_client_id, abdm_client_secret_protected, abdm_callback_secret, abdm_gateway_env, abdm_mock, abdm_hip_id)
+            VALUES ('Clinic', 'CID', 'wrapped', 'shared-password-123', 'production', 1, 'H1')`).run();
+
+        MIGRATIONS.find((m) => m.version === 46)!.up(db);
+        MIGRATIONS.find((m) => m.version === 47)!.up(db);
+
+        expect(db.prepare(`SELECT clinic_name, abdm_client_id, abdm_client_secret_protected, abdm_callback_secret, abdm_gateway_env, abdm_mock, abdm_hip_id
+            FROM settings`).get()).toEqual({
+            clinic_name: 'Clinic', abdm_client_id: null, abdm_client_secret_protected: null, abdm_callback_secret: null,
+            abdm_gateway_env: null, abdm_mock: null, abdm_hip_id: 'H1'
+        });
+        // Generic reads and writes no longer carry the old columns either.
+        service.saveSettings({ abdm_client_id: 'again', abdm_gateway_env: 'staging' });
+        expect(db.prepare('SELECT abdm_client_id, abdm_gateway_env FROM settings').get()).toEqual({ abdm_client_id: null, abdm_gateway_env: null });
+        expect(service.getSettings()).not.toHaveProperty('abdm_client_id');
         db.close();
     });
 });

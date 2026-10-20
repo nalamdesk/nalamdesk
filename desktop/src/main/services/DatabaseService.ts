@@ -381,14 +381,13 @@ export class DatabaseService {
 
     // ... existing methods ...
     getSettings() {
-        // Explicit column list: the keychain-protected ABDM secret blob must
-        // never ride along on generic settings reads. Use the dedicated
-        // getAbdmSecretProtected accessor from the main process only.
+        // Explicit column list: keychain-protected blobs (the HIU private
+        // key) never ride along on generic settings reads.
         return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, license_key,
             drive_tokens, cloud_clinic_id, cloud_api_key, cloud_enabled,
             drive_client_id, drive_client_secret, local_backup_path,
             backup_schedule, cloud_backup_schedule, mrn_prefix, consultation_fee,
-            abdm_gateway_env, abdm_client_id, abdm_mock, abdm_hip_id, abdm_counter_id,
+            abdm_mock, abdm_hip_id, abdm_counter_id,
             abdm_hfr_id, abdm_hpr_id, abdm_hip_endpoint, abdm_recipient_key,
             abdm_hiu_public_key, standards_mode
             FROM settings LIMIT 1`).get();
@@ -401,25 +400,13 @@ export class DatabaseService {
      */
     getSanitizedSettings() {
         return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, cloud_enabled,
-            abdm_gateway_env, abdm_mock, abdm_hip_id, abdm_counter_id,
+            abdm_mock, abdm_hip_id, abdm_counter_id,
             abdm_hfr_id, abdm_hip_endpoint, abdm_hiu_public_key, standards_mode
             FROM settings LIMIT 1`).get();
     }
 
-    // Main-process-only accessor for the keychain-protected ABDM secret blob.
-    // Never exposed through generic settings responses, IPC getters, or LAN.
-    getAbdmSecretProtected(): string | null {
-        try {
-            const row = this.db.prepare(
-                'SELECT abdm_client_secret_protected AS value FROM settings LIMIT 1').get() as any;
-            return row?.value ?? null;
-        } catch {
-            return null;
-        }
-    }
-
     // Main-process-only accessor for the keychain-protected HIU private key.
-    // Same contract as the client secret: never in generic reads or LAN.
+    // Never in generic reads, IPC getters or LAN responses.
     getHiuPrivateProtected(): string | null {
         try {
             const row = this.db.prepare(
@@ -693,7 +680,7 @@ export class DatabaseService {
             'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
             'drive_client_id', 'drive_client_secret', 'local_backup_path',
             'backup_schedule', 'cloud_backup_schedule', 'mrn_prefix', 'consultation_fee',
-            'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
+            'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
             'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
             'abdm_hiu_public_key',
             'standards_mode'
@@ -731,19 +718,8 @@ export class DatabaseService {
         }
     }
 
-    // Dedicated writer for the keychain-protected ABDM client secret. Kept out    // of the generic settings whitelist (and reads) by design: the plaintext
-    // secret never crosses the generic settings path in either direction.
-    saveAbdmSecretProtected(protectedValue: string) {
-        const existing = this.getSettings();
-        if (existing) {
-            this.db.prepare('UPDATE settings SET abdm_client_secret_protected = ?').run(protectedValue);
-        } else {
-            this.db.prepare('INSERT INTO settings(abdm_client_secret_protected) VALUES(?)').run(protectedValue);
-        }
-    }
-
-    // Dedicated writer for the keychain-protected HIU private key. Same
-    // contract: plaintext key material never crosses generic settings paths.
+    // Dedicated writer for the keychain-protected HIU private key: plaintext
+    // key material never crosses generic settings paths.
     saveHiuPrivateProtected(protectedValue: string) {
         const existing = this.getSettings();
         if (existing) {

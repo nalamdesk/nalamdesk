@@ -1,7 +1,7 @@
 import { Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
 import type { ICertificate } from 'aws-cdk-lib/aws-certificatemanager';
-import { AccountRecovery, CfnUserPoolGroup, Mfa, UserPool } from 'aws-cdk-lib/aws-cognito';
+import { AccountRecovery, CfnUserPoolGroup, Mfa, OAuthScope, UserPool, UserPoolClientIdentityProvider } from 'aws-cdk-lib/aws-cognito';
 import { AttributeType, Billing, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { PolicyStatement, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import type { IHostedZone } from 'aws-cdk-lib/aws-route53';
@@ -21,6 +21,8 @@ export interface CoreStackProps extends StackProps {
     budgetEmail: string;
     /** Monthly budget in USD; alerts at 80% actual and 100% forecast. */
     budgetUsd?: number;
+    /** Cognito managed login domain prefix for the ops console; globally unique. */
+    opsDomainPrefix?: string;
 }
 
 /**
@@ -33,6 +35,7 @@ export class CoreStack extends Stack {
     readonly devices: TableV2;
     readonly pairingRequests: TableV2;
     readonly nonces: TableV2;
+    readonly clinicIds: TableV2;
     readonly codeBucket: Bucket;
     readonly opsUserPool: UserPool;
 
@@ -70,6 +73,16 @@ export class CoreStack extends Stack {
             removalPolicy: RemovalPolicy.DESTROY
         });
 
+        // One clinic ID per HFR ID, kept when a replacement install pairs, so
+        // the booking listing and slots survive it (#154).
+        this.clinicIds = new TableV2(this, 'ClinicIds', {
+            partitionKey: { name: 'hipId', type: AttributeType.STRING },
+            billing: Billing.onDemand(),
+            pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+            deletionProtection: true,
+            removalPolicy: RemovalPolicy.RETAIN
+        });
+
         // NalamDesk staff only: no self sign-up, TOTP MFA required.
         this.opsUserPool = new UserPool(this, 'OpsUserPool', {
             userPoolName: `nalamdesk-ops-${stage}`,
@@ -90,6 +103,29 @@ export class CoreStack extends Stack {
 
         // Web Function revisions must come from a versioned bucket that
         // Lambda can read; the CDK asset bucket does not qualify.
+        // The ops console at https://<bridge domain>/ops/ (#154): Cognito
+        // managed login, authorization code with PKCE, no client secret.
+        const opsConsoleUrl = `https://${props.bridgeDomain}/ops/`;
+        const opsClient = this.opsUserPool.addClient('OpsConsoleClient', {
+            userPoolClientName: `nalamdesk-ops-console-${stage}`,
+            generateSecret: false,
+            authFlows: { userSrp: true },
+            oAuth: {
+                flows: { authorizationCodeGrant: true },
+                scopes: [OAuthScope.OPENID],
+                callbackUrls: [opsConsoleUrl],
+                logoutUrls: [opsConsoleUrl]
+            },
+            supportedIdentityProviders: [UserPoolClientIdentityProvider.COGNITO],
+            preventUserExistenceErrors: true,
+            accessTokenValidity: Duration.hours(1),
+            idTokenValidity: Duration.hours(1),
+            refreshTokenValidity: Duration.hours(8)
+        });
+        const opsDomain = this.opsUserPool.addDomain('OpsDomain', {
+            cognitoDomain: { domainPrefix: props.opsDomainPrefix ?? `nalamdesk-ops-${stage}` }
+        });
+
         this.codeBucket = new Bucket(this, 'CodeBucket', {
             versioned: true,
             encryption: BucketEncryption.S3_MANAGED,
@@ -126,6 +162,7 @@ export class CoreStack extends Stack {
         publish('devices-table-name', this.devices.tableName);
         publish('pairing-table-name', this.pairingRequests.tableName);
         publish('nonces-table-name', this.nonces.tableName);
+        publish('clinic-ids-table-name', this.clinicIds.tableName);
         publish('code-bucket-name', this.codeBucket.bucketName);
         publish('hosted-zone-id', props.zone.hostedZoneId);
         publish('bridge-domain', props.bridgeDomain);
@@ -133,5 +170,7 @@ export class CoreStack extends Stack {
         publish('booking-domain', props.bookingDomain);
         publish('booking-certificate-arn', props.bookingCertificate.certificateArn);
         publish('ops-user-pool-id', this.opsUserPool.userPoolId);
+        publish('ops-client-id', opsClient.userPoolClientId);
+        publish('ops-auth-domain', `${opsDomain.domainName}.auth.${this.region}.amazoncognito.com`);
     }
 }

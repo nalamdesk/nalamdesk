@@ -95,16 +95,47 @@ describe('Relay stack', () => {
         expect(text.toLowerCase()).not.toContain('secretsmanager');
     });
 
-    it('queries the device indexes, reads devices by ID and writes only nonces', () => {
-        expect(text).toContain('dynamodb:Query');
-        expect(text).toContain('dynamodb:GetItem');
-        expect(text).toContain('/nalamdesk/sandbox/core/nonces-table-name');
-        expect(text).not.toMatch(/dynamodb:(UpdateItem|DeleteItem|Scan|\*)/);
+    it('limits table access to what signed requests and pairing need', () => {
         const statements = Object.values(template.findResources('AWS::IAM::Policy'))
-            .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
-        const put = statements.find((s: any) => s.Action === 'dynamodb:PutItem');
-        expect(JSON.stringify(put.Resource)).toContain('noncestablename');
-        expect(JSON.stringify(put.Resource)).not.toContain('devicestablename');
+            .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement)
+            .filter((s: any) => JSON.stringify(s.Action).includes('dynamodb'));
+        const on = (table: string) => statements
+            .filter((s: any) => JSON.stringify(s.Resource).includes(table))
+            .flatMap((s: any) => [s.Action].flat())
+            .sort();
+        expect(statements.flatMap((s: any) => [s.Action].flat())).not.toContain('dynamodb:*');
+        expect(on('devicestablename')).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:Query', 'dynamodb:UpdateItem']);
+        expect(on('noncestablename')).toEqual(['dynamodb:PutItem', 'dynamodb:UpdateItem']);
+        expect(on('pairingtablename')).toEqual(['dynamodb:DeleteItem', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Scan', 'dynamodb:UpdateItem']);
+        expect(on('clinicidstablename')).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem']);
+    });
+
+    it('reads the pairing pepper from Parameter Store and passes pairing and ops names to the function', () => {
+        expect(text).toContain('parameter/nalamdesk/sandbox/relay/pairing-pepper');
+        template.hasResourceProperties('AWS::Lambda::WebFunctionRevision', {
+            ServiceConfig: Match.objectLike({
+                EnvironmentVariables: Match.objectLike({
+                    PAIRING_PEPPER_PARAM: '/nalamdesk/sandbox/relay/pairing-pepper',
+                    BRIDGE_URL: 'https://abdm-sandbox.example.in',
+                    PAIRING_TABLE: Match.anyValue(),
+                    CLINIC_IDS_TABLE: Match.anyValue(),
+                    OPS_USER_POOL_ID: Match.anyValue(),
+                    OPS_CLIENT_ID: Match.anyValue(),
+                    OPS_AUTH_DOMAIN: Match.anyValue()
+                })
+            })
+        });
+    });
+
+    it('stamps the viewer IP on every request with a CloudFront Function', () => {
+        template.hasResourceProperties('AWS::CloudFront::Function', {
+            FunctionCode: Match.stringLikeRegexp("headers\\['x-nd-viewer-ip'\\] = \\{ value: event.viewer.ip \\}")
+        });
+        template.hasResourceProperties('AWS::CloudFront::Distribution', {
+            DistributionConfig: Match.objectLike({
+                DefaultCacheBehavior: Match.objectLike({ FunctionAssociations: [Match.objectLike({ EventType: 'viewer-request' })] })
+            })
+        });
     });
 });
 

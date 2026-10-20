@@ -26,6 +26,13 @@ describe('update feed resolver', () => {
         expect(resolveUpdateFeedConfig({ NALAMDESK_UPDATE_PROVIDER: 'generic', NALAMDESK_UPDATE_FEED_URL: ' ' })).toBeNull();
     });
 
+    it('fails closed for an unknown provider even with a feed URL', () => {
+        expect(resolveUpdateFeedConfig({
+            NALAMDESK_UPDATE_PROVIDER: 'gitub',
+            NALAMDESK_UPDATE_FEED_URL: 'https://updates.example.clinic/nalamdesk'
+        })).toBeNull();
+    });
+
     it('uses the documented generic feed URL without GitHub Releases', () => {
         const config = resolveUpdateFeedConfig({
             NALAMDESK_UPDATE_FEED_URL: 'https://updates.example.clinic/nalamdesk/'

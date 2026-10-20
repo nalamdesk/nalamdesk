@@ -50,6 +50,7 @@ export function resolveUpdateFeedConfig(env: NodeJS.Dict<string> = process.env):
         };
     }
 
+    if (provider && provider !== 'generic') return null;
     const configured = (env['NALAMDESK_UPDATE_FEED_URL'] || '').trim();
     if (!configured && provider) return null;
     const url = configured || DEFAULT_UPDATE_FEED_URL;

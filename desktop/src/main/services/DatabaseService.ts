@@ -1676,7 +1676,14 @@ export class DatabaseService {
         this.db.prepare(`INSERT INTO abdm_hip_consents
             (consent_id, status, abha_address, hi_types, care_context_refs, date_from, date_to, data_erase_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(consent_id) DO UPDATE SET status = excluded.status, updated_at = CURRENT_TIMESTAMP`)
+            ON CONFLICT(consent_id) DO UPDATE SET status = excluded.status,
+                abha_address = COALESCE(excluded.abha_address, abha_address),
+                hi_types = CASE WHEN excluded.status = 'GRANTED' THEN excluded.hi_types ELSE hi_types END,
+                care_context_refs = CASE WHEN excluded.status = 'GRANTED' THEN excluded.care_context_refs ELSE care_context_refs END,
+                date_from = CASE WHEN excluded.status = 'GRANTED' THEN excluded.date_from ELSE date_from END,
+                date_to = CASE WHEN excluded.status = 'GRANTED' THEN excluded.date_to ELSE date_to END,
+                data_erase_at = CASE WHEN excluded.status = 'GRANTED' THEN excluded.data_erase_at ELSE data_erase_at END,
+                updated_at = CURRENT_TIMESTAMP`)
             .run(row.consentId, row.status, row.abhaAddress, JSON.stringify(row.hiTypes), JSON.stringify(row.refs),
                 row.dateFrom, row.dateTo, row.dataEraseAt);
         this.logAudit('UPDATE', 'abdm_hip_consents', 0, undefined, `HIP consent ${row.consentId} ${row.status}`);

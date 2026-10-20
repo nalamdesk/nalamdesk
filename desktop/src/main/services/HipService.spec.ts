@@ -301,8 +301,19 @@ describe('HIP consent and data transfer', () => {
         expect(store.getHipConsent('hip-consent-1')).toMatchObject({
             status: 'GRANTED', abha_address: 'ravi@sbx', date_from: '2026-01-01T00:00:00Z', data_erase_at: '2026-12-01T00:00:00Z'
         });
+        // A later grant for the same consent replaces its scope; a revocation keeps it.
+        await deliver(HIP_CONSENT_NOTIFY_PATH, granted({
+            hiTypes: ['Prescription'],
+            careContexts: [{ patientReference: 'ND-1', careContextReference: 'OP-2026-0002' }],
+            permission: { dateRange: { from: '2026-06-01T00:00:00Z', to: '2026-12-31T00:00:00Z' }, dataEraseAt: '2026-11-01T00:00:00Z' }
+        }));
+        expect(store.getHipConsent('hip-consent-1')).toMatchObject({
+            hi_types: '["Prescription"]', care_context_refs: '["OP-2026-0002"]', date_from: '2026-06-01T00:00:00Z', data_erase_at: '2026-11-01T00:00:00Z'
+        });
         await deliver(HIP_CONSENT_NOTIFY_PATH, { notification: { status: 'REVOKED', consentId: 'hip-consent-1' } });
-        expect(store.getHipConsent('hip-consent-1')).toMatchObject({ status: 'REVOKED', abha_address: 'ravi@sbx' });
+        expect(store.getHipConsent('hip-consent-1')).toMatchObject({
+            status: 'REVOKED', abha_address: 'ravi@sbx', care_context_refs: '["OP-2026-0002"]', date_from: '2026-06-01T00:00:00Z'
+        });
     });
 
     it('sends each visit as its own encrypted page to the HIU and reports the transfer', async () => {

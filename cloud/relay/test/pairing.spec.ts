@@ -176,6 +176,9 @@ describe('pairing a desktop', () => {
         expect((await r.requestPairing(pc, 'IN27100')).status).toBe(400);
         expect(await (await r.requestPairing(pc, 'XX2710000123')).json()).toEqual({ error: 'bad_hfr_id' });
         expect((await r.requestPairing(pc, HFR, { sealingPublicKey: 'AAAA' })).status).toBe(400);
+        // A low-order point parses as a key, but no exchange with it works.
+        expect((await r.requestPairing(pc, HFR, { sealingPublicKey: 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' })).status).toBe(400);
+        expect((await r.requestPairing(pc, HFR, { sealingPublicKey: Buffer.alloc(32).toString('base64') })).status).toBe(400);
         const forged = await r.requestPairing(pc, HFR, { signature: install().sign('anything') });
         expect(forged.status).toBe(401);
         expect(await forged.json()).toEqual({ error: 'bad_signature' });

@@ -248,7 +248,7 @@ export class CoreStack extends Stack {
         new Alarm(this, 'IotAuthFailures', {
             alarmName: `nalamdesk-${stage}-iot-auth-failures`,
             alarmDescription: 'Many refused IoT connections: a revoked desktop retrying, or someone probing.',
-            metric: iotMetric('Connect.AuthNError'),
+            metric: iotMetric('Connection.AuthNError'),
             threshold: 50,
             evaluationPeriods: 1,
             comparisonOperator: ComparisonOperator.GREATER_THAN_THRESHOLD,

@@ -125,7 +125,7 @@ describe('Core stacks', () => {
     it('records device presence and alarms on refused device logins', () => {
         const rules = JSON.stringify(core.findResources('AWS::IoT::TopicRule'));
         expect(rules).toContain("FROM '$aws/events/presence/+/+'");
-        core.hasResourceProperties('AWS::CloudWatch::Alarm', { Namespace: 'AWS/IoT', MetricName: 'Connect.AuthNError' });
+        core.hasResourceProperties('AWS::CloudWatch::Alarm', { Namespace: 'AWS/IoT', MetricName: 'Connection.AuthNError' });
         core.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'ops@example.in' });
     });
 

@@ -149,8 +149,11 @@ export class MailboxReader {
             }
             for (let i = 0; i < done.length; i += 100) await this.deps.transport.ack(done.slice(i, i + 100));
             if (reached < items.length) {
-                // Lists the rest again with fresh links, starting past the last item reached.
+                // Lists the rest again with fresh links, starting past the last
+                // item reached. Each refresh moves forward (the first item is
+                // always reached), so it does not count against the page budget.
                 if (reached > 0) after = items[reached - 1]!.id;
+                page--;
                 continue;
             }
             if (!more || items.length === 0) return;

@@ -274,7 +274,8 @@ describe('HIP-initiated linking of a visit', () => {
         expect(store.getHipLinkedRefs('ravi@sbx')).toEqual(['OP-2026-0002']);
         expect(store.getHipRequest('req-2').status).toBe('done');
 
-        // The token is reused for the next visit.
+        // The token is held in memory, keyed case-insensitively, and reused for the next visit.
+        expect(hip.linkToken('RAVI@SBX')).toBe('link-tok');
         expect(await hip.linkVisit(10)).toEqual({ status: 'linking' });
         expect(last()).toMatchObject({ path: '/hip/v3/link/carecontext', headers: { 'x-link-token': 'link-tok' } });
         expect(calls.filter((call) => call.path === '/v3/token/generate-token')).toHaveLength(1);
@@ -282,15 +283,16 @@ describe('HIP-initiated linking of a visit', () => {
 
     it('drops a refused token and records the reason, and records a refused token request', async () => {
         const { hip, deliver, store } = await setup();
-        store.saveHipLinkToken('ravi@sbx', 'old', NOW + 1000);
         await hip.linkVisit(11);
-        await deliver(HIP_ON_CARE_CONTEXT_PATH, { error: { code: 'ABDM-1017', message: 'Invalid link token' }, response: { requestId: 'req-1' } });
-        expect(store.getHipLinkToken('ravi@sbx', NOW)).toBeNull();
-        expect(store.getHipRequest('req-1')).toMatchObject({ status: 'failed', error: 'Invalid link token' });
+        await deliver(HIP_ON_GENERATE_TOKEN_PATH, { linkToken: 'old', response: { requestId: 'req-1' } });
+        expect(hip.linkToken('ravi@sbx')).toBe('old');
+        await deliver(HIP_ON_CARE_CONTEXT_PATH, { error: { code: 'ABDM-1017', message: 'Invalid link token' }, response: { requestId: 'req-2' } });
+        expect(hip.linkToken('ravi@sbx')).toBeNull();
+        expect(store.getHipRequest('req-2')).toMatchObject({ status: 'failed', error: 'Invalid link token' });
 
         await hip.linkVisit(11);
-        await deliver(HIP_ON_GENERATE_TOKEN_PATH, { error: { code: 900 }, response: { requestId: 'req-2' } });
-        expect(store.getHipRequest('req-2')).toMatchObject({ status: 'failed', error: 'Error 900' });
+        await deliver(HIP_ON_GENERATE_TOKEN_PATH, { error: { code: 900 }, response: { requestId: 'req-3' } });
+        expect(store.getHipRequest('req-3')).toMatchObject({ status: 'failed', error: 'Error 900' });
     });
 
     it('refuses visits it cannot link and callbacks it never asked for', async () => {
@@ -302,16 +304,12 @@ describe('HIP-initiated linking of a visit', () => {
         store.saveHipLinks('old@sbx', 1, ['OP-2026-0001'], 'clinic');
         await expect(hip.linkVisit(10)).rejects.toThrow('already linked to another health ID');
         expect(() => store.saveHipLinks('ravi@sbx', 1, ['OP-2026-0001'], 'patient')).toThrow('already linked to another health ID');
-        store.saveHipLinkToken('Ravi@SBX', 'tok-1', NOW + 1000);
-        store.saveHipLinkToken('ravi@sbx', 'tok-2', NOW + 1000);
-        expect(store.getHipLinkToken('RAVI@sbx', NOW)).toBe('tok-2');
-        store.clearHipLinkToken('ravi@sbx');
         const mock = await setup({ mock: true });
         await expect(mock.hip.linkVisit(11)).rejects.toThrow('paired');
 
         await deliver(HIP_ON_GENERATE_TOKEN_PATH, { linkToken: 'x', response: { requestId: 'nope' } });
         await deliver(HIP_ON_CARE_CONTEXT_PATH, { response: { requestId: 'nope' } });
-        expect(store.getHipLinkToken('ravi@sbx', NOW)).toBeNull();
+        expect(hip.linkToken('ravi@sbx')).toBeNull();
         expect(hip.applyCallback('/api/v3/hiu/elsewhere', {}, null)).toBeNull();
     });
 });

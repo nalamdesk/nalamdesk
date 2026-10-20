@@ -1799,14 +1799,6 @@ export const MIGRATIONS = [
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
             `);
-            db.exec(`
-                CREATE TABLE IF NOT EXISTS abdm_hip_link_tokens (
-                    abha_address TEXT PRIMARY KEY,
-                    link_token TEXT NOT NULL,
-                    expires_at INTEGER NOT NULL,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                );
-            `);
             // A patient app may only start linking for the patient its
             // discovery matched, under the same health ID.
             db.exec(`

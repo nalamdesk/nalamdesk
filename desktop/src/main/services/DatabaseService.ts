@@ -1721,22 +1721,6 @@ export class DatabaseService {
             WHERE request_id = ?`).run(status, error ? String(error).slice(0, 500) : null, String(requestId));
     }
 
-    getHipLinkToken(abhaAddress: string, nowMs = Date.now()): string | null {
-        const row = this.db.prepare(`SELECT link_token, expires_at FROM abdm_hip_link_tokens WHERE LOWER(abha_address) = LOWER(?)`)
-            .get(String(abhaAddress || '').trim()) as any;
-        return row && Number(row.expires_at) > nowMs ? String(row.link_token) : null;
-    }
-
-    saveHipLinkToken(abhaAddress: string, linkToken: string, expiresAt: number) {
-        this.db.prepare(`INSERT INTO abdm_hip_link_tokens (abha_address, link_token, expires_at) VALUES (?, ?, ?)
-            ON CONFLICT(abha_address) DO UPDATE SET link_token = excluded.link_token, expires_at = excluded.expires_at,
-            updated_at = CURRENT_TIMESTAMP`).run(String(abhaAddress).trim().toLowerCase(), String(linkToken), expiresAt);
-    }
-
-    clearHipLinkToken(abhaAddress: string) {
-        this.db.prepare('DELETE FROM abdm_hip_link_tokens WHERE LOWER(abha_address) = LOWER(?)').run(String(abhaAddress || '').trim());
-    }
-
     /**
      * Everything the FHIR serializer needs for one care context, read from
      * the chart; null when no finished visit carries this reference.

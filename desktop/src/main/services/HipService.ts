@@ -56,9 +56,6 @@ export interface HipStore {
     saveHipRequest(row: { requestId: string; kind: 'token' | 'link'; abhaAddress: string; patientId: number | null; refs: string[] }): void;
     getHipRequest(requestId: string): any;
     updateHipRequest(requestId: string, status: string, error?: string | null): void;
-    getHipLinkToken(abhaAddress: string, nowMs?: number): string | null;
-    saveHipLinkToken(abhaAddress: string, linkToken: string, expiresAt: number): void;
-    clearHipLinkToken(abhaAddress: string): void;
     getHipEncounterExport(careContextRef: string): HipEncounter | null;
     getHipVisit(visitId: number): any;
     receiveInboxCallback(kind: string, payload: any, actingUserId?: number, requestId?: string): any;
@@ -109,6 +106,8 @@ export class HipService {
      * database or a backup. A restart drops them; the patient links again.
      */
     private readonly liveCodes = new Map<string, { otp: string; expiresAt: number }>();
+    /** Link tokens by lowercased health ID, likewise held in memory only. */
+    private readonly linkTokens = new Map<string, { token: string; expiresAt: number }>();
 
     constructor(private readonly deps: HipDeps) {}
 
@@ -259,6 +258,12 @@ export class HipService {
         return live.otp;
     }
 
+    /** A link token still valid for this health ID, if one is held. */
+    linkToken(abhaAddress: string): string | null {
+        const held = this.linkTokens.get(String(abhaAddress || '').trim().toLowerCase());
+        return held && held.expiresAt > this.nowMs() ? held.token : null;
+    }
+
     private endLinkAttempt(linkRef: string): void {
         this.liveCodes.delete(linkRef);
         this.deps.store.closeHipLinkOtp(linkRef);
@@ -314,7 +319,7 @@ export class HipService {
         if (!abhaAddress) throw new Error('Link the patient\'s health ID first.');
         const owner = this.deps.store.getHipLinkAddresses([visit.care_context_ref])[visit.care_context_ref];
         if (owner && owner !== abhaAddress.toLowerCase()) throw new Error('This visit is already linked to another health ID.');
-        const token = this.deps.store.getHipLinkToken(abhaAddress, this.nowMs());
+        const token = this.linkToken(abhaAddress);
         if (token) {
             await this.sendCareContextLink(abhaAddress, Number(visit.patient_id), [visit.care_context_ref], token);
             return { status: 'linking' };
@@ -355,7 +360,7 @@ export class HipService {
             return {};
         }
         this.deps.store.updateHipRequest(requestId, 'done');
-        this.deps.store.saveHipLinkToken(request.abha_address, token, this.nowMs() + LINK_TOKEN_TTL_MS);
+        this.linkTokens.set(String(request.abha_address).trim().toLowerCase(), { token, expiresAt: this.nowMs() + LINK_TOKEN_TTL_MS });
         const refs: string[] = JSON.parse(request.care_context_refs || '[]');
         return { followUp: () => this.sendCareContextLink(request.abha_address, Number(request.patient_id), refs, token) };
     }
@@ -366,7 +371,7 @@ export class HipService {
         if (!request || request.kind !== 'link') throw new Error('Care context link request not found.');
         if (body?.error) {
             // A refused token is not reused; the next attempt asks for a new one.
-            this.deps.store.clearHipLinkToken(request.abha_address);
+            this.linkTokens.delete(String(request.abha_address).trim().toLowerCase());
             this.deps.store.updateHipRequest(requestId, 'failed', errorText(body.error));
             return {};
         }

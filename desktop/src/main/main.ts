@@ -23,6 +23,7 @@ import { FideliusService, parseKeyMaterial } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
 import { CloudLink } from './cloud/CloudLink';
+import { AbdmMailboxProcessor } from './cloud/AbdmMailboxProcessor';
 import { BookingError } from './booking/BookingInboxService';
 import { getCloudServiceUrl } from '../shared/runtime-config';
 import { buildAuthenticatedLoginResult } from './services/AuthResult';
@@ -208,9 +209,22 @@ const cloudLink: CloudLink = new CloudLink({
     onNewRequests: (count) => notifyRenderer('cloud:newRequests', { count }),
     onPairingChange: (status) => notifyRenderer('cloud:pairingChanged', status),
     onMailboxChange: () => notifyRenderer('cloud:pairingChanged', cloudStatus()),
+    onAbdmItems: () => drainAbdmMailbox(),
     // A restore drains cloud work before replacing the database, and refuses it after.
     runWork: (work) => databaseService.runWork(work)
 });
+// ABDM callbacks and data pushes arrive through the relay's mailbox (#160);
+// the local server has no public ABDM routes.
+const abdmMailbox = new AbdmMailboxProcessor({
+    store: databaseService,
+    hiu: hiuService,
+    relay: () => cloudLink.abdmRelay(),
+    onShare: () => notifyRenderer('abdm:shareReceived', {}),
+    runWork: (work) => databaseService.runWork(work)
+});
+function drainAbdmMailbox(): void {
+    abdmMailbox.drain().catch((error) => log.warn(`[ABDM mailbox] Pass failed: ${(error as Error).message}`));
+}
 
 // Determine Static Path for ApiServer
 const staticPath = isDev
@@ -599,6 +613,8 @@ function initializeServices(settings: any): void {
             console.error('[HIU] Could not schedule retention sweep:', e);
         }
         cloudLink.start();
+        // Items saved before the last shutdown.
+        drainAbdmMailbox();
     } catch (e) {
         console.error('Failed to configure services', e);
     }
@@ -1237,8 +1253,7 @@ handleGuardedDb('db:abdmGetConfig', () => {
         hfr_id: databaseService.getSettings()?.abdm_hfr_id || '',
         hpr_id: databaseService.getSettings()?.abdm_hpr_id || '',
         hip_endpoint: databaseService.getSettings()?.abdm_hip_endpoint || '',
-        has_recipient_key: !!databaseService.getSettings()?.abdm_recipient_key,
-        has_callback_secret: databaseService.hasCallbackSecret()
+        has_recipient_key: !!databaseService.getSettings()?.abdm_recipient_key
     };
 });
 handleGuardedDb('db:abdmSaveConfig', (_, config) => {
@@ -1279,17 +1294,6 @@ handleGuardedDb('db:abdmSaveConfig', (_, config) => {
             // Empty field means "leave the stored key alone", never wipe it.
         } else {
             patch['abdm_recipient_key'] = JSON.stringify(parseKeyMaterial(key));
-        }
-    }
-    if (config && typeof config['callback_secret'] === 'string') {
-        const secret = (config['callback_secret'] as string).trim();
-        // Empty field leaves the stored secret alone; only a new value
-        // replaces it. Minimum length keeps weak shared secrets out.
-        if (secret) {
-            if (secret.length < 16) {
-                throw new Error('Callback password must be at least 16 characters.');
-            }
-            patch['abdm_callback_secret'] = secret;
         }
     }
     if (config && config['mock'] !== undefined) {

@@ -8,6 +8,9 @@ export interface CloudResponse {
     body: any;
 }
 
+/** A signed ABDM call through the relay, such as `POST /abdm/gateway/...`, as the paired facility. */
+export type AbdmRelaySend = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<CloudResponse>;
+
 export interface SigningIdentity {
     deviceId: string;
     hipId: string;

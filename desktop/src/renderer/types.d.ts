@@ -142,6 +142,7 @@ declare global {
                 decide: (data: { ref: string; decision: 'accepted' | 'declined'; date?: string; time?: string }) => Promise<{ success: boolean; local?: boolean }>;
                 onPairingChanged: (callback: (status: CloudStatus) => void) => () => void;
                 onNewRequests: (callback: (data: { count: number }) => void) => () => void;
+                onAbdmShare: (callback: () => void) => () => void;
             };
             clipboard: {
                 writeText: (text: string) => Promise<boolean>;

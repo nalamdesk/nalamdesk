@@ -427,23 +427,6 @@ describe('SettingsComponent Validation', () => {
         expect(payload2.recipient_key).toBe('QUJD');
     });
 
-    it('sends a callback password only when the field holds a new one', async () => {
-        mockData.invoke.mockResolvedValue(null);
-        component.abdmCallbackSecret = '';
-
-        await component.saveAbdmConfig();
-
-        const payload = mockData.invoke.mock.calls
-            .find((call: any[]) => call[0] === 'abdmSaveConfig')[1];
-        expect('callback_secret' in payload).toBe(false);
-
-        component.abdmCallbackSecret = 'a-very-long-shared-secret';
-        await component.saveAbdmConfig();
-        const payload2 = mockData.invoke.mock.calls
-            .filter((call: any[]) => call[0] === 'abdmSaveConfig')[1][1];
-        expect(payload2.callback_secret).toBe('a-very-long-shared-secret');
-    });
-
     it('manages per-user overrides through the admin IPC', async () => {        mockData.invoke.mockImplementation((method: string) => {
             if (method === 'getUserOverrides') return Promise.resolve([{ action: 'updateQueueStatus', effect: 'allow' }]);
             if (method === 'saveUserOverride') return Promise.resolve({ id: 1 });
@@ -1198,7 +1181,7 @@ describe('SettingsComponent Validation', () => {
                     abdmGetConfig: {
                         gateway_env: 'prod', client_id: 'cid', has_secret: true, mock: false,
                         hip_id: 'H1', counter_id: 'C1', hfr_id: 'F', hpr_id: 'P',
-                        hip_endpoint: 'https://x', has_recipient_key: true, has_callback_secret: false
+                        hip_endpoint: 'https://x', has_recipient_key: true
                     }
                 });
                 component.abdmRecipientKey = 'stale';
@@ -1210,13 +1193,11 @@ describe('SettingsComponent Validation', () => {
             it('saves config with new secrets only when provided', async () => {
                 component.abdmConfig = { gateway_env: 'sandbox', client_id: 'c', mock: true } as any;
                 component.abdmRecipientKey = '  newkey ';
-                component.abdmCallbackSecret = '';
                 invokeImpl({ abdmSaveConfig: true, abdmGetConfig: null });
                 await component.saveAbdmConfig();
                 expect(mockData.invoke).toHaveBeenCalledWith('abdmSaveConfig', expect.objectContaining({
                     recipient_key: 'newkey'
                 }));
-                expect(mockData.invoke.mock.calls[0][1]).not.toHaveProperty('callback_secret');
                 expect(component.abdmBusy).toBe(false);
             });
 

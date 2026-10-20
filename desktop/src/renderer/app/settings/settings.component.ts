@@ -59,11 +59,10 @@ export class SettingsComponent implements OnInit {
   isElectron = !!(window as any).electron;
 
   // ABDM gateway (separate tab; secret handled via its own IPC, never in settings)
-  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string; hfr_id: string; hpr_id: string; hip_endpoint: string; has_recipient_key: boolean; has_callback_secret: boolean } =
-    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '', hfr_id: '', hpr_id: '', hip_endpoint: '', has_recipient_key: false, has_callback_secret: false };
+  abdmConfig: { gateway_env: string; client_id: string; has_secret: boolean; mock: boolean; hip_id: string; counter_id: string; hfr_id: string; hpr_id: string; hip_endpoint: string; has_recipient_key: boolean } =
+    { gateway_env: 'sandbox', client_id: '', has_secret: false, mock: true, hip_id: '', counter_id: '', hfr_id: '', hpr_id: '', hip_endpoint: '', has_recipient_key: false };
   abdmSecret = '';
   abdmRecipientKey = '';
-  abdmCallbackSecret = '';
   abdmTest: { ok: boolean; mode: string; detail: string; latencyMs?: number } | null = null;
   abdmBusy = false;
   abdmSaved = false;
@@ -485,11 +484,9 @@ export class SettingsComponent implements OnInit {
             hfr_id: config.hfr_id || '',
             hpr_id: config.hpr_id || '',
             hip_endpoint: config.hip_endpoint || '',
-            has_recipient_key: !!config.has_recipient_key,
-            has_callback_secret: !!config.has_callback_secret
+            has_recipient_key: !!config.has_recipient_key
           };
           this.abdmRecipientKey = '';
-          this.abdmCallbackSecret = '';
           void this.generateQr();
         }
       });
@@ -513,11 +510,9 @@ export class SettingsComponent implements OnInit {
       // Only send a recipient key when the field holds a new one; an empty
       // field must never wipe the stored key.
       if (this.abdmRecipientKey.trim()) payload['recipient_key'] = this.abdmRecipientKey.trim();
-      if (this.abdmCallbackSecret.trim()) payload['callback_secret'] = this.abdmCallbackSecret.trim();
       await this.dataService.invoke('abdmSaveConfig', payload);
       this.ngZone.run(() => {
         this.abdmRecipientKey = '';
-        this.abdmCallbackSecret = '';
         this.abdmSaved = true;
         setTimeout(() => this.abdmSaved = false, 3000);
       });

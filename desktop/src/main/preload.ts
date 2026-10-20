@@ -196,6 +196,11 @@ contextBridge.exposeInMainWorld('electron', {
             const listener = (_event: unknown, data: any) => callback(data);
             ipcRenderer.on('cloud:newRequests', listener);
             return () => ipcRenderer.removeListener('cloud:newRequests', listener);
+        },
+        onAbdmShare: (callback: () => void) => {
+            const listener = () => callback();
+            ipcRenderer.on('abdm:shareReceived', listener);
+            return () => ipcRenderer.removeListener('abdm:shareReceived', listener);
         }
     },
     clipboard: {

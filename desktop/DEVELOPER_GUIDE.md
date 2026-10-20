@@ -82,34 +82,35 @@ Migration v11 adds longitudinal records and triage tracking:
   - Evaluates LOINC/UCUM ranges with unit conversions (°F / °C, kg / lbs).
   - Flags abnormal vitals (hypothermia, fever, hypoxia, tachycardia/bradycardia, hypertension/hypotension) directly in queue queries.
 
-## ABDM Scan & Share callbacks (#60)
+## ABDM callbacks through the relay (#60, #160)
 
-The local Fastify server exposes an unauthenticated gateway callback:
+The desktop exposes no public ABDM routes. The ABDM relay (`cloud/relay`)
+receives every gateway callback and HIP data push, seals it to this computer's
+key, and stores it in the clinic's mailbox; the mailbox reader saves it to
+`abdm_mailbox`, and `AbdmMailboxProcessor` (`src/main/cloud`) applies it:
 
-- `POST /abdm/v0.5/patients/profile/share` validates the profile shape and stores
-  it as a numbered `abdm_share_tokens` row (daily sequence, 15-minute expiry).
-  Nothing executes from the payload; the Queue dock picks it up on its 5s poll.
-- The callback is gateway-initiated and therefore unauthenticated: it accepts
-  a strict shape (name required, capped field lengths, 8 KB body cap) at
-  30 requests/minute per source IP, and intake still needs an explicit human
-  accept before any patient record is created. Treat tunnel URLs as sensitive
-  and rotate them if they leak.
-- The counter QR encodes `{ app: 'NalamDesk Scan & Share', v: 1, hipId, counterId }`
-  (facility identity only, no patient data). Configure HIP/counter IDs under
-  Settings → ABDM, download the QR image, and display the printout at reception.
+- **Scan and share** (`/api/v3/hip/patient/share`) becomes a numbered
+  `abdm_share_tokens` row (daily sequence, 15-minute expiry), and the desktop
+  answers the gateway with the token number through the relay
+  (`patient-share/v3/on-share`). The Queue dock refreshes as soon as the main
+  process announces the token (`abdm:shareReceived`); its 5s poll stays for
+  LAN browsers. A gateway retry with the same `REQUEST-ID` queues no second
+  token. Intake still needs an explicit human accept before any patient
+  record is created.
+- **HIU consent notifications** update the matching consent request and stay
+  in the callback inbox; **any other callback** is queued in the inbox under a
+  kind named after its path (`hip-consent-request-notify`).
+- **HIU data pushes** are decrypted and cached only for a matching granted
+  consent, as described under M3.
 
-Clinic PCs sit behind NAT, so sandbox callbacks cannot reach `localhost`
-directly. For certification, expose the local API port through a tunnel:
+Each item ends `processed` or `failed` and is never retried, so one bad item
+cannot block the rest. Callback paths follow the public v3 docs; reconfirm
+them against the sandbox (#152). Without pairing, use the Demo Scan button
+under Settings → ABDM to queue a token while the mock gateway is active.
 
-```bash
-# Example: Cloudflare Tunnel (quick tunnel, no account needed for sandbox)
-cloudflared tunnel --url http://127.0.0.1:3002
-# Alternative: ngrok http 3002
-# Register the printed https://<tunnel> URL as the callback base with ABDM.
-```
-
-Use a tunnel only for sandbox testing. Production callbacks must terminate on
-infrastructure the clinic controls, never on a developer laptop.
+The counter QR encodes `{ app: 'NalamDesk Scan & Share', v: 1, hipId, counterId }`
+(facility identity only, no patient data). Configure HIP/counter IDs under
+Settings → ABDM, download the QR image, and display the printout at reception.
 
 ## ABDM M2: HIP registry, care contexts, inbox, Fidelius transfer (#57, #61–#64)
 
@@ -117,11 +118,12 @@ M2 makes the desktop a Health Information Provider (HIP) on top of the M1
 intake track. Schema arrives in migrations v19–v24 (v19 facility/practitioner
 registry, v20 care-context linking + callback inbox, v21 inbox LAN grants,
 v22 transfer endpoint + recipient key, v23 transfer grants + callback secret +
-per-doctor registry, v24 monotonic care-context sequence).
+per-doctor registry, v24 monotonic care-context sequence). v46 clears the
+callback secret again: callbacks now arrive sealed through the relay.
 
 - **Registry identity (#57):** `settings` carries `abdm_hip_id`,
   `abdm_counter_id`, `abdm_hfr_id`, `abdm_hip_endpoint`,
-  `abdm_recipient_key`, `abdm_callback_secret`, plus per-user
+  `abdm_recipient_key`, plus per-user
   `abdm_hpr_id`. Profile edits that omit registry IDs must not wipe them
   (clearing goes through an explicit empty string); covered in
   `ClinicalSafety.spec` ("preserves per-doctor registry IDs").
@@ -134,11 +136,9 @@ per-doctor registry, v24 monotonic care-context sequence).
   certification, don't guess.
 - **Care contexts + inbox (#63):** encounters get `OP-YYYY-XXXX` refs from
   the `care_context_seq` counter (never reused after deletes).
-  `POST /abdm/v0.5/callbacks/:kind` queues gateway callbacks; the desk
-  acknowledges each exactly once (`abdmGetInbox` / `abdmAckInbox`; nurses
-  read-only). Callback shape is strict and, once a callback secret is set,
-  requests without it are rejected (open acceptance before that is for
-  sandbox testing only).
+  Gateway callbacks from the relay's mailbox are queued in the callback
+  inbox; the desk acknowledges each exactly once (`abdmGetInbox` /
+  `abdmAckInbox`; nurses read-only).
 - **Fidelius transfer (#64):** `FideliusService` does ECDH Curve25519
   direct data-push (`abdmTransferBundle`): fresh ephemeral key per
   transfer, tamper-rejecting envelopes, bounded timeouts. No endpoint
@@ -164,8 +164,10 @@ notify dedupe + flow grants, v29 read/clear grants, v30 import grant).
   (`consent-granted/denied/expired`, `data-ready`) and `requestId` dedupe
   (including the lost-race path); bookkeeping auto-applies, clinical data
   never does.
-- **Inbound pipeline:** `POST /abdm/hiu/data/transfer` (256KB cap, rate
-  limit, secret gate) decrypts each envelope with the HIU key into the
+- **Inbound pipeline:** HIP data pushes arrive through the relay's mailbox
+  (`abdm-data-push` items, up to 100 records each, either `{ requestId,
+  records }` or the ABDM `{ transactionId, keyMaterial, entries }` shape) and
+  each envelope is decrypted with the HIU key into the
   SQLCipher-encrypted cache with 30-day expiry. `FhirParser`
   (`shared/fhir/parser.ts`) turns document Bundles into the display model;
   foreign profiles degrade to text/warnings, and unreadable single records

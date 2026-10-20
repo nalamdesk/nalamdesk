@@ -1,5 +1,5 @@
 
-import { Component, HostListener, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, HostListener, NgZone, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -320,7 +320,8 @@ export class QueueComponent implements OnInit, OnDestroy {
     private dialogService: DialogService,
     private authService?: AuthService,
     private doctorPick?: DoctorPickService,
-    private queueCountService?: QueueCountService
+    private queueCountService?: QueueCountService,
+    private ngZone?: NgZone
   ) { }
 
   ngOnInit() {
@@ -331,12 +332,22 @@ export class QueueComponent implements OnInit, OnDestroy {
     this.refreshIntervalId = setInterval(() => this.refreshQueue(), 30000);
     // Scan & Share dock refreshes faster so accepted scans appear at once.
     this.sharePollId = setInterval(() => this.refreshShareTokens(), 5000);
+    // On the clinic computer a scan shows as soon as it arrives from the
+    // relay (#160); the poll stays for LAN browsers and as a fallback.
+    this.stopShareListener = (window as any).electron?.cloud?.onAbdmShare?.(() => {
+      const refresh = () => { void this.refreshShareTokens(); };
+      if (this.ngZone) this.ngZone.run(refresh);
+      else refresh();
+    }) ?? null;
   }
 
   ngOnDestroy() {
     if (this.refreshIntervalId) clearInterval(this.refreshIntervalId);
     if (this.sharePollId) clearInterval(this.sharePollId);
+    this.stopShareListener?.();
   }
+
+  private stopShareListener: (() => void) | null = null;
 
   shareTokens: any[] = [];
   sharePollId: any;

@@ -406,42 +406,6 @@ export class DatabaseService {
             FROM settings LIMIT 1`).get();
     }
 
-    // The callback shared secret is write-only through settings: readers
-    // learn only whether one is set, never its value.
-    hasCallbackSecret(): boolean {
-        try {
-            const row = this.db.prepare(
-                'SELECT abdm_callback_secret AS value FROM settings LIMIT 1').get() as any;
-            return !!row?.value;
-        } catch {
-            return false;
-        }
-    }
-
-    callbackSecretMatches(presented: unknown, strict = false): boolean {
-        try {
-            const row = this.db.prepare(
-                'SELECT abdm_callback_secret AS value FROM settings LIMIT 1').get() as any;
-            const expected = String(row?.value || '');
-            // Without a configured secret, callbacks stay open only for
-            // sandbox testing. Live mode requires the password.
-            if (!expected) return !strict;
-            return this.secretsEqual(String(presented || ''), expected);
-        } catch {
-            return false;
-        }
-    }
-
-    // Constant-time comparison over the longer length, so neither value nor
-    // length leaks through timing.
-    private secretsEqual(a: string, b: string): boolean {
-        const max = Math.max(a.length, b.length);
-        let diff = a.length ^ b.length;
-        for (let i = 0; i < max; i++) {
-            diff |= ((i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0));
-        }
-        return diff === 0;
-    }
     // Main-process-only accessor for the keychain-protected ABDM secret blob.
     // Never exposed through generic settings responses, IPC getters, or LAN.
     getAbdmSecretProtected(): string | null {
@@ -732,7 +696,6 @@ export class DatabaseService {
             'abdm_gateway_env', 'abdm_client_id', 'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
             'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
             'abdm_hiu_public_key',
-            'abdm_callback_secret',
             'standards_mode'
         ];
 
@@ -844,6 +807,20 @@ export class DatabaseService {
     saveAbdmInboxItem(row: AbdmInboxRow) {
         this.db.prepare(`INSERT OR IGNORE INTO abdm_mailbox(id, type, path, request_id, received_at, payload, created_at)
             VALUES(@id, @type, @path, @request_id, @received_at, @payload, @created_at)`).run({ ...row, created_at: Date.now() });
+    }
+
+    getNewAbdmMailboxItems(limit: number) {
+        return this.db.prepare(`SELECT id, type, path, request_id, received_at, payload, status FROM abdm_mailbox
+            WHERE status = 'new' ORDER BY created_at ASC, id ASC LIMIT ?`).all(limit);
+    }
+
+    setAbdmMailboxStatus(id: string, status: 'processed' | 'failed') {
+        this.db.prepare('UPDATE abdm_mailbox SET status = ? WHERE id = ?').run(status, id);
+    }
+
+    abdmMailboxRequestSeen(path: string, requestId: string, exceptId: string): boolean {
+        return !!this.db.prepare(`SELECT 1 FROM abdm_mailbox
+            WHERE request_id = ? AND path = ? AND id != ? AND status = 'processed' LIMIT 1`).get(requestId, path, exceptId);
     }
 
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL AND active != 0').get().count;

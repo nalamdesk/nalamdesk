@@ -1677,6 +1677,17 @@ export const MIGRATIONS = [
                 CREATE INDEX IF NOT EXISTS idx_abdm_mailbox_request ON abdm_mailbox(request_id);
             `);
         }
+    },
+    {
+        version: 46,
+        up: (db: any) => {
+            console.log('Running Migration v46 (ABDM callbacks through the relay)...');
+            // Callbacks now arrive sealed through the relay (#160), so the
+            // shared password senders used to present is no longer kept.
+            try {
+                db.exec('UPDATE settings SET abdm_callback_secret = NULL');
+            } catch (e) { }
+        }
     }
 ];
 

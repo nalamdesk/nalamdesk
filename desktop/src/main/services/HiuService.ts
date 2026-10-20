@@ -75,6 +75,8 @@ export const HIU_ON_FETCH_PATH = '/api/v3/hiu/consent/on-fetch';
 export const HIU_ON_REQUEST_PATH = '/api/v3/hiu/health-information/on-request';
 const CONSENT_INIT = '/consent/v3/request/init';
 const CONSENT_FETCH = '/consent/v3/fetch';
+// An HL7 canonical identifier, never fetched: FHIR defines it with http.
+const PURPOSE_OF_USE_URI = 'http://terminology.hl7.org/ValueSet/v3-PurposeOfUse'; // NOSONAR
 const CONSENT_ON_NOTIFY = '/consent/v3/request/hiu/on-notify';
 const HI_REQUEST = '/data-flow/v3/health-information/request';
 const HI_NOTIFY = '/data-flow/v3/health-information/notify';
@@ -399,7 +401,7 @@ export class HiuService {
         const requester = this.deps.requester?.(actingUserId) ?? { name: 'Clinic', hprId: null };
         const body = {
             consent: {
-                purpose: { text: 'Care Management', code: 'CAREMGT', refUri: 'http://terminology.hl7.org/ValueSet/v3-PurposeOfUse' },
+                purpose: { text: 'Care Management', code: 'CAREMGT', refUri: PURPOSE_OF_USE_URI },
                 patient: { id: String(input.abhaAddress).trim() },
                 hiu: { id: hiuId },
                 requester: {

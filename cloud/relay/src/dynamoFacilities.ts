@@ -1,4 +1,4 @@
-import { DynamoDBClient, QueryCommand, type AttributeValue } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, GetItemCommand, QueryCommand, type AttributeValue } from '@aws-sdk/client-dynamodb';
 import type { Facility, FacilityDirectory } from './ports.js';
 
 const CACHE_MS = 30 * 1000;
@@ -11,7 +11,7 @@ function toFacility(item: Item | undefined): Facility | null {
     const hipId = item.hipId?.S;
     const sealingPublicKey = item.sealingPublicKey?.S;
     if (!clinicId || !hipId || !sealingPublicKey) return null;
-    return { clinicId, hipId, sealingPublicKey, linkedToBridge: item.linkedToBridge?.BOOL === true };
+    return { deviceId: item.deviceId?.S, clinicId, hipId, sealingPublicKey, linkedToBridge: item.linkedToBridge?.BOOL === true };
 }
 
 /**
@@ -38,6 +38,23 @@ export class DynamoFacilityDirectory implements FacilityDirectory {
 
     byDataPushToken(token: string): Promise<Facility | null> {
         return this.lookup('byDataPushToken', 'dataPushToken', token);
+    }
+
+    async stillCurrent(facility: Facility): Promise<boolean> {
+        if (!facility.deviceId) return false;
+        const result = await this.client.send(new GetItemCommand({
+            TableName: this.tableName,
+            Key: { deviceId: { S: facility.deviceId } },
+            ProjectionExpression: '#s, sealingPublicKey',
+            ExpressionAttributeNames: { '#s': 'status' },
+            ConsistentRead: true
+        }));
+        const current = result.Item?.status?.S === 'active' && result.Item?.sealingPublicKey?.S === facility.sealingPublicKey;
+        if (!current) {
+            // Let the retry look the facility up afresh.
+            for (const [key, hit] of this.cache) if (hit.value?.deviceId === facility.deviceId) this.cache.delete(key);
+        }
+        return current;
     }
 
     private async lookup(indexName: string, attribute: string, value: string): Promise<Facility | null> {

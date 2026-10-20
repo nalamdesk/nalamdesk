@@ -101,6 +101,17 @@ describe('gateway callbacks', () => {
         expect(res.status).toBe(503);
     });
 
+    it('drops mail sealed for a device replaced after the lookup, and answers 503 so ABDM resends', async () => {
+        const h = await harness();
+        h.replaceDevice();
+        const res = await h.app.request('/api/v3/hip/patient/share', {
+            method: 'POST', headers: { authorization: `Bearer ${await h.sign()}`, 'x-hip-id': HIP_ID }, body: '{}'
+        });
+        expect(res.status).toBe(503);
+        expect(h.removed).toEqual(['item-1']);
+        expect(h.rings).toHaveLength(0);
+    });
+
     it('still answers 202 when the doorbell fails, since the desktop also polls', async () => {
         const h = await harness();
         h.failDoorbell();

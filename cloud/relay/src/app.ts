@@ -148,7 +148,15 @@ export function createRelayApp(deps: RelayDeps): Hono {
     // connect and every 30 minutes.
     async function deliver(facility: Facility, type: MailboxItemType, plaintext: Uint8Array): Promise<void> {
         const sealed = seal(plaintext, facility.sealingPublicKey, facility.clinicId, type);
-        await deps.mailbox.put({ clinicId: facility.clinicId, type, sealed });
+        const itemId = await deps.mailbox.put({ clinicId: facility.clinicId, type, sealed });
+        // The lookup may be up to 30 seconds old. If the device was replaced
+        // meanwhile, this item is sealed to a key nobody holds and may be
+        // dated after the replacement's purge: drop it and answer 503 so
+        // ABDM sends it again, to be sealed for the new device.
+        if (!(await deps.facilities.stillCurrent(facility))) {
+            await deps.mailbox.remove(facility.clinicId, [itemId]).catch(() => undefined);
+            throw new Error('facility_changed');
+        }
         deps.doorbell.ring(facility.clinicId).catch(() => undefined);
     }
 

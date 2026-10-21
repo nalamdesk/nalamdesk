@@ -45,7 +45,7 @@
   },
   "private": true,
   "build": {
-    "appId": "com.sankarasabapathy.nalamdesk",
+    "appId": "com.nalamdesk",
     "asar": true,
     "publish": [
       {

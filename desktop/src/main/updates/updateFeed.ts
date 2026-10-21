@@ -2,7 +2,7 @@
  * In-app update feed configuration.
  *
  * Default: generic provider at `DEFAULT_UPDATE_FEED_URL`. nalamdesk.com
- * redirects that path to the public `nalamdesk/releases` GitHub Releases
+ * streams that path from the public `nalamdesk/releases` GitHub Releases
  * (see `landing/src/pages/updates/desktop/[file].ts`), so the hosting can
  * move without shipping a new app.
  *

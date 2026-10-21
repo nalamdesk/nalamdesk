@@ -202,4 +202,61 @@ describe('PdfService', () => {
             expect(mockDoc.line).toHaveBeenCalledWith(14, 35, 196, 35);
         });
     });
+
+    describe('generateOrderPrescription (#20)', () => {
+        const order = {
+            rx_number: 'RX-100005', version: 2, replaces_rx_number: 'RX-100004', authored_at: '2026-10-21T10:00:00Z',
+            copy_number: 1,
+            clinic: { name: 'Nalam Clinic', hfr_id: 'IN3310000001' },
+            requester: { name: 'Dr. Rao', license_number: 'TNMC-1234', specialty: 'General Medicine', hpr_id: '71-0001' },
+            patient: { name: 'Meena', age: 34, gender: 'Female', mobile: '9876543210', mrn: 'ND-000001' },
+            visit: { id: 42, diagnosis: 'Fever' },
+            items: [
+                { medicine: 'Crocin 500', generic_name: 'Paracetamol', brand_name: 'Crocin', dosage: '500mg', route: 'Oral', frequency: '1-0-1', duration: '3 days', instruction: 'After Food', quantity: 6, quantity_unit: 'tablet', refills: 0 },
+                { medicine: 'Local syrup', dosage: '5ml', route: 'Oral', frequency: 'SOS', duration: 'until review', instruction: '', quantity: null, refills: 2 }
+            ]
+        };
+
+        function printedText(): string {
+            return (mockDoc.text as any).mock.calls.map((call: any[]) => String(call[0])).join('\n');
+        }
+
+        it('prints clinic, prescriber and patient identity with the order number', async () => {
+            await service.generateOrderPrescription(order);
+            const text = printedText();
+            for (const part of ['Nalam Clinic', 'Facility ID (HFR): IN3310000001', 'Dr. Rao', 'Reg. No: TNMC-1234', 'HPR: 71-0001',
+                'Rx No: RX-100005 (version 2)', 'Replaces RX-100004', 'Patient: Meena', 'MRN: ND-000001', 'Mobile: 9876543210', 'Fever']) {
+                expect(text).toContain(part);
+            }
+            expect(text).not.toContain('COPY');
+            expect(mockDoc.save).toHaveBeenCalledWith('Prescription-RX-100005.pdf');
+        });
+
+        it('prints every line with its quantity and refills', async () => {
+            await service.generateOrderPrescription(order);
+            const table = (mockAutoTable as any).mock.calls[0][1];
+            expect(table.head[0]).toEqual(['#', 'Medicine', 'Dose', 'Route', 'Frequency', 'Duration', 'Qty', 'Instruction']);
+            expect(table.body).toEqual([
+                ['1', 'Paracetamol (Crocin)', '500mg', 'Oral', '1-0-1', '3 days', '6 tablet', 'After Food'],
+                ['2', 'Local syrup', '5ml', 'Oral', 'SOS', 'until review', '', 'Refills: 2']
+            ]);
+        });
+
+        it('marks a reprint as a copy', async () => {
+            await service.generateOrderPrescription({ ...order, copy_number: 3, version: 1, replaces_rx_number: null, clinic: {}, requester: {}, patient: {}, visit: {}, items: [] } as any);
+            const text = printedText();
+            expect(text).toContain('COPY 2: reprint of RX-100005');
+            expect(text).toContain('NalamDesk Clinic');
+            expect(text).toContain('Rx No: RX-100005');
+            expect(text).not.toContain('version');
+            expect(mockDoc.save).toHaveBeenCalledWith('Prescription-RX-100005-copy2.pdf');
+        });
+    });
+
+    describe('provisional prints', () => {
+        it('says the prescription is not issued yet', async () => {
+            await service.generatePrescription({ date: new Date(), prescription: [] }, { name: 'A' }, { name: 'Dr' }, { provisional: true });
+            expect((mockDoc.text as any).mock.calls.some((call: any[]) => String(call[0]).startsWith('PROVISIONAL'))).toBe(true);
+        });
+    });
 });

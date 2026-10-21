@@ -62,6 +62,8 @@ test.describe.serial('Queue + consultation lifecycle', () => {
         const firstRow = ctx.window.locator('app-prescription .grid').first();
         await firstRow.locator('[data-testid="rx-medicine-0"]').fill('Paracetamol');
         await firstRow.locator('input[aria-label="Duration"]').fill('3 days');
+        // A prescription line needs its dose before the visit can be finished.
+        await firstRow.locator('input[aria-label="Dosage"]').fill('500mg');
         await ctx.window.click('button:has-text("Save Progress")');
         // Live consults keep the Save Progress button; prove the save landed
         // by reading the active encounter back through IPC.

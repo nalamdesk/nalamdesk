@@ -112,6 +112,8 @@ test('NalamDesk Full Clinical Flow', async () => {
         const firstRowMock = window.locator('app-prescription .grid').first();
         await firstRowMock.locator('[data-testid="rx-medicine-0"]').fill('Paracetamol');
         await firstRowMock.locator('input[aria-label="Duration"]').fill('3 days');
+        // A prescription line needs its dose before the visit can be finished.
+        await firstRowMock.locator('input[aria-label="Dosage"]').fill('500mg');
 
         // Save Progress
         await window.click('button:has-text("Save Progress")');

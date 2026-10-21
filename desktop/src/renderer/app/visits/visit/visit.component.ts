@@ -15,6 +15,7 @@ import { newRequestId } from '../../services/request-id';
 import { combineLatest } from 'rxjs';
 import { VitalsFormComponent } from '../vitals/vitals-form.component';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
+import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder } from '../../../../shared/prescription-order';
 
 interface PrescriptionItem {
   medicine: string;
@@ -315,6 +316,23 @@ interface Visit {
                         (changed)="updatePrescription($event)">
                     </app-prescription>
 
+                    <!-- Stored orders for this visit (#20): number, version, status trail -->
+                    <div *ngIf="visitOrders.length" class="mt-3 rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600" data-testid="rx-orders">
+                        <div *ngFor="let order of visitOrders" class="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5">
+                            <span class="font-mono font-bold text-gray-800">{{ order.rx_number }}</span>
+                            <span>v{{ order.version }}</span>
+                            <span class="rounded px-1.5 py-0.5 font-semibold"
+                                  [class.bg-green-100]="order.status === 'active'" [class.text-green-800]="order.status === 'active'"
+                                  [class.bg-gray-200]="order.status !== 'active'" [class.text-gray-700]="order.status !== 'active'">{{ rxStatusLabel(order.status) }}</span>
+                            <span>{{ order.requester?.name }} · {{ order.authored_at | date:'medium' }}</span>
+                            <span *ngIf="order.replaces_rx_number">replaces {{ order.replaces_rx_number }}</span>
+                            <span *ngIf="order.print_count">printed {{ order.print_count }}×</span>
+                            <span *ngIf="order.status_reason" class="italic">{{ order.status_reason }}</span>
+                        </div>
+                        <button *ngIf="activeOrder && canCancelPrescription" type="button" (click)="showRxCancelDialog = true"
+                                class="mt-2 text-xs text-red-600 border border-red-200 hover:bg-red-50 px-2.5 py-1 rounded">Cancel prescription</button>
+                    </div>
+
                     <div class="mt-6 pt-4 border-t w-full md:w-1/3">
                          <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Total Fee (₹)</label>
                          <input type="number" formControlName="amount_paid" class="w-full p-2 border border-gray-300 rounded font-mono font-bold text-gray-700">
@@ -585,6 +603,22 @@ interface Visit {
         confirmText="Mark entered-in-error"
         (decided)="onVisitErrorDecided($event)">
       </app-reason-dialog>
+      <app-reason-dialog
+        [open]="showRxChangeDialog"
+        title="Change a finished prescription"
+        message="The current order is cancelled and a new version is issued under your name. The old version stays in the record."
+        placeholder="Why is the prescription changing?"
+        confirmText="Issue new version"
+        (decided)="onRxChangeDecided($event)">
+      </app-reason-dialog>
+      <app-reason-dialog
+        [open]="showRxCancelDialog"
+        title="Cancel prescription"
+        message="The order stays in the record as cancelled, and its medicines stop showing as current."
+        placeholder="Why is this prescription cancelled?"
+        confirmText="Cancel prescription"
+        (decided)="onRxCancelDecided($event)">
+      </app-reason-dialog>
     </div>
   `,
   styles: [`
@@ -649,6 +683,12 @@ export class VisitComponent implements OnInit {
   private overriddenPrescriptionJson: string | null = null;
 
   currentPrescription: any[] = [];
+  // Prescription orders (#20) of the visit being viewed or edited, newest first.
+  visitOrders: any[] = [];
+  // Lines the edited visit had when opened, to tell a correction from a save.
+  private editingOriginalPrescription: any[] = [];
+  showRxChangeDialog = false;
+  showRxCancelDialog = false;
   private conditionPresetGeneration = 0;
   viewMode = false;
   viewVisitId: number | null = null;
@@ -759,6 +799,8 @@ export class VisitComponent implements OnInit {
     }
     if (this.isConsulting || this.encounterId || this.activeEncounterReadOnly) return;
     this.editingVisitId = visit.id;
+    this.editingOriginalPrescription = visit.prescription || [];
+    void this.loadVisitOrders(visit.id);
     this.visitForm.patchValue({
       symptoms: visit.symptoms,
       examination_notes: visit.examination_notes,
@@ -783,6 +825,8 @@ export class VisitComponent implements OnInit {
 
   resetForm() {
     this.editingVisitId = null;
+    this.editingOriginalPrescription = [];
+    this.visitOrders = [];
     this.visitForm.reset({ amount_paid: 0, prescription: [] });
     this.currentPrescription = [];
     if (!this.isConsulting || this.activeEncounterReadOnly) {
@@ -1233,12 +1277,24 @@ export class VisitComponent implements OnInit {
     return this.verifyAllergySafety(() => this.executeSaveVisit());
   }
 
-  private async executeSaveVisit(): Promise<boolean> {
+  private async executeSaveVisit(changeReason?: string): Promise<boolean> {
     const visitData = this.currentVisitData();
+
+    // A changed prescription on a finished visit is a correction: check the
+    // lines, then ask why before a new version is issued.
+    if (this.editingVisitId && !changeReason && this.prescriptionChanged()) {
+      if (!(await this.prescriptionReady())) return false;
+      this.showRxChangeDialog = true;
+      return false;
+    }
 
     try {
       if (this.editingVisitId) {
-        await this.dataService.invoke('saveVisit', { id: this.editingVisitId, ...visitData });
+        await this.dataService.invoke('saveVisit', {
+          id: this.editingVisitId,
+          ...visitData,
+          ...(changeReason ? { prescription_change_reason: changeReason } : {})
+        });
       } else {
         if (!this.encounterId) throw new Error('No active encounter');
         await this.dataService.invoke('saveConsultationProgress', {
@@ -1257,8 +1313,95 @@ export class VisitComponent implements OnInit {
       return true;
     } catch (e) {
       console.error('Save failed', e);
+      if (this.editingVisitId) {
+        await this.dialogService?.open({ title: 'Update failed', message: this.errorMessage(e, 'The visit could not be updated.'), type: 'error' });
+      }
       return false;
     }
+  }
+
+  async onRxChangeDecided(reason: string | null): Promise<void> {
+    this.showRxChangeDialog = false;
+    if (!reason) return;
+    const visitId = this.editingVisitId;
+    if (await this.executeSaveVisit(reason)) {
+      this.toastService?.success('A new version of the prescription was issued.', 'Prescription changed');
+      if (visitId) void this.loadVisitOrders(visitId);
+    }
+  }
+
+  async onRxCancelDecided(reason: string | null): Promise<void> {
+    this.showRxCancelDialog = false;
+    const visitId = this.editingVisitId ?? this.viewedVisit?.id;
+    if (!reason || !visitId) return;
+    try {
+      const orders = await this.dataService.invoke<any[]>('cancelPrescription', { visitId, reason });
+      this.ngZone.run(() => {
+        this.visitOrders = orders || [];
+        this.currentPrescription = [];
+        this.editingOriginalPrescription = [];
+        this.visitForm.patchValue({ prescription: [] });
+        if (this.viewedVisit) this.viewedVisit = { ...this.viewedVisit, prescription: [] };
+      });
+    } catch (e) {
+      console.error(e);
+      await this.dialogService?.open({ title: 'Error', message: this.errorMessage(e, 'The prescription could not be cancelled.'), type: 'error' });
+    }
+  }
+
+  get activeOrder(): any | null {
+    return this.visitOrders.find((order) => order.status === 'active') || null;
+  }
+
+  get canCancelPrescription(): boolean {
+    return ['admin', 'doctor'].includes(this.currentUser?.role);
+  }
+
+  rxStatusLabel(status: string): string {
+    return status === 'active' ? 'Active' : status === 'cancelled' ? 'Cancelled' : 'Entered in error';
+  }
+
+  async loadVisitOrders(visitId: number): Promise<void> {
+    try {
+      const orders = await this.dataService.invoke<any[]>('getVisitPrescriptions', visitId);
+      this.ngZone.run(() => {
+        // Ignore an answer for a visit the screen has since left.
+        if ((this.editingVisitId ?? this.viewedVisit?.id) === visitId) this.visitOrders = orders || [];
+      });
+    } catch (e) {
+      console.warn('Could not load prescription orders', e);
+    }
+  }
+
+  /** True when the form's lines differ from what the edited visit stored. */
+  private prescriptionChanged(): boolean {
+    const lines = this.visitForm.value?.prescription || [];
+    const active = this.activeOrder;
+    if (active) {
+      const { lines: final, issues } = finalizeRxLines(lines);
+      return issues.length > 0 || !sameRxOrder(active.items || [], final);
+    }
+    return rxLinesKey(lines) !== rxLinesKey(this.editingOriginalPrescription);
+  }
+
+  /** What stops the form's lines from being issued, or '' when they can be. */
+  private prescriptionIssues(): string {
+    return formatRxIssues(finalizeRxLines(this.visitForm.value?.prescription || []).issues);
+  }
+
+  /** Every line must be complete before a prescription is issued; says what is missing. */
+  private async prescriptionReady(): Promise<boolean> {
+    const issues = this.prescriptionIssues();
+    if (!issues) return true;
+    await this.dialogService?.open({ title: 'Prescription incomplete', message: issues, type: 'warning' });
+    return false;
+  }
+
+  private errorMessage(e: unknown, fallback: string): string {
+    const raw = e instanceof Error ? e.message : '';
+    // Electron prefixes main-process errors with the channel name.
+    const message = raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, '').trim();
+    return message && message !== 'Internal server error' ? message : fallback;
   }
 
   deleteVisit() {
@@ -1289,7 +1432,13 @@ export class VisitComponent implements OnInit {
 
   async printPrescription() {
     try {
-      await this.generateVisitPdf({ ...this.visitForm.value, date: new Date() });
+      // A finished visit prints its stored order; anything else is the
+      // screen, marked provisional while the consultation is open.
+      if (this.editingVisitId && this.activeOrder && !this.prescriptionChanged()) {
+        await this.printOrder(this.editingVisitId);
+        return;
+      }
+      await this.generateVisitPdf({ ...this.visitForm.value, date: new Date() }, { provisional: this.isLiveConsultation });
     } catch (e) {
       console.error('Print failed', e);
     }
@@ -1298,10 +1447,20 @@ export class VisitComponent implements OnInit {
   async downloadVisitPdf() {
     if (!this.viewedVisit) return;
     try {
+      if (this.activeOrder) {
+        await this.printOrder(this.viewedVisit.id);
+        return;
+      }
       await this.generateVisitPdf(this.viewedVisit);
     } catch (e) {
       console.error('PDF download failed', e);
     }
+  }
+
+  private async printOrder(visitId: number) {
+    const order = await this.dataService.invoke<any>('recordPrescriptionPrint', { visitId });
+    await this.pdfService.generateOrderPrescription(order);
+    void this.loadVisitOrders(visitId);
   }
 
   // --- New Logic: Finish & Next ---
@@ -1400,6 +1559,12 @@ export class VisitComponent implements OnInit {
     }
 
     if (!this.encounterId || (manageActionLock && this.actionInFlight)) return false;
+    // Checked without awaiting when the lines are fine, so a second click
+    // still meets the action lock taken in executeCompleteConsult.
+    if (this.prescriptionIssues()) {
+      await this.prescriptionReady();
+      return false;
+    }
 
     return this.verifyAllergySafety(() => this.executeCompleteConsult(manageActionLock));
   }
@@ -1417,7 +1582,7 @@ export class VisitComponent implements OnInit {
       console.error('Failed to end consult', e);
       await this.dialogService?.open({
         title: 'Finish failed',
-        message: 'The consultation could not be finished. Your encounter remains open.',
+        message: `${this.errorMessage(e, 'The consultation could not be finished.')} Your encounter remains open.`,
         type: 'error'
       });
       return false;
@@ -1507,7 +1672,7 @@ export class VisitComponent implements OnInit {
     void this.loadInvoices();
   }
 
-  private async generateVisitPdf(visit: any) {
+  private async generateVisitPdf(visit: any, options: { provisional?: boolean } = {}) {
     const settings = await this.dataService.invoke<any>('getPublicSettings');
     const currentUser = this.authService.getUser();
     const doctor = {
@@ -1518,7 +1683,8 @@ export class VisitComponent implements OnInit {
     await this.pdfService.generatePrescription(
       { ...visit, date: visit.date || new Date() },
       this.patient,
-      doctor
+      doctor,
+      options
     );
   }
 
@@ -1534,6 +1700,8 @@ export class VisitComponent implements OnInit {
       allergy_override_reason: visit.allergy_override_reason || ''
     });
     this.currentPrescription = visit.prescription || [];
+    this.visitOrders = [];
+    if (visit?.id) void this.loadVisitOrders(visit.id);
     void this.loadSourceBooking(visit?.id);
   }
 

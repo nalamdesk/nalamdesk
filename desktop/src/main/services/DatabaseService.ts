@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
 import { validateAbhaNumber, validateIdentifier } from '../../shared/patient-identifiers';
 import { durationEndDate } from '../../shared/clinical-timing';
+import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder, type FinalRxLine } from '../../shared/prescription-order';
 
 export class DatabaseService {
     private db: any;
@@ -2031,6 +2032,7 @@ export class DatabaseService {
         const remove = this.db.transaction(() => {
             const active = this.db.prepare("SELECT id FROM visits WHERE patient_id = ? AND status = 'in-progress'").get(id);
             if (active) throw new Error('Cannot delete a patient with an active encounter');
+            this.deletePrescriptionRows('SELECT id FROM visits WHERE patient_id = ?', id);
             this.db.prepare('DELETE FROM visits WHERE patient_id = ?').run(id);
             return this.db.prepare('DELETE FROM patients WHERE id = ?').run(id);
         });
@@ -2412,7 +2414,20 @@ export class DatabaseService {
     deleteVisit(id: number) {
         const existing = this.db.prepare('SELECT status FROM visits WHERE id = ?').get(id);
         if (existing?.status === 'in-progress') throw new Error('Active encounters cannot be deleted');
-        return this.db.prepare('DELETE FROM visits WHERE id = ?').run(id);
+        const remove = this.db.transaction(() => {
+            this.deletePrescriptionRows('SELECT ?', id);
+            return this.db.prepare('DELETE FROM visits WHERE id = ?').run(id);
+        });
+        return remove();
+    }
+
+    /** Hard deletes take their orders along (foreign keys are off in the app). */
+    private deletePrescriptionRows(visitIdsSql: string, param: number) {
+        const orders = `SELECT id FROM prescriptions WHERE visit_id IN (${visitIdsSql})`;
+        this.db.prepare(`DELETE FROM prescription_prints WHERE prescription_id IN (${orders})`).run(param);
+        this.db.prepare(`DELETE FROM prescription_items WHERE prescription_id IN (${orders})`).run(param);
+        this.db.prepare(`UPDATE prescriptions SET replaces_id = NULL WHERE visit_id IN (${visitIdsSql})`).run(param);
+        this.db.prepare(`DELETE FROM prescriptions WHERE visit_id IN (${visitIdsSql})`).run(param);
     }
 
     // ------------------------------------------------------------------
@@ -2456,13 +2471,18 @@ export class DatabaseService {
         const visit = this.db.prepare('SELECT id, status FROM visits WHERE id = ?').get(Number(visitId)) as any;
         if (!visit) throw new Error('Visit not found.');
         if (visit.status === 'in-progress') throw new Error('Active encounters cannot be marked entered-in-error.');
-        this.db.prepare(`UPDATE visits SET status = 'entered-in-error', correction_reason = ? WHERE id = ?`)
-            .run(clean, visit.id);
+        const mark = this.db.transaction(() => {
+            this.db.prepare(`UPDATE visits SET status = 'entered-in-error', correction_reason = ? WHERE id = ?`)
+                .run(clean, visit.id);
+            // The visit's order goes with it, so its medicines stop reading as current.
+            this.endActivePrescription(visit.id, 'entered-in-error', clean, actingUserId);
+        });
+        mark();
         this.logAudit('ENTERED_IN_ERROR', 'visits', visit.id, actingUserId, `Visit marked entered-in-error: ${clean}`);
         return this.db.prepare('SELECT * FROM visits WHERE id = ?').get(visit.id);
     }
 
-    saveVisit(visit: any) {
+    saveVisit(visit: any, actingUserId?: number) {
         if (!visit.id) {
             throw new Error('New encounters must be created with beginConsultation');
         }
@@ -2472,33 +2492,45 @@ export class DatabaseService {
                 throw new Error('Clinical authoring requires an active licensed practitioner');
             }
         }
-        const data = {
-            id: Number(visit.id),
-            diagnosis: visit.diagnosis ?? '',
-            prescription_json: JSON.stringify(visit.prescription || []),
-            amount_paid: Number(visit.amount_paid || 0),
-            symptoms: visit.symptoms ?? '',
-            examination_notes: visit.examination_notes ?? '',
-            diagnosis_type: visit.diagnosis_type ?? '',
-            allergy_override_reason: visit.allergy_override_reason ?? null
-        };
-
-        const existing = this.db.prepare('SELECT patient_id, status FROM visits WHERE id = ?').get(visit.id);
+        const existing = this.db.prepare('SELECT * FROM visits WHERE id = ?').get(visit.id);
         if (existing?.status === 'in-progress') throw new Error('Use consultation progress commands for active encounters');
         if (existing && visit.prescription) {
             this.assertPrescriptionAllergySafety(existing.patient_id, visit.prescription, visit.allergy_override_reason);
         }
-        return this.db.prepare(`
-            UPDATE visits SET
-                diagnosis = @diagnosis,
-                prescription_json = @prescription_json,
-                amount_paid = @amount_paid,
-                symptoms = @symptoms,
-                examination_notes = @examination_notes,
-                diagnosis_type = @diagnosis_type,
-                allergy_override_reason = COALESCE(@allergy_override_reason, allergy_override_reason)
-            WHERE id = @id
-            `).run(data);
+
+        const save = this.db.transaction(() => {
+            // A changed prescription on a finished visit is a correction:
+            // the old order is cancelled and a new version points at it.
+            const correctedLines = existing && Array.isArray(visit.prescription)
+                ? this.correctPrescription(existing, visit.prescription, visit.prescription_change_reason, actingUserId)
+                : null;
+            const data = {
+                id: Number(visit.id),
+                diagnosis: visit.diagnosis ?? '',
+                prescription_json: correctedLines
+                    ? JSON.stringify(correctedLines)
+                    : Array.isArray(visit.prescription) || !existing
+                        ? JSON.stringify(visit.prescription || [])
+                        : existing.prescription_json ?? '[]',
+                amount_paid: Number(visit.amount_paid || 0),
+                symptoms: visit.symptoms ?? '',
+                examination_notes: visit.examination_notes ?? '',
+                diagnosis_type: visit.diagnosis_type ?? '',
+                allergy_override_reason: visit.allergy_override_reason ?? null
+            };
+            return this.db.prepare(`
+                UPDATE visits SET
+                    diagnosis = @diagnosis,
+                    prescription_json = @prescription_json,
+                    amount_paid = @amount_paid,
+                    symptoms = @symptoms,
+                    examination_notes = @examination_notes,
+                    diagnosis_type = @diagnosis_type,
+                    allergy_override_reason = COALESCE(@allergy_override_reason, allergy_override_reason)
+                WHERE id = @id
+                `).run(data);
+        });
+        return save.immediate();
     }
 
     /**
@@ -2633,6 +2665,8 @@ export class DatabaseService {
             }
             if (encounter.status !== 'in-progress' || !encounter.queue_entry_id) throw new Error('Encounter is not completable');
             this.getExactEncounterQueue(encounter, ['in-consult'], 'Queue entry is not in consultation');
+            // Finishing signs the prescription: every line must be complete.
+            const rxLines = this.finalizeOrThrow(input.visit?.prescription);
 
             const queueUpdate = this.db.prepare(`
                 UPDATE patient_queue SET status = 'completed'
@@ -2640,9 +2674,12 @@ export class DatabaseService {
             `).run(encounter.queue_entry_id, encounter.patient_id);
             if (queueUpdate.changes !== 1) throw new Error('Queue entry is not in consultation');
 
-            this.updateEncounterClinicalData(encounterId, input.visit);
-            if (input.visit?.prescription && Array.isArray(input.visit.prescription)) {
-                this.syncEncounterMedications(encounter.patient_id, input.visit.prescription, actingUserId);
+            this.updateEncounterClinicalData(encounterId, { ...input.visit, prescription: rxLines });
+            if (rxLines.length > 0) {
+                const requester = this.getPractitioner(Number(encounter.doctor_id));
+                if (!requester) throw new Error('Clinical authoring requires an active licensed practitioner');
+                this.insertPrescription(encounter, rxLines, requester.id, encounter.doctor_license_snapshot, null, 1);
+                this.syncEncounterMedications(encounter.patient_id, rxLines, actingUserId);
             }
             this.db.prepare(`
                 UPDATE visits SET status = 'finished', completed_at = CURRENT_TIMESTAMP,
@@ -2927,6 +2964,212 @@ export class DatabaseService {
               AND end_date IS NOT NULL AND TRIM(end_date) != ''
               AND DATE(end_date) < DATE('now')
         `).run();
+    }
+
+    // ------------------------------------------------------------------
+    // Prescription orders (#20): numbered, versioned, never overwritten.
+    // ------------------------------------------------------------------
+    private rxNumber(rowId: number): string {
+        return `RX-${String(100000 + Number(rowId)).padStart(6, '0')}`;
+    }
+
+    /** Checked, normalized lines, or an error naming every problem. */
+    private finalizeOrThrow(lines: unknown): FinalRxLine[] {
+        const { lines: final, issues } = finalizeRxLines(Array.isArray(lines) ? lines : []);
+        if (issues.length > 0) throw new Error(`Prescription is incomplete. ${formatRxIssues(issues)}`);
+        return final;
+    }
+
+    private insertPrescription(visit: any, lines: FinalRxLine[], requesterId: number,
+        requesterSnapshot: string | null, replacesId: number | null, version: number): number {
+        const result = this.db.prepare(`
+            INSERT INTO prescriptions (visit_id, patient_id, requester_id, requester_snapshot, version, replaces_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(visit.id, visit.patient_id, requesterId, requesterSnapshot, version, replacesId);
+        const id = Number(result.lastInsertRowid);
+        this.db.prepare('UPDATE prescriptions SET rx_number = ? WHERE id = ?').run(this.rxNumber(id), id);
+        const insertItem = this.db.prepare(`
+            INSERT INTO prescription_items (
+                prescription_id, line_no, medicine, medicine_id, generic_name, brand_name, free_text,
+                form, dosage, route, frequency, duration, instruction, quantity, quantity_unit,
+                quantity_derived, refills
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        lines.forEach((line, index) => insertItem.run(
+            id, index + 1, line.medicine, line.medicine_id, line.generic_name, line.brand_name, line.free_text ? 1 : 0,
+            line.form, line.dosage, line.route, line.frequency, line.duration, line.instruction, line.quantity,
+            line.quantity_unit, line.quantity_derived ? 1 : 0, line.refills
+        ));
+        this.logAudit('PRESCRIPTION_ISSUE', 'prescriptions', id, requesterId,
+            `Issued ${this.rxNumber(id)} v${version} for visit ${visit.id} (${lines.length} line${lines.length === 1 ? '' : 's'})`);
+        return id;
+    }
+
+    private prescriptionItems(prescriptionId: number): FinalRxLine[] {
+        const rows = this.db.prepare(`
+            SELECT medicine, medicine_id, generic_name, brand_name, free_text, form, dosage, route,
+                   frequency, duration, instruction, quantity, quantity_unit, quantity_derived, refills
+            FROM prescription_items WHERE prescription_id = ? ORDER BY line_no
+        `).all(prescriptionId) as any[];
+        return rows.map((row) => ({
+            ...row,
+            instruction: row.instruction ?? '',
+            free_text: !!row.free_text,
+            quantity_derived: !!row.quantity_derived,
+            refills: Number(row.refills || 0)
+        }));
+    }
+
+    private activePrescription(visitId: number): any {
+        return this.db.prepare("SELECT * FROM prescriptions WHERE visit_id = ? AND status = 'active'").get(visitId);
+    }
+
+    /**
+     * Applies an edited prescription to a finished visit. Unchanged lines
+     * are left alone; a change needs a reason and a licensed practitioner,
+     * cancels the active version and issues the next one. Returns the lines
+     * to store on the visit, or null when nothing changed.
+     */
+    private correctPrescription(visit: any, submitted: unknown[], reason: unknown, actingUserId?: number): FinalRxLine[] | null {
+        const active = this.activePrescription(visit.id);
+        if (!active) {
+            // Visits from before orders existed: only a real change is checked.
+            if (rxLinesKey(submitted as any[]) === rxLinesKey(this.safeParseJson(visit.prescription_json, []))) return null;
+        }
+        const lines = this.finalizeOrThrow(submitted);
+        const previous = active ? this.prescriptionItems(active.id) : [];
+        if (active && sameRxOrder(previous, lines)) return null;
+        if (!active && lines.length === 0) return lines;
+
+        const why = String(reason || '').trim();
+        if (!why) throw new Error('A reason is required to change a prescription on a finished visit.');
+        const corrector = this.getPractitioner(Number(actingUserId));
+        if (!corrector) throw new Error('Only a licensed practitioner can change a prescription.');
+        if (active) {
+            this.endActivePrescription(visit.id, 'cancelled', `Corrected: ${why}`, actingUserId, lines);
+        }
+        if (lines.length > 0) {
+            const snapshot = JSON.stringify({
+                name: corrector.name,
+                license_number: corrector.license_number || '',
+                specialty: corrector.specialty || ''
+            });
+            this.insertPrescription(visit, lines, corrector.id, snapshot, active?.id ?? null, (active?.version ?? 0) + 1);
+            this.syncEncounterMedications(visit.patient_id, lines, Number(actingUserId));
+        }
+        this.logAudit('PRESCRIPTION_CORRECT', 'visits', visit.id, actingUserId, `Prescription changed: ${why}`);
+        return lines;
+    }
+
+    /**
+     * Ends the visit's active order. Medicines it listed stop reading as
+     * current unless the replacement lines or another active order still
+     * prescribe them.
+     */
+    private endActivePrescription(visitId: number, status: 'cancelled' | 'entered-in-error', reason: string,
+        actingUserId?: number, replacementLines: FinalRxLine[] = []) {
+        const active = this.activePrescription(visitId);
+        if (!active) return null;
+        this.db.prepare(`
+            UPDATE prescriptions SET status = ?, status_reason = ?, status_changed_at = CURRENT_TIMESTAMP,
+                status_changed_by = ? WHERE id = ? AND status = 'active'
+        `).run(status, reason, actingUserId ?? null, active.id);
+        const kept = new Set(replacementLines.map((line) => line.medicine.toLowerCase()));
+        const stillActive = this.db.prepare(`
+            SELECT 1 FROM prescription_items i JOIN prescriptions p ON p.id = i.prescription_id
+            WHERE p.patient_id = ? AND p.status = 'active' AND LOWER(i.medicine) = LOWER(?) LIMIT 1
+        `);
+        const stop = this.db.prepare(`
+            UPDATE patient_medications SET status = 'stopped', end_date = COALESCE(end_date, CURRENT_DATE)
+            WHERE patient_id = ? AND LOWER(medicine_name) = LOWER(?) AND status = 'active'
+        `);
+        for (const line of this.prescriptionItems(active.id)) {
+            if (kept.has(line.medicine.toLowerCase())) continue;
+            if (stillActive.get(active.patient_id, line.medicine)) continue;
+            stop.run(active.patient_id, line.medicine);
+        }
+        return active;
+    }
+
+    /** Every version of a visit's prescription, newest first, with its lines and print count. */
+    getVisitPrescriptions(visitId: number) {
+        const rows = this.db.prepare(`
+            SELECT p.*, r.rx_number AS replaces_rx_number,
+                   (SELECT COUNT(*) FROM prescription_prints pp WHERE pp.prescription_id = p.id) AS print_count
+            FROM prescriptions p LEFT JOIN prescriptions r ON r.id = p.replaces_id
+            WHERE p.visit_id = ? ORDER BY p.version DESC, p.id DESC
+        `).all(Number(visitId)) as any[];
+        return rows.map((row) => ({
+            ...row,
+            requester: this.safeParseJson(row.requester_snapshot, null),
+            items: this.prescriptionItems(row.id)
+        }));
+    }
+
+    /** Cancels a visit's active order with a reason; the visit keeps no current lines. */
+    cancelPrescription(input: any, actingUserId?: number) {
+        const visitId = Number(input?.visitId);
+        const reason = String(input?.reason || '').trim();
+        if (!Number.isInteger(visitId) || visitId <= 0) throw new Error('Valid visit id is required.');
+        if (!reason) throw new Error('A reason is required to cancel a prescription.');
+        const cancel = this.db.transaction(() => {
+            const ended = this.endActivePrescription(visitId, 'cancelled', reason, actingUserId);
+            if (!ended) throw new Error('This visit has no active prescription.');
+            this.db.prepare("UPDATE visits SET prescription_json = '[]' WHERE id = ?").run(visitId);
+            this.logAudit('PRESCRIPTION_CANCEL', 'prescriptions', ended.id, actingUserId, `Cancelled ${ended.rx_number}: ${reason}`);
+            return ended.id;
+        });
+        cancel.immediate();
+        return this.getVisitPrescriptions(visitId);
+    }
+
+    /**
+     * Records a print of the visit's active order and returns what goes on
+     * the paper, from the stored order rather than the screen. Every copy
+     * after the first is numbered so a duplicate reads as one.
+     */
+    recordPrescriptionPrint(input: any, actingUserId?: number) {
+        const visitId = Number(input?.visitId ?? input);
+        if (!Number.isInteger(visitId) || visitId <= 0) throw new Error('Valid visit id is required.');
+        const record = this.db.transaction(() => {
+            const order = this.activePrescription(visitId);
+            if (!order) throw new Error('This visit has no active prescription to print.');
+            const visit = this.db.prepare('SELECT id, date, diagnosis FROM visits WHERE id = ?').get(visitId) as any;
+            const patient = this.db.prepare('SELECT id, name, age, gender, mobile, mrn FROM patients WHERE id = ?')
+                .get(order.patient_id) as any;
+            const requester = this.db.prepare('SELECT abdm_hpr_id FROM users WHERE id = ?').get(order.requester_id) as any;
+            const settings = this.db.prepare('SELECT clinic_name, abdm_hfr_id FROM settings LIMIT 1').get() as any;
+            const replaces = order.replaces_id
+                ? (this.db.prepare('SELECT rx_number FROM prescriptions WHERE id = ?').get(order.replaces_id) as any)?.rx_number
+                : null;
+            const copy = Number((this.db.prepare('SELECT COUNT(*) AS n FROM prescription_prints WHERE prescription_id = ?')
+                .get(order.id) as any).n) + 1;
+            const snapshot = {
+                rx_number: order.rx_number,
+                version: order.version,
+                replaces_rx_number: replaces,
+                status: order.status,
+                intent: order.intent,
+                authored_at: order.authored_at,
+                copy_number: copy,
+                clinic: { name: settings?.clinic_name || '', hfr_id: settings?.abdm_hfr_id || '' },
+                requester: { ...this.safeParseJson(order.requester_snapshot, {}), hpr_id: requester?.abdm_hpr_id || '' },
+                patient: {
+                    name: patient?.name || '', age: patient?.age ?? null, gender: patient?.gender || '',
+                    mobile: patient?.mobile || '', mrn: patient?.mrn || ''
+                },
+                visit: { id: visit?.id, date: visit?.date, diagnosis: visit?.diagnosis || '' },
+                items: this.prescriptionItems(order.id)
+            };
+            const printed = this.db.prepare(`
+                INSERT INTO prescription_prints (prescription_id, copy_number, printed_by, snapshot_json) VALUES (?, ?, ?, ?)
+            `).run(order.id, copy, actingUserId ?? null, JSON.stringify(snapshot));
+            this.logAudit('PRESCRIPTION_PRINT', 'prescriptions', order.id, actingUserId,
+                `Printed ${order.rx_number} copy ${copy}`);
+            const row = this.db.prepare('SELECT printed_at FROM prescription_prints WHERE id = ?').get(printed.lastInsertRowid) as any;
+            return { ...snapshot, printed_at: row?.printed_at };
+        });
+        return record.immediate();
     }
 
     private getExactEncounterQueue(encounter: any, allowedStatuses: string[], errorMessage: string) {

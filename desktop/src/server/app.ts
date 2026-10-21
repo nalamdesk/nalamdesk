@@ -50,6 +50,7 @@ export const ALLOWED_IPC_METHODS = [
     'getInvoice', 'getVisitInvoices', 'createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice',
     'getDailyClose',
     'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
+    'getVisitPrescriptions', 'cancelPrescription', 'recordPrescriptionPrint',
     'beginConsultation', 'getActiveConsultation', 'saveConsultationProgress',
     'completeConsultation', 'postponeConsultation', 'resumeConsultation', 'beginNextConsultation',
     'getVitals', 'saveVitals', 'getEncounterVitals', 'getVitalsHistory',

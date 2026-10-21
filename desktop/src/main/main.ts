@@ -917,7 +917,29 @@ handleGuardedDb('db:saveVisit', (_, visit) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');
     if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
-    return databaseService.saveVisit(visit);
+    return databaseService.saveVisit(visit, user.id);
+});
+// Prescription orders (#20): reads and prints for the care team, cancel
+// for clinicians.
+handleGuardedDb('db:getVisitPrescriptions', (_, visitId) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'nurse', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    const vid = Number((visitId as any)?.visitId ?? visitId);
+    if (!Number.isInteger(vid) || vid <= 0) throw new Error('Valid visit id is required.');
+    return databaseService.getVisitPrescriptions(vid);
+});
+handleGuardedDb('db:cancelPrescription', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return databaseService.cancelPrescription(input || {}, user.id);
+});
+handleGuardedDb('db:recordPrescriptionPrint', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (!['doctor', 'nurse', 'receptionist', 'admin'].includes(user.role)) throw new Error('Forbidden');
+    return databaseService.recordPrescriptionPrint(input || {}, user.id);
 });
 handleGuardedDb('db:beginConsultation', (_, input) => {
     const user = sessionService.getUser();

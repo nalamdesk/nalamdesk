@@ -69,6 +69,21 @@ describe('LAN access conformance', () => {
         server = new ApiServer(db, os.tmpdir());
     });
 
+    it('grants prescription reads and prints to the care team, cancel to clinicians', async () => {
+        const verdicts: Record<string, Record<string, boolean>> = {
+            getVisitPrescriptions: { doctor: true, nurse: true, receptionist: true },
+            cancelPrescription: { doctor: true, nurse: false, receptionist: false },
+            recordPrescriptionPrint: { doctor: true, nurse: true, receptionist: true }
+        };
+        for (const [method, roles] of Object.entries(verdicts)) {
+            for (const [role, allowed] of Object.entries(roles)) {
+                const response = await postIpc(method, role);
+                if (allowed) expect(response.statusCode, `${method}/${role}`).not.toBe(403);
+                else expect(response.statusCode, `${method}/${role}`).toBe(403);
+            }
+        }
+    });
+
     it('grants desk billing to doctor and receptionist, never nurses', async () => {
         for (const method of ['createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice']) {
             for (const role of ['doctor', 'receptionist']) {

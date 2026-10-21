@@ -174,4 +174,13 @@ describe('preload bridge surface', () => {
         expect(electron.invoke).toHaveBeenCalledWith('db:refundPayment', { paymentId: 4, reason: 'Dup' });
         expect(electron.invoke).toHaveBeenCalledWith('db:voidInvoice', { invoiceId: 9, reason: 'Cancelled' });
     });
+
+    it('exposes prescription order IPC', async () => {
+        await api.db.getVisitPrescriptions(3);
+        await api.db.cancelPrescription({ visitId: 3, reason: 'Stopped' });
+        await api.db.recordPrescriptionPrint({ visitId: 3 });
+        expect(electron.invoke).toHaveBeenCalledWith('db:getVisitPrescriptions', 3);
+        expect(electron.invoke).toHaveBeenCalledWith('db:cancelPrescription', { visitId: 3, reason: 'Stopped' });
+        expect(electron.invoke).toHaveBeenCalledWith('db:recordPrescriptionPrint', { visitId: 3 });
+    });
 });

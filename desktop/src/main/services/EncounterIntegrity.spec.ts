@@ -79,7 +79,7 @@ describe('encounter integrity transactions', () => {
     it('updates progress and completes exactly once across retries', () => {
         const queueEntryId = queue();
         const encounter = service.beginConsultation({ patientId: 1, queueEntryId, startRequestId: 'start-2' }, 10);
-        const visit = { diagnosis: 'Influenza', symptoms: 'Fever', prescription: [{ medicine: 'Test' }], amount_paid: 100 };
+        const visit = { diagnosis: 'Influenza', symptoms: 'Fever', prescription: [{ medicine: 'Test', form: 'Tab', route: 'Oral', dosage: '1 tab', frequency: '1-0-1', duration: '3 days' }], amount_paid: 100 };
 
         service.saveConsultationProgress({ encounterId: encounter.id, visit }, 10);
         service.saveConsultationProgress({ encounterId: encounter.id, visit: { ...visit, symptoms: 'Fever and cough' } }, 10);

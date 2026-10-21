@@ -50,6 +50,9 @@ declare global {
                 getVisits: (patientId: number) => Promise<any[]>;
                 getAllVisits: (limit: number) => Promise<any[]>;
                 saveVisit: (visit: any) => Promise<any>;
+                getVisitPrescriptions: (visitId: number) => Promise<any[]>;
+                cancelPrescription: (input: { visitId: number; reason: string }) => Promise<any[]>;
+                recordPrescriptionPrint: (input: { visitId: number }) => Promise<any>;
                 beginConsultation: (input: any) => Promise<any>;
                 getActiveConsultation: (patientId: number) => Promise<any>;
                 saveConsultationProgress: (input: any) => Promise<any>;

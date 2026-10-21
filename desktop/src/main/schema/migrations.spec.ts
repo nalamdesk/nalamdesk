@@ -33,8 +33,8 @@ describe('Database Migrations', () => {
             });
         });
 
-        it('should have 49 migrations total', () => {
-            expect(MIGRATIONS).toHaveLength(49);
+        it('should have 50 migrations total', () => {
+            expect(MIGRATIONS).toHaveLength(50);
         });
     });
 
@@ -932,6 +932,42 @@ describe('Database Migrations', () => {
                 expect(JSON.parse(writes[role])).toContain('getAppointmentByVisit');
                 expect(JSON.parse(writes[role])).toContain('getAppointmentsByPatient');
             }
+        });
+    });
+
+    describe('Migration v50 (prescription orders)', () => {
+        it('creates order, line and print tables with one active order per visit', () => {
+            MIGRATIONS.find((m) => m.version === 50)!.up(mockDb);
+            const sql = executedSql.join('\n');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS prescriptions');
+            expect(sql).toContain("CHECK (status IN ('active', 'cancelled', 'entered-in-error'))");
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS prescription_items');
+            expect(sql).toContain('CREATE TABLE IF NOT EXISTS prescription_prints');
+            expect(sql).toMatch(/idx_prescriptions_one_active\s+ON prescriptions\(visit_id\) WHERE status = 'active'/);
+        });
+
+        it('grants reads and prints to the care team and cancelling to clinicians', () => {
+            const store: Record<string, string> = {
+                doctor: JSON.stringify(['getQueue']),
+                receptionist: JSON.stringify(['getQueue']),
+                nurse: JSON.stringify(['getQueue']),
+                admin: JSON.stringify(['getQueue'])
+            };
+            const writes: Record<string, string> = {};
+            mockDb.prepare.mockImplementation((sqlText: string) => {
+                if (sqlText.startsWith('SELECT permissions FROM roles')) {
+                    return { get: (name: string) => ({ permissions: store[name] }) };
+                }
+                return { run: (perms: string, name: string) => { writes[name] = perms; } };
+            });
+            MIGRATIONS.find((m) => m.version === 50)!.up(mockDb);
+            for (const role of ['doctor', 'receptionist', 'nurse', 'admin']) {
+                expect(JSON.parse(writes[role])).toEqual(expect.arrayContaining(['getQueue', 'getVisitPrescriptions', 'recordPrescriptionPrint']));
+            }
+            expect(JSON.parse(writes['doctor'])).toContain('cancelPrescription');
+            expect(JSON.parse(writes['admin'])).toContain('cancelPrescription');
+            expect(JSON.parse(writes['nurse'])).not.toContain('cancelPrescription');
+            expect(JSON.parse(writes['receptionist'])).not.toContain('cancelPrescription');
         });
     });
 });

@@ -128,4 +128,39 @@ describe('PrescriptionComponent', () => {
         component.onFrequencyTyped(0, '');
         expect(component.items()[0].frequency).toBe('');
     });
+
+    describe('order fields (#20)', () => {
+        it('links a picked medicine to its catalog row and unlinks it when the name is typed over', () => {
+            component.onMedicinePicked(0, { id: 4, name: 'Crocin 500', generic_name: 'Paracetamol', brand_name: 'Crocin', form: 'Tab', dosage: '500mg' });
+            expect(component.items()[0]).toMatchObject({ medicine: 'Crocin 500', medicine_id: 4 });
+            expect(component.isFreeText(component.items()[0])).toBe(false);
+
+            component.onMedicineTyped(0, 'Crocin 500');
+            expect(component.items()[0].medicine_id).toBe(4);
+
+            component.onMedicineTyped(0, 'Crocin 650');
+            expect(component.items()[0]).toMatchObject({ medicine: 'Crocin 650', medicine_id: null, generic_name: null, brand_name: null });
+            expect(component.isFreeText(component.items()[0])).toBe(true);
+            expect(component.isFreeText({ medicine: ' ' })).toBe(false);
+        });
+
+        it('takes a typed quantity over the worked-out one, and clears back to it', () => {
+            component.items.set([{ medicine: 'Crocin', form: 'Tab', dosage: '500mg', route: 'Oral', frequency: '1-0-1', duration: '3 days', quantity: 6, quantity_derived: true }]);
+            expect(component.quantityHint(component.items()[0])).toBe('6 (auto)');
+
+            component.onQuantityTyped(0, '10');
+            expect(component.items()[0]).toMatchObject({ quantity: 10, quantity_derived: false });
+            component.onQuantityTyped(0, '');
+            expect(component.items()[0]).toMatchObject({ quantity: null, quantity_derived: false });
+            expect(component.quantityHint({ form: 'Syr', frequency: '1-0-1', duration: '3 days' })).toBe('—');
+        });
+
+        it('hints what stops a line from being issued, and nothing for a blank row', () => {
+            expect(component.issuesFor(0)).toEqual([]);
+            expect(component.issuesFor(5)).toEqual([]);
+            component.items.set([{ medicine: 'Crocin', form: 'Tab', dosage: '', route: 'IV', frequency: '1-0-1', duration: '3 days' }]);
+            expect(component.issuesFor(0)).toEqual(['dose is required', 'Tab cannot be given by the IV route']);
+            expect(component.maxRefills).toBe(11);
+        });
+    });
 });

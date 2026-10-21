@@ -32,6 +32,7 @@ export const METHOD_CATALOG: CatalogGroup[] = [
     'getIdentifiers', 'saveIdentifier', 'deleteIdentifier',
     'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
+            'getVisitPrescriptions', 'cancelPrescription', 'recordPrescriptionPrint',
             'getDashboardStats', 'getDoctors', 'getAppointments', 'getAppointmentsByPatient', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests'
         ]
@@ -107,6 +108,7 @@ export const ALL_CATALOGUED_ACTIONS: ReadonlySet<string> = new Set(
 export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
     'savePatient', 'deletePatient',
     'saveVisit', 'deleteVisit',
+    'getVisitPrescriptions', 'cancelPrescription', 'recordPrescriptionPrint',
     'beginConsultation', 'beginNextConsultation', 'completeConsultation',
     'postponeConsultation', 'resumeConsultation', 'getActiveConsultation',
     'saveConsultationProgress',

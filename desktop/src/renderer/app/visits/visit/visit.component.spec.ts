@@ -669,7 +669,8 @@ describe('VisitComponent', () => {
                 amount_paid: 300
             }),
             component.patient,
-            expect.objectContaining({ name: 'Dr. Clinic' })
+            expect.objectContaining({ name: 'Dr. Clinic' }),
+            {}
         );
         expect(mockPdfService.generatePrescription.mock.calls[0][0]).not.toEqual(expect.objectContaining({
             diagnosis: undefined
@@ -830,7 +831,7 @@ describe('VisitComponent', () => {
             has_active_allergies: true
         };
 
-        component.currentPrescription = [{ medicine: 'Amoxicillin / Clavulanate (Penicillin class)' }];
+        component.currentPrescription = [{ medicine: 'Amoxicillin / Clavulanate (Penicillin class)', form: 'Tab', route: 'Oral', dosage: '625mg', frequency: '1-0-1', duration: '5 days' }];
         component.visitForm.value.prescription = component.currentPrescription;
         component.visitForm.value.diagnosis = 'Infection';
 
@@ -873,7 +874,7 @@ describe('VisitComponent', () => {
             active_allergies: [{ id: 1, substance: 'Penicillin', criticality: 'high', reaction: 'Anaphylaxis' }],
             has_active_allergies: true
         };
-        component.currentPrescription = [{ medicine: 'Amoxicillin (Penicillin class)' }];
+        component.currentPrescription = [{ medicine: 'Amoxicillin (Penicillin class)', form: 'Cap', route: 'Oral', dosage: '500mg', frequency: '1-1-1', duration: '5 days' }];
         component.visitForm.value.prescription = component.currentPrescription;
         component.visitForm.value.diagnosis = 'Infection';
         mockDataService.invoke.mockImplementation((method: string) => {
@@ -906,7 +907,7 @@ describe('VisitComponent', () => {
             active_allergies: [{ id: 1, substance: 'Penicillin', criticality: 'high', reaction: 'Anaphylaxis' }],
             has_active_allergies: true
         };
-        component.currentPrescription = [{ medicine: 'Amoxicillin (Penicillin class)' }];
+        component.currentPrescription = [{ medicine: 'Amoxicillin (Penicillin class)', form: 'Cap', route: 'Oral', dosage: '500mg', frequency: '1-1-1', duration: '5 days' }];
         component.visitForm.value.prescription = component.currentPrescription;
         component.visitForm.value.diagnosis = 'Infection';
         mockDataService.invoke.mockImplementation((method: string) => {
@@ -958,7 +959,7 @@ describe('VisitComponent', () => {
             active_allergies: [{ id: 1, substance: 'Penicillin', criticality: 'high', reaction: 'Anaphylaxis' }],
             has_active_allergies: true
         };
-        component.currentPrescription = [{ medicine: 'Amoxicillin (Penicillin class)' }];
+        component.currentPrescription = [{ medicine: 'Amoxicillin (Penicillin class)', form: 'Cap', route: 'Oral', dosage: '500mg', frequency: '1-1-1', duration: '5 days' }];
         component.visitForm.value.prescription = component.currentPrescription;
         component.visitForm.value.diagnosis = 'Infection';
         mockDataService.invoke.mockImplementation((method: string) => {
@@ -973,7 +974,7 @@ describe('VisitComponent', () => {
         expect(component.visitForm.value.allergy_override_reason).toBe('Desensitized previously');
 
         // Unchanged lines keep the rationale.
-        component.updatePrescription([{ medicine: 'Amoxicillin (Penicillin class)' }]);
+        component.updatePrescription([{ medicine: 'Amoxicillin (Penicillin class)', form: 'Cap', route: 'Oral', dosage: '500mg', frequency: '1-1-1', duration: '5 days' }]);
         expect(component.visitForm.value.allergy_override_reason).toBe('Desensitized previously');
 
         // Changed lines invalidate it so the next save re-checks.
@@ -1107,5 +1108,204 @@ describe('VisitComponent', () => {
             expect(mockDataService.invoke).not.toHaveBeenCalledWith('getAppointmentByVisit', expect.anything());
         });
     });
-});
 
+    describe('prescription orders (#20)', () => {
+        const LINE = { medicine: 'Crocin 500', medicine_id: 1, form: 'Tab', route: 'Oral', dosage: '500mg', frequency: '1-0-1', duration: '3 days', instruction: 'After Food' };
+        const ORDER = {
+            id: 5, rx_number: 'RX-100005', version: 1, status: 'active', authored_at: '2026-10-21 10:00:00',
+            requester: { name: 'Dr. Rao' }, print_count: 0,
+            items: [{ ...LINE, generic_name: null, brand_name: null, quantity: 6, quantity_unit: 'tablet', quantity_derived: true, refills: 0, free_text: false }]
+        };
+        let dialog: any;
+
+        beforeEach(() => {
+            dialog = { open: vi.fn().mockResolvedValue(true) };
+            (component as any).dialogService = dialog;
+            (component as any).toastService = { success: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() };
+            component.currentUser = { id: 10, role: 'doctor' };
+        });
+
+        it('refuses to finish with an incomplete prescription and says what is missing', async () => {
+            component.encounterId = 7;
+            component.visitForm = { value: { diagnosis: 'Fever', prescription: [{ ...LINE, dosage: '' }] }, invalid: false, valid: true, markAllAsTouched: vi.fn() } as any;
+
+            expect(await component.completeConsult()).toBe(false);
+
+            expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({
+                title: 'Prescription incomplete', message: 'Line 1 (Crocin 500): dose is required.'
+            }));
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('completeConsultation', expect.anything());
+        });
+
+        it('shows why the main process refused to finish', async () => {
+            component.encounterId = 7;
+            component.visitForm = { value: { diagnosis: 'Fever', prescription: [LINE] }, invalid: false, valid: true, markAllAsTouched: vi.fn() } as any;
+            mockDataService.invoke.mockImplementation((method: string) => method === 'completeConsultation'
+                ? Promise.reject(new Error("Error invoking remote method 'db:completeConsultation': Error: Prescription is incomplete. Line 1: x."))
+                : Promise.resolve(null));
+
+            expect(await component.completeConsult()).toBe(false);
+            expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({
+                message: 'Prescription is incomplete. Line 1: x. Your encounter remains open.'
+            }));
+        });
+
+        function editFinishedVisit(orders: any[]) {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getVisitPrescriptions') return Promise.resolve(orders);
+                if (method === 'getVisits') return Promise.resolve([]);
+                return Promise.resolve(true);
+            });
+            component.editVisit({ id: 42, diagnosis: 'Fever', prescription: [LINE] });
+        }
+
+        function form(value: any) {
+            return { value, invalid: false, valid: true, markAllAsTouched: vi.fn(), reset: vi.fn(), patchValue: vi.fn(), disable: vi.fn(), enable: vi.fn() } as any;
+        }
+
+        it('saves an unchanged finished visit without asking for a reason', async () => {
+            editFinishedVisit([ORDER]);
+            await Promise.resolve();
+            component.visitForm = form({ diagnosis: 'Viral fever', prescription: [{ ...LINE }] });
+
+            expect(await component.saveVisit()).toBe(true);
+            expect(component.showRxChangeDialog).toBe(false);
+            expect(mockDataService.invoke).toHaveBeenCalledWith('saveVisit', expect.not.objectContaining({ prescription_change_reason: expect.anything() }));
+        });
+
+        it('asks why a finished prescription changed and sends the reason', async () => {
+            editFinishedVisit([ORDER]);
+            await Promise.resolve();
+            expect(component.visitOrders).toEqual([ORDER]);
+            component.visitForm = form({ diagnosis: 'Fever', prescription: [{ ...LINE, dosage: '650mg' }] });
+
+            expect(await component.saveVisit()).toBe(false);
+            expect(component.showRxChangeDialog).toBe(true);
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('saveVisit', expect.anything());
+
+            await component.onRxChangeDecided(null);
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('saveVisit', expect.anything());
+
+            component.showRxChangeDialog = true;
+            await component.onRxChangeDecided('Higher dose');
+            expect(component.showRxChangeDialog).toBe(false);
+            expect(mockDataService.invoke).toHaveBeenCalledWith('saveVisit', expect.objectContaining({
+                id: 42, prescription_change_reason: 'Higher dose'
+            }));
+        });
+
+        it('checks a changed prescription before asking for a reason', async () => {
+            editFinishedVisit([]);
+            await Promise.resolve();
+            component.visitForm = form({ diagnosis: 'Fever', prescription: [{ ...LINE, route: 'IV' }] });
+
+            expect(await component.saveVisit()).toBe(false);
+            expect(component.showRxChangeDialog).toBe(false);
+            expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Prescription incomplete' }));
+        });
+
+        it('reports a refused update', async () => {
+            editFinishedVisit([]);
+            await Promise.resolve();
+            component.visitForm = form({ diagnosis: 'Fever', prescription: [LINE] });
+            mockDataService.invoke.mockImplementation((method: string) => method === 'saveVisit'
+                ? Promise.reject(new Error('Internal server error'))
+                : Promise.resolve([]));
+
+            expect(await component.saveVisit()).toBe(false);
+            expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Update failed', message: 'The visit could not be updated.' }));
+        });
+
+        it('cancels the active order with a reason and clears the current lines', async () => {
+            const cancelled = { ...ORDER, status: 'cancelled', status_reason: 'Allergy' };
+            component.viewedVisit = { id: 42, prescription: [LINE] } as any;
+            component.visitOrders = [ORDER];
+            component.visitForm = { value: {}, patchValue: vi.fn() } as any;
+            mockDataService.invoke.mockImplementation((method: string) => method === 'cancelPrescription'
+                ? Promise.resolve([cancelled]) : Promise.resolve(null));
+            expect(component.activeOrder).toEqual(ORDER);
+            expect(component.canCancelPrescription).toBe(true);
+            expect(component.rxStatusLabel('active')).toBe('Active');
+
+            await component.onRxCancelDecided(null);
+            expect(mockDataService.invoke).not.toHaveBeenCalledWith('cancelPrescription', expect.anything());
+
+            await component.onRxCancelDecided('Allergy');
+            expect(mockDataService.invoke).toHaveBeenCalledWith('cancelPrescription', { visitId: 42, reason: 'Allergy' });
+            expect(component.visitOrders).toEqual([cancelled]);
+            expect(component.activeOrder).toBeNull();
+            expect(component.viewedVisit?.prescription).toEqual([]);
+            expect(component.rxStatusLabel('cancelled')).toBe('Cancelled');
+            expect(component.rxStatusLabel('entered-in-error')).toBe('Entered in error');
+
+            mockDataService.invoke.mockRejectedValue(new Error('This visit has no active prescription.'));
+            await component.onRxCancelDecided('Again');
+            expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ message: 'This visit has no active prescription.' }));
+        });
+
+        it('keeps cancelling to clinicians', () => {
+            component.currentUser = { role: 'receptionist' };
+            expect(component.canCancelPrescription).toBe(false);
+        });
+
+        it('prints the stored order for a finished visit', async () => {
+            const printed = { ...ORDER, copy_number: 2 };
+            mockPdfService.generateOrderPrescription = vi.fn();
+            component.viewedVisit = { id: 42, prescription: [LINE] } as any;
+            component.visitOrders = [ORDER];
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'recordPrescriptionPrint') return Promise.resolve(printed);
+                if (method === 'getVisitPrescriptions') return Promise.resolve([{ ...ORDER, print_count: 1 }]);
+                return Promise.resolve(null);
+            });
+
+            await component.downloadVisitPdf();
+
+            expect(mockDataService.invoke).toHaveBeenCalledWith('recordPrescriptionPrint', { visitId: 42 });
+            expect(mockPdfService.generateOrderPrescription).toHaveBeenCalledWith(printed);
+            expect(mockPdfService.generatePrescription).not.toHaveBeenCalled();
+            await Promise.resolve();
+            expect(component.visitOrders[0].print_count).toBe(1);
+        });
+
+        it('prints the order from the edit screen only while the lines are unchanged', async () => {
+            mockPdfService.generateOrderPrescription = vi.fn();
+            editFinishedVisit([ORDER]);
+            await Promise.resolve();
+            component.visitForm = { value: { prescription: [LINE] } } as any;
+            await component.printPrescription();
+            expect(mockPdfService.generateOrderPrescription).toHaveBeenCalled();
+
+            component.visitForm = { value: { prescription: [{ ...LINE, dosage: '650mg' }] } } as any;
+            component.patient = { name: 'Meena' };
+            await component.printPrescription();
+            expect(mockPdfService.generatePrescription).toHaveBeenCalledWith(expect.anything(), component.patient, expect.anything(), { provisional: false });
+        });
+
+        it('marks a print from an open consultation as provisional', async () => {
+            component.encounterId = 7;
+            component.isConsulting = true;
+            component.chartWritable = true;
+            component.patient = { name: 'Meena' };
+            component.visitForm = { value: { prescription: [LINE] } } as any;
+            await component.printPrescription();
+            expect(mockPdfService.generatePrescription).toHaveBeenCalledWith(expect.anything(), component.patient, expect.anything(), { provisional: true });
+        });
+
+        it('drops an order list that arrives after the screen moved on', async () => {
+            let release!: (value: any) => void;
+            mockDataService.invoke.mockImplementation((method: string) => method === 'getVisitPrescriptions'
+                ? new Promise((resolve) => { release = resolve; }) : Promise.resolve([]));
+            component.editVisit({ id: 42, diagnosis: 'Fever', prescription: [] });
+            component.resetForm();
+            release([ORDER]);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(component.visitOrders).toEqual([]);
+
+            mockDataService.invoke.mockRejectedValue(new Error('offline'));
+            await component.loadVisitOrders(42);
+            expect(component.visitOrders).toEqual([]);
+        });
+    });
+});

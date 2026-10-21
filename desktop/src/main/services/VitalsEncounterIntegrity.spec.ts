@@ -352,7 +352,7 @@ describe('Vitals observation and encounter integrity', () => {
                 visit: {
                     diagnosis: 'Hypertension monitoring',
                     symptoms: 'Asymptomatic',
-                    prescription: [{ medicine: 'Amlodipine', dosage: '5mg' }],
+                    prescription: [{ medicine: 'Amlodipine', form: 'Tab', route: 'Oral', dosage: '5mg', frequency: '1-0-0', duration: 'until review' }],
                     amount_paid: 200
                 }
             }, 10);

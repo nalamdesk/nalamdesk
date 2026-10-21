@@ -60,7 +60,12 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
     *   **Diagnosis:** Typeahead against the clinic condition catalog. Use **Add new** if the term is missing — the visit is never blocked.
     *   **Presets:** Choosing a condition can fill a clinic-configured medicine set. Edit or remove lines before save.
     *   **Medicines:** Typeahead against the medicine catalog, with **Add new** on the go.
-    *   **Print:** Click "Print" to generate a professional PDF prescription instantly.
+    *   **Complete lines:** Each medicine needs a dose, form, route, frequency and duration (a STAT dose needs no duration). A line that is missing something, or gives a form by a route it can't take (a tablet by IV), shows the problem under the row, and the visit can't be finished until it is fixed. Empty rows are ignored.
+    *   **Quantity and refills:** Tablets and capsules on a finite course get a quantity worked out from the schedule and duration. Type a number to use your own. Refills default to 0.
+    *   **Free text:** A medicine typed in without picking it from the catalog is kept, and is marked **Free text** so it is never mistaken for a catalog medicine.
+    *   **Prescription number:** Finishing the visit issues the prescription with its own number (for example `RX-100001`), your name and registration, and the date. The visit shows every version with its status.
+    *   **Changing a finished prescription:** Edit the visit and choose **Update Record**. You are asked for a reason, the old version is cancelled, and a new version is issued under your name that names the one it replaces. **Cancel prescription** ends it with a reason. Either way the old version stays in the record, and medicines that are no longer prescribed stop showing as current.
+    *   **Print:** Click "Print" (or "Download PDF" on a past visit) to print the stored prescription with the clinic, doctor, patient and prescription number. Every print after the first is marked as a copy. A print taken before the visit is finished is marked provisional.
 
 ### 4. Online Booking (Cloud Sync) ☁️
 *   **Overview:** NalamDesk allows patients to book appointments online via a public link. These appointments automatically appear in your Desktop App.

@@ -1823,6 +1823,83 @@ export const MIGRATIONS = [
                 } catch (e) { }
             });
         }
+    },
+    {
+        version: 50,
+        up: (db: any) => {
+            console.log('Running Migration v50 (prescription orders)...');
+            // Finished visits carry their prescription as a medication order
+            // (#20): a durable number, status, requester and authored time,
+            // one row per line. A correction cancels the old version and
+            // points the new one at it; prints keep what was on the paper.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS prescriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rx_number TEXT UNIQUE,
+                    visit_id INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+                    patient_id INTEGER NOT NULL,
+                    requester_id INTEGER NOT NULL,
+                    requester_snapshot TEXT,
+                    status TEXT NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'cancelled', 'entered-in-error')),
+                    intent TEXT NOT NULL DEFAULT 'order',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    replaces_id INTEGER REFERENCES prescriptions(id),
+                    status_reason TEXT,
+                    status_changed_at TEXT,
+                    status_changed_by INTEGER,
+                    authored_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_prescriptions_visit ON prescriptions(visit_id, status);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_prescriptions_patient ON prescriptions(patient_id, status);`);
+            // At most one active version per visit.
+            db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prescriptions_one_active
+                ON prescriptions(visit_id) WHERE status = 'active';`);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS prescription_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prescription_id INTEGER NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+                    line_no INTEGER NOT NULL,
+                    medicine TEXT NOT NULL,
+                    medicine_id INTEGER,
+                    generic_name TEXT,
+                    brand_name TEXT,
+                    free_text INTEGER NOT NULL DEFAULT 0,
+                    form TEXT NOT NULL,
+                    dosage TEXT NOT NULL,
+                    route TEXT NOT NULL,
+                    frequency TEXT NOT NULL,
+                    duration TEXT NOT NULL,
+                    instruction TEXT,
+                    quantity REAL,
+                    quantity_unit TEXT,
+                    quantity_derived INTEGER NOT NULL DEFAULT 0,
+                    refills INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (prescription_id, line_no)
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS prescription_prints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prescription_id INTEGER NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+                    copy_number INTEGER NOT NULL,
+                    printed_by INTEGER,
+                    snapshot_json TEXT NOT NULL,
+                    printed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (prescription_id, copy_number)
+                );
+            `);
+            // Anyone on the care team may hand the patient the paper;
+            // only clinicians cancel.
+            const careTeam = ['getVisitPrescriptions', 'recordPrescriptionPrint'];
+            grantRoleMethods(db, {
+                doctor: [...careTeam, 'cancelPrescription'],
+                nurse: careTeam,
+                receptionist: careTeam,
+                admin: [...careTeam, 'cancelPrescription']
+            });
+        }
     }
 ];
 

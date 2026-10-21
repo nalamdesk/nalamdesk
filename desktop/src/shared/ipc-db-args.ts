@@ -137,6 +137,16 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
         case 'getInvoice': {
             return [Number(payloadObject(args[0])['invoiceId'] ?? args[0])];
         }
+        case 'saveVisit': {
+            return [payloadObject(args[0]), actingUserId];
+        }
+        case 'getVisitPrescriptions': {
+            return [Number(payloadObject(args[0])['visitId'] ?? args[0])];
+        }
+        case 'cancelPrescription':
+        case 'recordPrescriptionPrint': {
+            return [payloadObject(args[0]), actingUserId];
+        }
         case 'getVisitInvoices': {
             return [Number(payloadObject(args[0])['visitId'] ?? args[0])];
         }

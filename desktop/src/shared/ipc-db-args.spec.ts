@@ -84,6 +84,15 @@ describe('resolveDbMethodArgs addToQueue', () => {
             .toEqual([9, 'Cancelled', 99]);
     });
 
+    it('unpacks prescription order calls with the authenticated actor', () => {
+        expect(resolveDbMethodArgs('saveVisit', [{ id: 3, diagnosis: 'Fever' }], 99)).toEqual([{ id: 3, diagnosis: 'Fever' }, 99]);
+        expect(resolveDbMethodArgs('getVisitPrescriptions', [3], 99)).toEqual([3]);
+        expect(resolveDbMethodArgs('getVisitPrescriptions', [{ visitId: 3 }], 99)).toEqual([3]);
+        expect(resolveDbMethodArgs('cancelPrescription', [{ visitId: 3, reason: 'Stopped' }], 99))
+            .toEqual([{ visitId: 3, reason: 'Stopped' }, 99]);
+        expect(resolveDbMethodArgs('recordPrescriptionPrint', [{ visitId: 3 }], 99)).toEqual([{ visitId: 3 }, 99]);
+    });
+
     it('unpacks appointment lifecycle calls with the authenticated actor', () => {
         // actorId always comes from the session, never the renderer payload:
         // a forged actorId in input is dropped, not honored.

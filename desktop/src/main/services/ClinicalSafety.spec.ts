@@ -202,8 +202,8 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 visit: {
                     diagnosis: 'Acute Bronchitis',
                     prescription: [
-                        { medicine: 'Azithromycin 250mg', dosage: '1 tab', frequency: 'OD' },
-                        { medicine: 'Paracetamol 650mg', dosage: '1 tab', frequency: 'SOS' }
+                        { medicine: 'Azithromycin 250mg', form: 'Tab', route: 'Oral', dosage: '1 tab', frequency: 'OD', duration: '3 days' },
+                        { medicine: 'Paracetamol 650mg', form: 'Tab', route: 'Oral', dosage: '1 tab', frequency: 'SOS', duration: '3 days' }
                     ]
                 }
             }, 10);
@@ -223,8 +223,8 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 visit: {
                     diagnosis: 'Acute infection',
                     prescription: [
-                        { medicine: 'Amoxicillin 500mg', dosage: '1 cap', frequency: '1-1-1', duration: '3 days' },
-                        { medicine: 'Metformin 500mg', dosage: '1 tab', frequency: '1-0-1', duration: 'until review' }
+                        { medicine: 'Amoxicillin 500mg', form: 'Cap', route: 'Oral', dosage: '1 cap', frequency: '1-1-1', duration: '3 days' },
+                        { medicine: 'Metformin 500mg', form: 'Tab', route: 'Oral', dosage: '1 tab', frequency: '1-0-1', duration: 'until review' }
                     ]
                 }
             }, 10);
@@ -366,7 +366,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 encounterId: enc.id,
                 visit: {
                     prescription: [
-                        { medicine: 'Cetirizine 10mg', dosage: '1 tab', frequency: 'HS' }
+                        { medicine: 'Cetirizine 10mg', form: 'Tab', route: 'Oral', dosage: '1 tab', frequency: 'HS', duration: '5 days' }
                     ]
                 }
             }, 10);
@@ -592,7 +592,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 { patientId: 1, queueEntryId: Number(q1.lastInsertRowid), startRequestId: 'rx-1' }, 10);
             service.completeConsultation({
                 encounterId: enc1.id,
-                visit: { diagnosis: 'DM', prescription: [{ medicine: 'Metformin', dosage: '500mg', frequency: '1-0-1' }] }
+                visit: { diagnosis: 'DM', prescription: [{ medicine: 'Metformin', form: 'Tab', route: 'Oral', dosage: '500mg', frequency: '1-0-1', duration: 'until review' }] }
             }, 10);
 
             const q2 = service.addToQueue(1, 1, 20);
@@ -600,7 +600,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
                 { patientId: 1, queueEntryId: Number(q2.lastInsertRowid), startRequestId: 'rx-2' }, 10);
             service.completeConsultation({
                 encounterId: enc2.id,
-                visit: { diagnosis: 'DM review', prescription: [{ medicine: 'Metformin', dosage: '1000mg', frequency: '1-0-1' }] }
+                visit: { diagnosis: 'DM review', prescription: [{ medicine: 'Metformin', form: 'Tab', route: 'Oral', dosage: '1000mg', frequency: '1-0-1', duration: 'until review' }] }
             }, 10);
 
             const meds = service.getMedications(1).filter((m: any) => m.status === 'active');

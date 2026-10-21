@@ -5,6 +5,7 @@ import { CatalogTypeaheadComponent } from '../../shared/components/catalog-typea
 import { DataService } from '../../services/api.service';
 import { PracticeProfileService } from '../../services/practice-profile.service';
 import { frequencyLatin, parseFrequency } from '../../../../shared/clinical-timing';
+import { finalizeRxLines, isBlankRxLine, MAX_REFILLS, suggestedQuantity } from '../../../../shared/prescription-order';
 
 @Component({
   selector: 'app-prescription',
@@ -48,6 +49,8 @@ import { frequencyLatin, parseFrequency } from '../../../../shared/clinical-timi
               (valueChange)="onMedicineTyped(i, $event)"
               (picked)="onMedicinePicked(i, $event)">
             </app-catalog-typeahead>
+            <span *ngIf="isFreeText(item)" class="badge badge-ghost badge-xs mt-1" [attr.data-testid]="'rx-free-text-' + i"
+                  title="Not matched to the medicine catalog">Free text</span>
           </div>
 
           <!-- 2. Form (1/3 Mobile) -->
@@ -122,6 +125,24 @@ import { frequencyLatin, parseFrequency } from '../../../../shared/clinical-timi
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
             </button>
           </div>
+
+          <!-- 8. Dispense: quantity (worked out from the course when blank) and refills -->
+          <div class="col-span-6 md:col-span-2 md:col-start-4 flex items-center gap-1">
+            <span class="text-xs text-gray-500 shrink-0">Qty</span>
+            <input type="number" min="0" step="1" aria-label="Quantity to dispense" [attr.data-testid]="'rx-quantity-' + i"
+                   [ngModel]="item.quantity_derived ? null : item.quantity" (ngModelChange)="onQuantityTyped(i, $event)"
+                   [placeholder]="quantityHint(item)" [disabled]="disabled"
+                   class="input input-bordered input-xs w-full" />
+          </div>
+          <div class="col-span-6 md:col-span-2 flex items-center gap-1">
+            <span class="text-xs text-gray-500 shrink-0">Refills</span>
+            <input type="number" min="0" [max]="maxRefills" step="1" aria-label="Refills" [attr.data-testid]="'rx-refills-' + i"
+                   [(ngModel)]="item.refills" (ngModelChange)="emitChange()" placeholder="0" [disabled]="disabled"
+                   class="input input-bordered input-xs w-full" />
+          </div>
+          <p *ngIf="!disabled && issuesFor(i).length" class="col-span-12 md:col-span-6 text-xs text-amber-700" [attr.data-testid]="'rx-issues-' + i">
+            {{ issuesFor(i).join('; ') }}
+          </p>
         </div>
         
         <div class="flex justify-between mt-2">
@@ -153,6 +174,8 @@ export class PrescriptionComponent {
   }
   @Input() disabled = false;
   @Output() changed = new EventEmitter<any[]>();
+
+  readonly maxRefills = MAX_REFILLS;
 
   items = signal<any[]>([
     { medicine: '', form: 'Tab', dosage: '', route: 'Oral', frequency: '1-0-1', duration: '3 days', instruction: 'After Food' }
@@ -203,7 +226,34 @@ export class PrescriptionComponent {
   }
 
   onMedicineTyped(index: number, name: string) {
-    this.patchLine(index, { medicine: name });
+    // A name typed over a picked one no longer matches the catalog row.
+    const current = this.items()[index];
+    const unlinked = current?.medicine_id != null && name !== current.medicine
+      ? { medicine_id: null, generic_name: null, brand_name: null }
+      : {};
+    this.patchLine(index, { medicine: name, ...unlinked });
+  }
+
+  onQuantityTyped(index: number, value: unknown) {
+    const blank = value == null || String(value).trim() === '';
+    this.patchLine(index, { quantity: blank ? null : Number(value), quantity_derived: false });
+  }
+
+  /** Free text: a medicine typed in but never picked from (or added to) the catalog. */
+  isFreeText(item: any): boolean {
+    return !!String(item?.medicine || '').trim() && !(Number(item?.medicine_id) > 0);
+  }
+
+  quantityHint(item: any): string {
+    const suggested = suggestedQuantity(item);
+    return suggested == null ? '—' : `${suggested} (auto)`;
+  }
+
+  /** What would stop this line from being issued, for a hint under the row. */
+  issuesFor(index: number): string[] {
+    const line = this.items()[index];
+    if (!line || isBlankRxLine(line)) return [];
+    return finalizeRxLines([line]).issues.map((issue) => issue.message);
   }
 
   onFrequencyTyped(index: number, value: string) {
@@ -213,6 +263,7 @@ export class PrescriptionComponent {
   onMedicinePicked(index: number, hit: any) {
     this.patchLine(index, {
       medicine: hit.name,
+      medicine_id: hit.id ?? null,
       generic_name: hit.generic_name || null,
       brand_name: hit.brand_name || null,
       form: hit.form || this.items()[index]?.form || 'Tab',

@@ -1354,10 +1354,8 @@ export class SettingsComponent implements OnInit {
     }
   }
 
-  openSetupGuide(e: Event) {
+  async openSetupGuide(e: Event) {
     e.preventDefault();
-    if (window.electron && window.electron.utils) {
-      window.electron.utils.openExternal('https://docs.nalamdesk.com/docs/backups');
-    }
+    await window.electron?.utils?.openExternal('https://docs.nalamdesk.com/docs/backups');
   }
 }

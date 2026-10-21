@@ -2,7 +2,7 @@
  * In-app update feed configuration.
  *
  * Default: generic provider at `DEFAULT_UPDATE_FEED_URL`. nalamdesk.com
- * redirects that path to the public `nalamdesk-releases` GitHub Releases
+ * streams that path from the public `nalamdesk/releases` GitHub Releases
  * (see `landing/src/pages/updates/desktop/[file].ts`), so the hosting can
  * move without shipping a new app.
  *
@@ -43,8 +43,8 @@ export function resolveUpdateFeedConfig(env: NodeJS.Dict<string> = process.env):
     if (provider === 'github') {
         return {
             provider: 'github',
-            owner: (env['NALAMDESK_UPDATE_GITHUB_OWNER'] || 'sankara-sabapathy').trim(),
-            repo: (env['NALAMDESK_UPDATE_GITHUB_REPO'] || 'nalamdesk-releases').trim(),
+            owner: (env['NALAMDESK_UPDATE_GITHUB_OWNER'] || 'nalamdesk').trim(),
+            repo: (env['NALAMDESK_UPDATE_GITHUB_REPO'] || 'releases').trim(),
             signatureMode: env['NALAMDESK_UPDATE_RELEASE_SIGNED'] === '1' ? 'release-signed' : 'feed-checksum',
             downloadPageUrl
         };

@@ -24,6 +24,5 @@ Start with the [User Guide](/docs/user-guide/intro):
 - **[Merging Duplicate Charts](/docs/user-guide/patient-merge)**:
   preview-first merge with rollback.
 
-NalamDesk is free software under AGPL-3.0. The code lives on
-[GitHub](https://github.com/sankara-sabapathy/nalamdesk) and installers
-ship from [GitHub Releases](https://github.com/sankara-sabapathy/nalamdesk/releases).
+NalamDesk is free software under AGPL-3.0. Installers are on
+[nalamdesk.com](https://nalamdesk.com/#get).

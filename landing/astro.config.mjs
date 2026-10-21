@@ -12,5 +12,9 @@ export default defineConfig({
     plugins: [tailwindcss()],
   },
 
+  // No sessions: otherwise the adapter adds a SESSION KV binding and the
+  // deploy tries to create a namespace that already exists.
+  session: false,
+
   adapter: cloudflare(),
 });

@@ -84,8 +84,8 @@ describe('update feed resolver', () => {
         expect(config?.provider).toBe('github');
         expect(toElectronUpdaterOptions(config!)).toEqual({
             provider: 'github',
-            owner: 'sankara-sabapathy',
-            repo: 'nalamdesk-releases'
+            owner: 'nalamdesk',
+            repo: 'releases'
         });
         expect(signatureClaim(config!.signatureMode).verifiedSignature).toBe(false);
     });

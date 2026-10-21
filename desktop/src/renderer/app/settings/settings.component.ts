@@ -1357,12 +1357,7 @@ export class SettingsComponent implements OnInit {
   openSetupGuide(e: Event) {
     e.preventDefault();
     if (window.electron && window.electron.utils) {
-      // Link to local doc or online wiki? Using prompt's request for "User Guide"
-      // Since we don't have a hosted wiki yet, I'll point to the repo docs or a placeholder.
-      // User asked to "create a new page in nalamdesk documentation user guide... and add a link".
-      // I should probably link to the hosted version of that doc. 
-      // For now, I'll link to the repository documentation folder.
-      window.electron.utils.openExternal('https://github.com/sankara-sabapathy/nalamdesk/blob/main/cloud/documentation/user-guide/backups.md');
+      window.electron.utils.openExternal('https://docs.nalamdesk.com/docs/backups');
     }
   }
 }

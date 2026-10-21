@@ -1,10 +1,10 @@
 {
   "name": "nalamdesk-desktop",
   "version": "0.0.11",
-  "author": "Sankara Sabapathy <sankara.sabapathy@gmail.com>",
+  "author": "NalamDesk <hello@nalamdesk.com>",
   "description": "NalamDesk - Medical Practice Management",
   "license": "AGPL-3.0-only",
-  "homepage": "https://github.com/sankara-sabapathy/nalamdesk",
+  "homepage": "https://nalamdesk.com",
   "productName": "NalamDesk",
   "main": "dist/main/main.js",
   "engines": {
@@ -50,8 +50,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "sankara-sabapathy",
-        "repo": "nalamdesk-releases",
+        "owner": "nalamdesk",
+        "repo": "releases",
         "releaseType": "draft"
       }
     ],
@@ -67,7 +67,7 @@
       ],
       "icon": "build/icon.png",
       "category": "Office",
-      "maintainer": "Sankara Sabapathy <sankara.sabapathy@gmail.com>"
+      "maintainer": "NalamDesk <hello@nalamdesk.com>"
     },
     "mac": {
       "target": "dmg",

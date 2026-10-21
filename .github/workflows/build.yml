@@ -74,24 +74,48 @@ jobs:
           
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
 
+      # Releases are written by the nalamdesk-release-bot GitHub App, so the
+      # public repo names no person. The token is scoped to nalamdesk/releases.
+      - name: Release bot token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: nalamdesk
+          repositories: releases
+
       # One draft release up front, so the per-OS legs below upload into it
       # instead of racing to create it. publish-release makes it live once
       # every leg has uploaded, so clinics never see a half-filled release.
-      - name: Create draft release in nalamdesk-releases
+      # A release needs a commit to tag, so the bot seeds an empty repo
+      # with a README first.
+      - name: Create draft release in nalamdesk/releases
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           NEW_TAG: ${{ steps.bump.outputs.new_tag }}
         run: |
           node -e '
+            const api = "https://api.github.com/repos/nalamdesk/releases";
+            const headers = { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" };
             const tag = process.env.NEW_TAG;
-            fetch("https://api.github.com/repos/sankara-sabapathy/nalamdesk-releases/releases", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" },
-              body: JSON.stringify({ tag_name: tag, name: tag, draft: true })
-            }).then(async (res) => {
-              if (!res.ok) { console.error(res.status, await res.text()); process.exit(1); }
+            const ok = async (res) => { if (!res.ok) { console.error(res.status, await res.text()); process.exit(1); } return res; };
+            (async () => {
+              const commits = await fetch(`${api}/commits?per_page=1`, { headers });
+              if (commits.status === 409) {
+                const readme = "# NalamDesk releases\n\nDesktop installers and the in-app update feed. Download from https://nalamdesk.com.\n";
+                await ok(await fetch(`${api}/contents/README.md`, {
+                  method: "PUT", headers,
+                  body: JSON.stringify({ message: "Add README", content: Buffer.from(readme).toString("base64") })
+                }));
+                console.log("Seeded the releases repo");
+              }
+              await ok(await fetch(`${api}/releases`, {
+                method: "POST", headers,
+                body: JSON.stringify({ tag_name: tag, name: tag, draft: true })
+              }));
               console.log(`Draft release ${tag} created`);
-            });
+            })();
           '
 
   build-and-release:
@@ -140,28 +164,36 @@ jobs:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run build
 
+      - name: Release bot token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: nalamdesk
+          repositories: releases
+
       # Build & Publish based on OS. The code repo is private, so installers and
-      # latest*.yml go to the public sankara-sabapathy/nalamdesk-releases repo
-      # (desktop/package.json "publish"). RELEASES_TOKEN is a fine-grained token
-      # with Contents read/write on that repo only; GITHUB_TOKEN cannot write there.
+      # latest*.yml go to the public nalamdesk/releases repo (desktop/package.json
+      # "publish"), uploaded by the release bot; GITHUB_TOKEN cannot write there.
       - name: Build & Publish Electron (Windows)
         if: matrix.os == 'windows-latest'
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:win -- --publish always
 
       - name: Build & Publish Electron (Linux)
         if: matrix.os == 'ubuntu-latest'
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:linux -- --publish always
 
       - name: Build & Publish Electron (Mac)
         if: matrix.os == 'macos-latest'
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:mac -- --publish always
 
@@ -175,13 +207,22 @@ jobs:
         with:
           node-version: 22
 
+      - name: Release bot token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: nalamdesk
+          repositories: releases
+
       - name: Publish the draft release
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           NEW_TAG: ${{ needs.bump-version.outputs.new_tag }}
         run: |
           node -e '
-            const api = "https://api.github.com/repos/sankara-sabapathy/nalamdesk-releases/releases";
+            const api = "https://api.github.com/repos/nalamdesk/releases/releases";
             const headers = { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" };
             (async () => {
               const releases = await (await fetch(`${api}?per_page=20`, { headers })).json();

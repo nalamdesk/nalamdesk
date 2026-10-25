@@ -1,5 +1,5 @@
-// Desktop installers live on the public nalamdesk/releases GitHub repo (the
-// code repo is private). nalamdesk.com streams them through this worker, so
+// Desktop installers live on the public nalamdesk/releases GitHub repo.
+// nalamdesk.com streams them through this worker, so
 // visitors and the desktop app never leave nalamdesk.com and hosting can move
 // without a new app release: the app's default update feed is
 // https://nalamdesk.com/updates/desktop (desktop/src/main/updates/updateFeed.ts).

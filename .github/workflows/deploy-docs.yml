@@ -2,8 +2,8 @@ name: Deploy Documentation
 
 # Docs site (Docusaurus static build) to Cloudflare Workers Static Assets
 # (worker `nalamdesk-docs`, custom domain docs.nalamdesk.com).
-# GitHub Pages cannot serve this private repo on the current plan
-# (API returns 422), so the old peaceiris gh-pages step is retired.
+# The old peaceiris gh-pages step is retired (kept only if the branch is
+# needed again).
 on:
   push:
     branches:

@@ -173,7 +173,7 @@ jobs:
           owner: nalamdesk
           repositories: releases
 
-      # Build & Publish based on OS. The code repo is private, so installers and
+      # Build & Publish based on OS. Installers and
       # latest*.yml go to the public nalamdesk/releases repo (desktop/package.json
       # "publish"), uploaded by the release bot; GITHUB_TOKEN cannot write there.
       - name: Build & Publish Electron (Windows)

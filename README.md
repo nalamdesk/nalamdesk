@@ -23,7 +23,7 @@ Follow these steps to set up the development environment from a clean repository
 
 1.  **Clone the Repository**
     ```bash
-    git clone https://github.com/sankara-sabapathy/nalamdesk.git
+    git clone https://github.com/nalamdesk/nalamdesk.git
     cd nalamdesk/desktop
     ```
 
@@ -59,6 +59,10 @@ The cloud runs on AWS CDK in ap-south-1. Deploy the shared Core stacks first
 ([cloud/relay](./cloud/relay/README.md)).
 
 ## Documentation
-## Documentation
 See `cloud/documentation` for full architectural details.
 See **[Testing Strategy](./cloud/documentation/docs/developer-guide/testing-strategy.md)** for detailed Testing Architecture.
+
+## License
+
+AGPL-3.0-only. See [LICENSE](./LICENSE). The desktop app bundles the
+same license at `desktop/LICENSE`.

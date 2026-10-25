@@ -65,14 +65,45 @@ Diagnosis and medicine inventories plus condition-to-medicine presets.
 unchanged. Presets fill suggested prescription lines when their
 condition is diagnosed.
 
+## NalamDesk Cloud (General tab, optional)
+
+Pairing this computer with NalamDesk Cloud is required for ABDM and online
+booking. One computer per clinic.
+
+1. Go to **Settings > General** and scroll to **NalamDesk Cloud**.
+2. Enter the clinic's **HFR facility ID** and a **name for this computer**
+   (e.g. "Reception PC").
+3. Click **Request pairing**. NalamDesk verifies the facility and calls the
+   contact registered in HFR with an 8-character code.
+4. Enter the code in the **Pairing code** field and click **Pair**.
+5. Once paired, the card shows the pairing state, mailbox status, and an
+   **Online booking** toggle.
+
+Until paired, the ABDM gateway stays in mock mode and everything keeps
+working offline. Pairing uses the NalamDesk Cloud relay, which holds the
+ABDM vendor credentials; no ABDM password is stored on this computer.
+
 ## ABDM Tab (India)
 
-One-time facility setup: HIP ID, counter ID, HFR facility ID, and each
-doctor's HPR ID. Until credentials are configured the gateway stays in
-mock mode and everything works offline: the counter QR, scan check-in,
-callback inbox, and consent-based outside records are documented in
-the desktop User Guide. Connection test and the pending-callback
-acknowledgement live on this tab.
+Optional. ABDM is reached through the NalamDesk Cloud relay, so this
+computer must be paired first (see above).
+
+One-time facility setup:
+
+1. Enter the facility IDs issued to the clinic: **HIP ID**, **counter ID**,
+   **HFR facility ID**, and each doctor's **HPR ID** (on the user record).
+   Each doctor keeps their own HPR ID across profile edits.
+2. **Secure transfer**: set a receiving system address (https) and the
+   recipient's key material for encrypted record pushes. With no address,
+   transfers loop back on this device for testing.
+3. **Connection test**: checks the route to ABDM through NalamDesk Cloud
+   without touching patient data.
+
+Until credentials are configured the gateway stays in mock mode and
+everything works offline: the counter QR, scan check-in, callback inbox,
+and consent-based outside records are documented in the desktop User
+Guide. Connection test and the pending-callback acknowledgement live on
+this tab. The mock gateway can be forced on even while paired, for testing.
 
 ## Audit Logs Tab
 

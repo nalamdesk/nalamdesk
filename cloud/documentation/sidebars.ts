@@ -35,9 +35,6 @@ const sidebars: SidebarsConfig = {
       label: 'Data & Backups',
       items: [
         'backups',
-        'google-drive-setup',
-        'why-bring-your-own-key',
-        'enterprise-backup-options',
       ],
       collapsible: false,
     },

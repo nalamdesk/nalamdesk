@@ -8,5 +8,5 @@
   - Clinic Operations (registration, queue triage, vitals, consultation): https://docs.nalamdesk.com/docs/user-guide/clinic-operations
   - Daily Collection and Day Close (receipts, review queue, ledger): https://docs.nalamdesk.com/docs/user-guide/daily-collection
   - Merging Duplicate Charts (preview, rollback, archive): https://docs.nalamdesk.com/docs/user-guide/patient-merge
-- Data and Backups (schedule, retention, restore, Drive): https://docs.nalamdesk.com/docs/backups
+- Data and Backups (schedule, retention, restore): https://docs.nalamdesk.com/docs/backups
 - Marketing site: https://nalamdesk.com/

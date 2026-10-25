@@ -8,7 +8,7 @@ sidebar_position: 3
 everything below requires an Administrator login. Tabs: **General**,
 **Users**, **Security**, **Data & Backup**, **Audit Logs**,
 **Catalogs**, **ABDM**. The footer shows the packaged version
-(`NalamDesk v0.0.11 (abc1234)` style, `(development)` for dev builds);
+(`NalamDesk v0.0.13 (abc1234)` style, `(development)` for dev builds);
 quote it when reporting defects. Logout clears the session.
 
 ## General
@@ -82,5 +82,5 @@ and restores all leave entries here.
 
 ## Data & Backup
 
-Local backups, restore, and Google Drive live under **Settings > Data &
+Local backups, restore, and backup health live under **Settings > Data &
 Backup**. See [Data & Backups](../backups.md) for the full guide.

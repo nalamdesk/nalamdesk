@@ -6,7 +6,7 @@ sidebar_position: 2
 
 NalamDesk uses a relational SQLite database (SQLCipher-encrypted via
 `better-sqlite3-multiple-ciphers`). Schema evolves through ordered
-migrations in `desktop/src/main/schema/migrations.ts` (currently **v39**,
+migrations in `desktop/src/main/schema/migrations.ts` (currently **v50**,
 with a spec asserting each step in `migrations.spec.ts`). Below is the
 schema definition for core tables.
 
@@ -199,8 +199,7 @@ history.
 ## Settings Keys
 
 Beyond clinic details, `settings` carries the backup schedule
-(`backup_schedule`, default `13:00`), the Drive upload schedule
-(`cloud_backup_schedule`), the receipt/invoice consultation fee
+(`backup_schedule`, default `13:00`), the receipt/invoice consultation fee
 (`consultation_fee`, default `0`), and the MRN prefix (`mrn_prefix`,
 default `ND`).
 

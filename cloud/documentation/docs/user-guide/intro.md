@@ -14,7 +14,7 @@ Welcome to the NalamDesk User Guide. This section is designed to help Doctors, R
 - **[Clinic Operations](./clinic-operations.md)**: A guide to daily workflows like patient registration, queue management, and consultations.
 - **[Daily Collection](./daily-collection.md)**: Receipts, the review queue, and the ledger-derived day close.
 - **[Merging Duplicate Charts](./patient-merge.md)**: Preview-first merge with rollback for duplicate patient records.
-- **[Data & Backups](../backups.md)**: Local backup schedule, retention, restore, and Google Drive redundancy.
+- **[Data & Backups](../backups.md)**: Local backup schedule, retention, and restore.
 
 ## Roles & Responsibilities
 

@@ -104,7 +104,6 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
 ### Data Management
 *   **Backup:** Automated daily backups are saved locally (Settings → Data & Backup). Retention is 30 days.
 *   **Restore (after first run):** Settings → **Data & Backup** → **Restore from Backup File**. Choose a `.ndbackup`, enter the Recovery Code and the current administrator password. This is the same gated restore as the Welcome screen; the app restarts after a successful restore.
-*   **Google Drive:** Link your Google Account to enable **Automated Daily Backups** (runs every day at 10 PM if the app is open).
 *   **Crash Reporting:** If the application closes unexpectedly, you will see a popup asking to "Save Crash Report". Please save this file and email it to support for analysis. Your data remains private; the report only contains error details, not patient records.
 
 ---

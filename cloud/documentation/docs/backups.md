@@ -13,7 +13,7 @@ Schedule** (default **1:00 PM**). The app must be open at that time for the
 backup to run.
 
 ![Settings, Data and Backup tab](/img/nalamdesk-settings-backup.png)
-*Backup schedule, health, location, restore, and Drive sync live under Settings, Data and Backup.*
+*Backup schedule, health, location, and restore live under Settings, Data and Backup.*
 
 ### Default Backup Location
 Unless you configure a custom location, backups are stored in the application data folder:
@@ -43,46 +43,3 @@ attention. A **Run backup now** action is offered when a problem is found.
    Both are required. There is no reset path: a lost recovery code means
    the backup cannot be restored.
 4. Click **Restore Vault**. The app restarts with the restored data.
-
----
-
-## Cloud Backups (Google Drive)
-For off-site redundancy, you can sync your backups to your personal Google Drive. 
-NalamDesk uses a **Bring Your Own Key (BYOK)** model, giving you full control over the connection and ensuring we cannot access your Drive.
-
-### Setup Guide
-
-#### Step 1: Create a Google Cloud Project
-1. Go to [Google Cloud Console](https://console.cloud.google.com/).
-2. Click **Select a Project** > **New Project**.
-3. Name it `NalamDesk Backup` and click **Create**.
-
-#### Step 2: Enable Google Drive API
-1. On the left sidebar, go to **APIs & Services** > **Library**.
-2. Search for `Google Drive API` and click **Enable**.
-
-#### Step 3: Configure OAuth Consent Screen
-1. Go to **APIs & Services** > **OAuth consent screen**.
-2. Select **External** (for personal use) and click **Create**.
-3. Fill in required fields:
-   - **App Name**: NalamDesk Backup
-   - **User Support Email**: Your email
-   - **Developer Contact Info**: Your email
-4. Click **Save and Continue**.
-5. **Scopes**: Add `.../auth/drive.file`.
-6. **Test Users**: Add your own Gmail address.
-
-#### Step 4: Create Credentials
-1. Go to **APIs & Services** > **Credentials**.
-2. Click **Create Credentials** > **OAuth client ID**.
-3. **Application Type**: Select `Desktop app`.
-4. **Name**: `NalamDesk Desktop Client`.
-5. Click **Create**.
-6. Copy the **Client ID** and **Client Secret**.
-
-#### Step 5: Connect NalamDesk
-1. Open NalamDesk > **Settings** > **Data & Backup**.
-2. Paste your **Client ID** and **Client Secret**.
-3. Click **Connect Drive** and approve the permissions in the browser window.
-
-Once connected, NalamDesk will upload the daily encrypted backup to a hidden `appDataFolder` in your Google Drive, ensuring it doesn't clutter your main Drive view.

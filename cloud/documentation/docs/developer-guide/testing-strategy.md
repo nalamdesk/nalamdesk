@@ -41,7 +41,7 @@ layer up, in E2E.
 ### Migration & Policy Specs
 
 Schema changes ship with assertions in
-`src/main/schema/migrations.spec.ts` (each migration v1–v39 applies
+`src/main/schema/migrations.spec.ts` (each migration v1–v50 applies
 cleanly and newer grants hold). The shared RBAC model has a
 conformance spec at `src/server/access-conformance.spec.ts`. Touching
 either area means extending its spec first.

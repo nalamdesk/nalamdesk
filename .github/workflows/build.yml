@@ -11,26 +11,9 @@ permissions:
   contents: write
 
 jobs:
-  # Picks the runner for the jobs below: GitHub-hosted while the account
-  # has Actions minutes left, otherwise CI_RUNNER (see feature-ci.yml).
-  # Out of minutes, this job fails within seconds without running;
-  # continue-on-error keeps that from failing the run.
-  runner:
-    # Shows as failed on a PR while the account is out of minutes; expected.
-    name: GitHub-hosted minutes
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    timeout-minutes: 2
-    outputs:
-      hosted: ${{ steps.probe.outputs.hosted }}
-    steps:
-      - id: probe
-        run: echo "hosted=true" >> "$GITHUB_OUTPUT"
-
   bump-version:
-    needs: runner
-    if: ${{ !cancelled() }}
-    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    if: ${{ true }}
+    runs-on: ubuntu-latest
     outputs:
       new_tag: ${{ steps.bump.outputs.new_tag }}
     steps:
@@ -119,18 +102,11 @@ jobs:
           '
 
   build-and-release:
-    needs: [runner, bump-version]
-    if: ${{ !cancelled() && needs.bump-version.result == 'success' }}
-    # matrix.os stays the logical OS name. Out of GitHub-hosted minutes, the
-    # ubuntu leg moves to CI_RUNNER and the windows leg to CI_RUNNER_WINDOWS
-    # (a self-hosted Windows runner, e.g. ["self-hosted","Windows"]), and
-    # the macOS leg is dropped: it needs GitHub-hosted runners, and macOS
-    # downloads stay "coming soon" until the build is signed.
-    runs-on: >-
-      ${{ matrix.os == 'macos-latest' && 'macos-latest'
-      || needs.runner.outputs.hosted == 'true' && matrix.os
-      || matrix.os == 'windows-latest' && fromJSON(vars.CI_RUNNER_WINDOWS)
-      || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    needs: [bump-version]
+    if: ${{ needs.bump-version.result == 'success' }}
+    # matrix.os is the runner. macOS downloads stay "coming soon" until the
+    # build is signed.
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: ./desktop
@@ -138,9 +114,7 @@ jobs:
       # One OS failing must not cancel the others mid-upload.
       fail-fast: false
       matrix:
-        # Without a Windows runner, release Linux only rather than queue a
-        # leg that can never start and keep the draft from publishing.
-        os: ${{ fromJSON(needs.runner.outputs.hosted == 'true' && '["windows-latest","ubuntu-latest","macos-latest"]' || vars.CI_RUNNER_WINDOWS && '["windows-latest","ubuntu-latest"]' || '["ubuntu-latest"]') }}
+        os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout code
@@ -152,8 +126,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          # CI_RUNNER: self-hosted runners keep ~/.npm, so skip the GitHub cache (see feature-ci.yml).
-          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
+          cache: npm
           cache-dependency-path: desktop/package-lock.json
 
       - name: Install Dependencies
@@ -198,9 +171,9 @@ jobs:
         run: npm run dist:mac -- --publish always
 
   publish-release:
-    needs: [runner, bump-version, build-and-release]
-    if: ${{ !cancelled() && needs.build-and-release.result == 'success' }}
-    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    needs: [bump-version, build-and-release]
+    if: ${{ needs.build-and-release.result == 'success' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v4

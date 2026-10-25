@@ -15,26 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Picks the runner for the jobs below: GitHub-hosted while the account
-  # has Actions minutes left, otherwise CI_RUNNER (see feature-ci.yml).
-  # Out of minutes, this job fails within seconds without running;
-  # continue-on-error keeps that from failing the run.
-  runner:
-    # Shows as failed on a PR while the account is out of minutes; expected.
-    name: GitHub-hosted minutes
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    timeout-minutes: 2
-    outputs:
-      hosted: ${{ steps.probe.outputs.hosted }}
-    steps:
-      - id: probe
-        run: echo "hosted=true" >> "$GITHUB_OUTPUT"
-
   booking:
-    needs: runner
-    if: ${{ !cancelled() }}
-    runs-on: ${{ needs.runner.outputs.hosted == 'true' && 'ubuntu-latest' || vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    if: ${{ true }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -49,8 +32,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          # CI_RUNNER: self-hosted runners keep ~/.npm, so skip the GitHub cache (see feature-ci.yml).
-          cache: ${{ needs.runner.outputs.hosted == 'true' && 'npm' || '' }}
+          cache: npm
           cache-dependency-path: cloud/booking/${{ matrix.package }}/package-lock.json
       - name: Install Dependencies
         run: npm ci --prefer-offline --no-audit --no-fund

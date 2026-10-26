@@ -9,7 +9,9 @@ describe('resolveRoute', () => {
         ['GET', '/abdm/abha/v3/profile/account/abha-card', 'abha', '/v3/profile/account/abha-card'],
         ['GET', '/abdm/abha/v3/profile/public/certificate', 'abha', '/v3/profile/public/certificate'],
         ['POST', '/abdm/gateway/patient-share/v3/on-share', 'gateway', '/patient-share/v3/on-share'],
-        ['POST', '/abdm/gateway/consent/v3/request/init', 'gateway', '/consent/v3/request/init']
+        ['POST', '/abdm/abha/v3/profile/account/getAbhaCard', 'abha', '/v3/profile/account/getAbhaCard'],
+        ['POST', '/abdm/gateway/hip/v3/link/patient/links/sms/notify2', 'gateway', '/hip/v3/link/patient/links/sms/notify2'],
+        ['GET', '/abdm/gateway/gateway/v3/bridge/getServices', 'gateway', '/gateway/v3/bridge/getServices'],
     ])('allows %s %s', (method, path, upstream, upstreamPath) => {
         expect(resolveRoute(method, path)).toMatchObject({ upstream, upstreamPath });
     });

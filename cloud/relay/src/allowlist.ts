@@ -23,6 +23,7 @@ export const ALLOWED_ROUTES: readonly AllowedRoute[] = [
     { upstream: 'abha', method: 'POST', pattern: /^\/v3\/enrollment\/enrol\/abha-address$/, milestone: 'M1' },
     { upstream: 'abha', method: 'POST', pattern: new RegExp(`^/v3/profile/login/(request/otp|verify|verify/user)$`), milestone: 'M1' },
     { upstream: 'abha', method: 'POST', pattern: /^\/v3\/profile\/account\/verify$/, milestone: 'M1' },
+    { upstream: 'abha', method: 'POST', pattern: /^\/v3\/profile\/account\/getAbhaCard$/, milestone: 'M1' },
     { upstream: 'abha', method: 'GET', pattern: /^\/v3\/profile\/account(\/abha-card|\/qrCode)?$/, milestone: 'M1' },
     // M1: scan-and-share response (gateway).
     { upstream: 'gateway', method: 'POST', pattern: /^\/patient-share\/v3\/on-share$/, milestone: 'M1' },
@@ -30,6 +31,8 @@ export const ALLOWED_ROUTES: readonly AllowedRoute[] = [
     { upstream: 'gateway', method: 'POST', pattern: /^\/v3\/token\/generate-token$/, milestone: 'M2' },
     { upstream: 'gateway', method: 'POST', pattern: /^\/hip\/v3\/link\/carecontext$/, milestone: 'M2' },
     { upstream: 'gateway', method: 'POST', pattern: /^\/hip\/v3\/link\/context\/notify$/, milestone: 'M2' },
+    { upstream: 'gateway', method: 'POST', pattern: /^\/hip\/v3\/link\/patient\/links\/sms\/notify2$/, milestone: 'M2' },
+    { upstream: 'gateway', method: 'GET', pattern: /^\/gateway\/v3\/bridge\/getServices$/, milestone: 'M2' },
     { upstream: 'gateway', method: 'POST', pattern: /^\/user-initiated-linking\/v3\/patient\/care-context\/on-discover$/, milestone: 'M2' },
     { upstream: 'gateway', method: 'POST', pattern: /^\/user-initiated-linking\/v3\/link\/care-context\/(on-init|on-confirm)$/, milestone: 'M2' },
     { upstream: 'gateway', method: 'POST', pattern: /^\/consent\/v3\/request\/hip\/on-notify$/, milestone: 'M2' },

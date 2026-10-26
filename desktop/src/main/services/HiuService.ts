@@ -71,6 +71,7 @@ const MOCK_RETENTION_DAYS = 30;
 // callbacks arrive sealed through the mailbox. Both follow the public ABDM
 // v3 docs; reconfirm against the sandbox once credentials land (#152).
 export const HIU_ON_INIT_PATH = '/api/v3/hiu/consent/request/on-init';
+export const HIU_ON_STATUS_PATH = '/api/v3/hiu/consent/request/on-status';
 export const HIU_ON_FETCH_PATH = '/api/v3/hiu/consent/on-fetch';
 export const HIU_ON_REQUEST_PATH = '/api/v3/hiu/health-information/on-request';
 const CONSENT_INIT = '/consent/v3/request/init';
@@ -449,6 +450,7 @@ export class HiuService {
      */
     applyCallback(path: string | null, body: any): { followUp?: () => Promise<void> } | null {
         if (path === HIU_ON_INIT_PATH) return this.applyOnInit(body);
+        if (path === HIU_ON_STATUS_PATH) return this.applyOnStatus(body);
         if (path === HIU_ON_FETCH_PATH) return this.applyOnFetch(body);
         if (path === HIU_ON_REQUEST_PATH) return this.applyOnRequest(body);
         return null;
@@ -468,6 +470,33 @@ export class HiuService {
         // A notify can beat its on-init; it waits in the inbox until now.
         this.reconcilePendingNotifies();
         return { followUp: () => this.fetchArtefactDetails(Number(consent.id)) };
+    }
+
+private applyOnStatus(body: any): { followUp?: () => Promise<void> } | null {
+        const store = this.deps.store;
+        if (!store) return null;
+        const abdmId = String(body?.consentRequest?.id ?? '').trim();
+        if (!abdmId) return null;
+        const existing = store.getConsentByRequestId(abdmId);
+        if (!existing) return null;
+        const status = String(body?.consentRequest?.status ?? '').toUpperCase();
+        const next = ARTEFACT_STATUS[status];
+        if (!next) return null;
+        try {
+            store.updateConsentStatus(Number(existing.id), next, null);
+        } catch {
+            return null;
+        }
+        const artefactIds = Array.isArray(body?.consentRequest?.consentArtefacts)
+            ? body.consentRequest.consentArtefacts.map((a: any) => String(a?.id ?? '').trim()).filter(Boolean)
+            : [];
+        if (artefactIds.length > 0 && store.saveHiuArtefacts) {
+            store.saveHiuArtefacts(Number(existing.id), artefactIds, next === 'granted' ? 'granted' : 'revoked');
+        }
+        if (next === 'granted' && typeof store.getHiuArtefacts === 'function') {
+            return { followUp: () => this.fetchArtefactDetails(Number(existing.id)) };
+        }
+        return {};
     }
 
     private applyOnFetch(body: any): Record<string, never> {

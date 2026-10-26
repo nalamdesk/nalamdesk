@@ -1,6 +1,6 @@
 import * as crypto from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
-import { HIU_ON_FETCH_PATH, HIU_ON_INIT_PATH, HIU_ON_REQUEST_PATH, HiuService } from './HiuService';
+import { HIU_ON_FETCH_PATH, HIU_ON_INIT_PATH, HIU_ON_REQUEST_PATH, HIU_ON_STATUS_PATH, HiuService } from './HiuService';
 import { FideliusService } from './FideliusService';
 
 function memoryStore() {
@@ -403,6 +403,24 @@ describe('HiuService (live through the relay)', () => {
         expect(store.consents.get(row.id).status).toBe('granted');
         expect(store.artefacts.get('art-9')).toMatchObject({ consent_id: row.id, status: 'granted' });
         expect(typeof result?.followUp).toBe('function');
+    });
+
+it('applies a status callback to the matching consent request', async () => {
+    const { svc, store } = live();
+    const row = await svc.requestConsent({ abhaAddress: 'a@sbx', hiTypes: ['Prescription'] });
+    store.setConsentRequestId(row.id, 'cm-9');
+    store.saveHiuArtefacts(row.id, ['art-9'], 'requested');
+
+    const result = svc.applyCallback(HIU_ON_STATUS_PATH, { consentRequest: { id: 'cm-9', status: 'GRANTED', consentArtefacts: [{ id: 'art-9' }] } });
+
+    expect(store.consents.get(row.id).status).toBe('granted');
+    expect(store.artefacts.get('art-9')).toMatchObject({ status: 'granted' });
+    expect(typeof result?.followUp).toBe('function');
+});
+
+    it('returns null for an on-status callback with no matching consent', () => {
+        const { svc } = live();
+        expect(svc.applyCallback(HIU_ON_STATUS_PATH, { consentRequest: { id: 'unknown', status: 'GRANTED' } })).toBeNull();
     });
 
     it('marks a request the consent manager refused, and fails an on-init it does not know', async () => {

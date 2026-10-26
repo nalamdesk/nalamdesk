@@ -8,10 +8,12 @@ Nirmitee v3 Postman collection, and the NHA functional test-case workbooks
 
 ## 0. Summary of top defects
 
-1. **ABHA card fetch uses wrong path+method.** `AbdmAbhaService` calls
-   `GET /v3/profile/account/abha-card`; ABDM v3 (Postman) expects
-   `POST /v3/profile/account/getAbhaCard`. Also allowlist only permits the GET
-   variant, so the live call is rejected before the vendor token is attached.
+1. **ABHA card fetch path is unconfirmed.** `AbdmAbhaService` uses
+   `GET /v3/profile/account/abha-card` (documented v3 route). A third-party
+   Postman collection lists `POST /v3/profile/account/getAbhaCard`, but it has
+   no saved responses; the documented GET returns `image/png` and needs an
+   `X-Token` header plus image-body handling. Revert any POST attempt until
+   confirmed under #152. The GET route is already allowlisted.
 2. **ABHA enrollment paths do not match v3.** Service uses
    `enrol/byMobile` and `enrol/verify`; v3 uses `enrol/byAbdm` and
    `profile/login/verify`-style flows. `enrol/byAbdm` is never called.
@@ -40,7 +42,7 @@ Nirmitee v3 Postman collection, and the NHA functional test-case workbooks
 | Area | Implementation | v3 expectation (Postman) | Status |
 |---|---|---|---|
 | Session token | relay `/abdm/abha/...` | `/gateway/v3/sessions` | OK via relay |
-| Enrol OTP | `/v3/enrollment/request/otp` (GET allowlist) | `/v3/enrollment/request/otp` POST | Path OK, method differs (allowlist GET only) |
+| Enrol OTP | `/v3/enrollment/request/otp` | `/v3/enrollment/request/otp` POST | Path OK |
 | Enrol by Aadhaar | `/v3/enrollment/enrol/byAadhaar` | `/v3/enrollment/enrol/byAadhaar` | OK |
 | Enrol by ABDM | not implemented | `/v3/enrollment/enrol/byAbdm` | **GAP** |
 | Enrol by mobile | `/v3/enrollment/enrol/byMobile` | not in v3 collection | **GAP / legacy** |
@@ -48,7 +50,7 @@ Nirmitee v3 Postman collection, and the NHA functional test-case workbooks
 | Login request OTP | `/v3/profile/login/request/otp` | `/v3/profile/login/request/otp` | OK |
 | Login verify | `/v3/profile/login/verify` | `/v3/profile/login/verify` | OK |
 | Account verify | `/v3/profile/account/verify` | not in v3 collection | Extra (allowlisted) |
-| ABHA card | `GET /v3/profile/account/abha-card` | `POST /v3/profile/account/getAbhaCard` | **DEFECT** |
+| ABHA card | `GET /v3/profile/account/abha-card` | `GET /v3/profile/account/abha-card` (documented); `POST getAbhaCard` unconfirmed | Needs X-Token + image body |
 | Public cert | `GET /v3/profile/public/certificate` | (not in collection) | OK (allowlisted) |
 | ABHA address suggestion | not implemented | `/v3/enrollment/enrol/suggestion` (GET), `/v3/enrollment/enrol/abha-address` (POST) | GAP (optional) |
 
@@ -161,10 +163,9 @@ Gaps to add:
 
 ## 6. Recommended next actions
 
-1. Fix `AbdmAbhaService` paths: `abha-card` → `getAbhaCard` (POST), add
-   `enrol/byAbdm`, drop or gate `byMobile`/`enrol/verify` unless confirmed.
-2. Reconfirm and, if needed, rename `HipService`'s legacy callback paths.
-3. Add missing allowlist entries or document why excluded.
-4. Handle `/api/v3/hiu/consent/request/on-status` or confirm notify covers it.
-5. Add path-contract tests to prevent future drift.
+1. ABHA card fetch: keep `GET /v3/profile/account/abha-card`; add `X-Token` header and image-body handling; confirm POST variant under #152 before adopting.
+2. Reconfirm/rename `HipService` legacy callback paths.
+3. Add missing allowlist entries or document exclusions.
+4. Handle `/api/v3/hiu/consent/request/on-status` (done) or confirm notify covers it.
+5. Add path-contract tests to prevent drift.
 6. Run against sandbox with real credentials to close #152.

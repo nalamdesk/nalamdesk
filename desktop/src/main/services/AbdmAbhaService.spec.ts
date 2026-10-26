@@ -150,10 +150,10 @@ describe('AbdmAbhaService (through the relay)', () => {
             .rejects.toThrow('did not return a transaction');
     });
 
-    it('looks up an address and fetches the card with a GET the relay allows', async () => {
+    it('looks up an address and fetches the card through the relay', async () => {
         const relay = liveRelay({
             '/v3/profile/account/verify': { exists: false },
-            '/v3/profile/account/abha-card': { name: 'Real', gender: 'M', dob: '1990-01-01', image: 'AAAA', mimeType: 'image/png' }
+            '/v3/profile/account/getAbhaCard': { name: 'Real', gender: 'M', dob: '1990-01-01', image: 'AAAA', mimeType: 'image/png' }
         });
         const svc = new AbdmAbhaService({ relay });
 
@@ -163,7 +163,7 @@ describe('AbdmAbhaService (through the relay)', () => {
         expect(await svc.getCard('real@abdm')).toEqual({
             abhaAddress: 'real@abdm', name: 'Real', gender: 'M', dateOfBirth: '1990-01-01', imageBase64: 'AAAA', mimeType: 'image/png', mock: false
         });
-        expect(relay.send).toHaveBeenLastCalledWith('abha', 'GET', '/v3/profile/account/abha-card', undefined);
+        expect(relay.send).toHaveBeenLastCalledWith('abha', 'POST', '/v3/profile/account/getAbhaCard', { abhaAddress: 'real@abdm' });
     });
 
     it('fetches the certificate once a day, and again after invalidation', async () => {

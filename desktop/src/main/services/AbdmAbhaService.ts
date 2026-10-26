@@ -26,12 +26,13 @@ export interface AbdmCard {
 // the mock responder below mirrors these shapes either way.
 const PATHS = {
     enrolByAadhaar: '/v3/enrollment/enrol/byAadhaar',
+    enrolByAbdm: '/v3/enrollment/enrol/byAbdm',
     enrolByMobile: '/v3/enrollment/enrol/byMobile',
     enrolVerify: '/v3/enrollment/enrol/verify',
     loginRequestOtp: '/v3/profile/login/request/otp',
     loginVerify: '/v3/profile/login/verify',
     verifyAbha: '/v3/profile/account/verify',
-    abhaCard: '/v3/profile/account/abha-card',
+    abhaCard: '/v3/profile/account/getAbhaCard',
     // ABHA public key for encrypting Aadhaar, mobile, login IDs and OTPs.
     authCert: '/v3/profile/public/certificate'
 };
@@ -214,7 +215,7 @@ export class AbdmAbhaService {
     async getCard(abhaAddress: string): Promise<AbdmCard> {
         const address = String(abhaAddress || '').trim();
         if (!address) throw new Error('Health ID is required.');
-        const { json, mock } = await this.authorized(PATHS.abhaCard, { abhaAddress: address }, 'GET');
+        const { json, mock } = await this.authorized(PATHS.abhaCard, { abhaAddress: address }, 'POST');
         return {
             abhaAddress: address,
             name: String(json?.name || '').trim(),

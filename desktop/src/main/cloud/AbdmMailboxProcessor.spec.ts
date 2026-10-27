@@ -8,6 +8,7 @@ import {
     shareProfile,
     type AbdmMailboxItem
 } from './AbdmMailboxProcessor';
+import { HIP_CONSENT_NOTIFY_PATH } from '../services/HipService';
 
 vi.mock('electron-log', () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
@@ -171,10 +172,10 @@ describe('AbdmMailboxProcessor', () => {
 
     it('queues any other callback in the inbox under a kind named for its path', async () => {
         const body = { requestId: 'r-9', status: 'OK' };
-        const { processor, store } = setup([callback('m1', '/api/v3/hip/consent/request/notify', body)]);
+        const { processor, store } = setup([callback('m1', HIP_CONSENT_NOTIFY_PATH, body)]);
 
         expect(await processor.drain()).toEqual({ processed: 1, failed: 0 });
-        expect(store.receiveInboxCallback).toHaveBeenCalledWith('hip-consent-request-notify', body, undefined, 'req-m1');
+        expect(store.receiveInboxCallback).toHaveBeenCalledWith('consent-request-hip-notify', body, undefined, 'req-m1');
     });
 
     it('fails a callback whose body is not JSON, and moves on to the next', async () => {

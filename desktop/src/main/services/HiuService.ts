@@ -68,13 +68,14 @@ export interface HiuConsentRequest {
 const MOCK_RETENTION_DAYS = 30;
 
 // Live HIU paths (#164). Gateway calls go through the relay's allowlist;
-// callbacks arrive sealed through the mailbox. Both follow the public ABDM
-// v3 docs; reconfirm against the sandbox once credentials land (#152).
+// callbacks arrive sealed through the mailbox. Both follow the official ABDM
+// v3 M3 document (M3_Dcoument_16_02_2026); strict v3 only.
 export const HIU_ON_INIT_PATH = '/api/v3/hiu/consent/request/on-init';
 export const HIU_ON_STATUS_PATH = '/api/v3/hiu/consent/request/on-status';
 export const HIU_ON_FETCH_PATH = '/api/v3/hiu/consent/on-fetch';
 export const HIU_ON_REQUEST_PATH = '/api/v3/hiu/health-information/on-request';
 const CONSENT_INIT = '/consent/v3/request/init';
+const CONSENT_STATUS = '/consent/v3/request/status';
 const CONSENT_FETCH = '/consent/v3/fetch';
 // An HL7 canonical identifier, never fetched: FHIR defines it with http.
 const PURPOSE_OF_USE_URI = 'http://terminology.hl7.org/ValueSet/v3-PurposeOfUse'; // NOSONAR
@@ -473,25 +474,20 @@ export class HiuService {
     }
 
 private applyOnStatus(body: any): { followUp?: () => Promise<void> } | null {
-        const store = this.deps.store;
-        if (!store) return null;
+        const store = this.liveStore();
         const abdmId = String(body?.consentRequest?.id ?? '').trim();
-        if (!abdmId) return null;
-        const existing = store.getConsentByRequestId(abdmId);
-        if (!existing) return null;
+        const existing = abdmId ? store.getConsentByRequestId(abdmId) : null;
+        if (!existing) throw new Error('Consent request not found for this on-status.');
         const status = String(body?.consentRequest?.status ?? '').toUpperCase();
-        const next = ARTEFACT_STATUS[status];
-        if (!next) return null;
-        try {
-            store.updateConsentStatus(Number(existing.id), next, null);
-        } catch {
-            return null;
-        }
+        const CONSENT_ON_STATUS: Record<string, string> = { GRANTED: 'granted', DENIED: 'denied', EXPIRED: 'expired', REVOKED: 'expired' };
+        const next = CONSENT_ON_STATUS[status];
+        if (!next) return {};
+        store.updateConsentStatus(Number(existing.id), next, null);
         const artefactIds = Array.isArray(body?.consentRequest?.consentArtefacts)
             ? body.consentRequest.consentArtefacts.map((a: any) => String(a?.id ?? '').trim()).filter(Boolean)
             : [];
         if (artefactIds.length > 0 && store.saveHiuArtefacts) {
-            store.saveHiuArtefacts(Number(existing.id), artefactIds, next === 'granted' ? 'granted' : 'revoked');
+            store.saveHiuArtefacts(Number(existing.id), artefactIds, ARTEFACT_STATUS[status] ?? 'revoked');
         }
         if (next === 'granted' && typeof store.getHiuArtefacts === 'function') {
             return { followUp: () => this.fetchArtefactDetails(Number(existing.id)) };
@@ -534,6 +530,15 @@ private applyOnStatus(body: any): { followUp?: () => Promise<void> } | null {
         }
         store.updateHiuArtefact(artefact.id, { transaction_id: transactionId, transfer_status: 'acknowledged', error: null });
         return {};
+    }
+
+    /** Asks the consent manager for the current status of its request id (official M3: consent status). */
+    async fetchConsentStatus(consentRequestId: string): Promise<unknown> {
+        if (this.isMock()) throw new Error('Consent status is only available through the relay.');
+        const id = String(consentRequestId || '').trim();
+        if (!id) throw new Error('Consent request id is required.');
+        const requestId = this.newRequestId();
+        return this.gateway(CONSENT_STATUS, { consentRequestId: id }, requestId);
     }
 
     /** Asks the consent manager for each granted artefact's details (HIP, dates); best effort. */

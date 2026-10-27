@@ -1,0 +1,1331 @@
+{
+	"info": {
+		"_postman_id": "8804df41-0d2f-4779-96ab-30a0e8401dcc",
+		"name": "Scan and Share_14_08_2025",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "32356161",
+		"_collection_link": "https://asa333-1288.postman.co/workspace/test~84f505ef-d753-46c3-984d-556bc6a4375e/collection/32356161-8804df41-0d2f-4779-96ab-30a0e8401dcc?action=share&source=collection_link&creator=32356161"
+	},
+	"item": [
+		{
+			"name": "Registration and Auth",
+			"item": [
+				{
+					"name": "Session API",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();\r",
+									"pm.environment.set(\"accessToken\", jsonData.accessToken);"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						},
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}",
+								"type": "text"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}",
+								"type": "text"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "sbx",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"clientId\": \"<<Enter Client Id>>\",\n    \"clientSecret\": \"<<Enter Client Secret>>\",\n    \"grantType\": \"client_credentials\"\n}"
+						},
+						"url": {
+							"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/sessions",
+							"protocol": "https",
+							"host": [
+								"dev",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"api",
+								"hiecm",
+								"gateway",
+								"v3",
+								"sessions"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Bridge URL",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"const datetime = require('moment');\r",
+									"pm.globals.set(\"current_timestamp\",datetime().format(\"YYYY-MM-DD HH:mm:ss.SSS\"));"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{accessToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "{{X-CM-ID}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"url\": \"{{URL to be updated}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge/url",
+							"protocol": "https",
+							"host": [
+								"dev",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"api",
+								"hiecm",
+								"gateway",
+								"v3",
+								"bridge",
+								"url"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Success",
+							"originalRequest": {
+								"method": "PATCH",
+								"header": [
+									{
+										"key": "REQUEST-ID",
+										"value": "{{$guid}}",
+										"type": "text"
+									},
+									{
+										"key": "TIMESTAMP",
+										"value": "{{$isoTimestamp}}",
+										"type": "text"
+									},
+									{
+										"key": "X-CM-ID",
+										"value": "sbx",
+										"type": "text"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"bridgeId\": \"MOHANK_LTI\",\r\n    \"url\": \"https://webhook.site/3b21e640-493e-4b09-98b9-0fa88acb65ae\"\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge/url",
+									"protocol": "https",
+									"host": [
+										"dev",
+										"abdm",
+										"gov",
+										"in"
+									],
+									"path": [
+										"api",
+										"hiecm",
+										"gateway",
+										"v3",
+										"bridge",
+										"url"
+									]
+								}
+							},
+							"status": "Accepted",
+							"code": 202,
+							"_postman_previewlanguage": "plain",
+							"header": [
+								{
+									"key": "expires",
+									"value": "0"
+								},
+								{
+									"key": "x-envoy-upstream-service-time",
+									"value": "48"
+								},
+								{
+									"key": "access-control-allow-origin",
+									"value": "*"
+								},
+								{
+									"key": "access-control-allow-methods",
+									"value": "PATCH"
+								},
+								{
+									"key": "x-frame-options",
+									"value": "DENY"
+								},
+								{
+									"key": "access-control-allow-headers",
+									"value": "authorization,Access-Control-Allow-Origin,Content-Type,SOAPAction,apikey,Internal-Key,Authorization"
+								},
+								{
+									"key": "pragma",
+									"value": "no-cache"
+								},
+								{
+									"key": "activityid",
+									"value": "12d3aa13-f3d8-4764-b762-780b74efe17e"
+								},
+								{
+									"key": "access-control-expose-headers",
+									"value": ""
+								},
+								{
+									"key": "x-content-type-options",
+									"value": "nosniff"
+								},
+								{
+									"key": "x-xss-protection",
+									"value": "1 ; mode=block"
+								},
+								{
+									"key": "referrer-policy",
+									"value": "no-referrer"
+								},
+								{
+									"key": "cache-control",
+									"value": "no-cache, no-store, max-age=0, must-revalidate"
+								},
+								{
+									"key": "date",
+									"value": "Thu, 09 May 2024 11:45:54 GMT"
+								},
+								{
+									"key": "Strict-Transport-Security",
+									"value": "max-age=16070400; includeSubDomains"
+								},
+								{
+									"key": "Transfer-Encoding",
+									"value": "chunked"
+								}
+							],
+							"cookie": [],
+							"body": ""
+						},
+						{
+							"name": "Access Denied",
+							"originalRequest": {
+								"method": "PATCH",
+								"header": [
+									{
+										"key": "REQUEST-ID",
+										"value": "{{$guid}}",
+										"type": "text"
+									},
+									{
+										"key": "TIMESTAMP",
+										"value": "{{$isoTimestamp}}",
+										"type": "text"
+									},
+									{
+										"key": "X-CM-ID",
+										"value": "",
+										"type": "text"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\r\n    \"bridgeId\": \"MOHANK_LT\",\r\n    \"url\": \"https://webhook.site/3b21e640-493e-4b09-98b9-0fa88acb65ae\"\r\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge/url",
+									"protocol": "https",
+									"host": [
+										"dev",
+										"abdm",
+										"gov",
+										"in"
+									],
+									"path": [
+										"api",
+										"hiecm",
+										"gateway",
+										"v3",
+										"bridge",
+										"url"
+									]
+								}
+							},
+							"status": "Forbidden",
+							"code": 403,
+							"_postman_previewlanguage": "plain",
+							"header": [
+								{
+									"key": "expires",
+									"value": "0"
+								},
+								{
+									"key": "x-envoy-upstream-service-time",
+									"value": "8"
+								},
+								{
+									"key": "access-control-allow-origin",
+									"value": "*"
+								},
+								{
+									"key": "access-control-allow-methods",
+									"value": "PATCH"
+								},
+								{
+									"key": "x-frame-options",
+									"value": "DENY"
+								},
+								{
+									"key": "access-control-allow-headers",
+									"value": "authorization,Access-Control-Allow-Origin,Content-Type,SOAPAction,apikey,Internal-Key,Authorization"
+								},
+								{
+									"key": "pragma",
+									"value": "no-cache"
+								},
+								{
+									"key": "activityid",
+									"value": "284f60f8-e63c-4ae1-9653-470ea18f73ae"
+								},
+								{
+									"key": "access-control-expose-headers",
+									"value": ""
+								},
+								{
+									"key": "x-content-type-options",
+									"value": "nosniff"
+								},
+								{
+									"key": "x-xss-protection",
+									"value": "1 ; mode=block"
+								},
+								{
+									"key": "referrer-policy",
+									"value": "no-referrer"
+								},
+								{
+									"key": "content-type",
+									"value": "text/plain"
+								},
+								{
+									"key": "cache-control",
+									"value": "no-cache, no-store, max-age=0, must-revalidate"
+								},
+								{
+									"key": "date",
+									"value": "Thu, 09 May 2024 12:31:47 GMT"
+								},
+								{
+									"key": "Strict-Transport-Security",
+									"value": "max-age=16070400; includeSubDomains"
+								},
+								{
+									"key": "Transfer-Encoding",
+									"value": "chunked"
+								}
+							],
+							"cookie": [],
+							"body": "Access Denied"
+						}
+					]
+				},
+				{
+					"name": "Registration of bridge services (HIP/HIU)",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{accessToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "accept",
+								"value": "application/json"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n  \"facilityId\": \"IN0710******\",\r\n  \"facilityName\": \"{{facility name}}\",\r\n  \"HRP\": [\r\n    {\r\n      \"bridgeId\": \"{{client-id}}\",\r\n      \"hipName\": \"{{hip name}}\",\r\n      \"type\": \"HIP\",\r\n      \"active\": true\r\n    }\r\n  ]\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://facilitysbx.abdm.gov.in/v1/bridges/MutipleHRPAddUpdateServices",
+							"protocol": "https",
+							"host": [
+								"facilitysbx",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"v1",
+								"bridges",
+								"MutipleHRPAddUpdateServices"
+							]
+						},
+						"description": "Generated from cURL: curl --location 'https://facility.abdm.gov.in/v1/bridges/MutipleHRPAddUpdateServices' \\\r\n\r\n--header 'accept: application/json' \\\r\n\r\n--header 'Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICI0dUx2Wmp2T3V2c1E1Ry1sVkdydzVQYThWVG04V2dKV3YwZVJXM1pYVmpnIn0.eyJleHAiOjE3MjUzNjU1ODgsImlhdCI6MTcyNTM0Mzk4OCwianRpIjoiNTUzODZlZmItNDkxZi00ZDRkLWJhN2MtNGY4MWZmYzZjNmUwIiwiaXNzIjoiaHR0cHM6Ly9saXZlLm5kaG0uZ292LmluL2F1dGgvcmVhbG1zL2dhdGV3YXkiLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiMTY3Yjg2MTYtN2Q1Yy00Y2E2LTk0ZTktYzk2MWUwMTg4YjM5IiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiVEVTVF9QUk9EIiwic2Vzc2lvbl9zdGF0ZSI6ImZjYTU1MDcxLWU2NTUtNDA3Mi1iOTBkLWE3M2FmNjVhY2ZlZSIsImFjciI6IjEiLCJhbGxvd2VkLW9yaWdpbnMiOlsiaHR0cDovL2xvY2FsaG9zdDo5MDA3Il0sInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJISVVfUEFZRVIiLCJjbSIsImhlYWx0aElkIiwiaGVhbHRoX2xvY2tlciIsImhpcCIsIkhJUF9QQVlFUiIsImhpdSIsImhmciIsIm9mZmxpbmVfYWNjZXNzIiwicGhyIiwiZ2F0ZXdheSIsImhwX2lkIiwiSGlkQWJoYVNlYXJjaCJdfSwicmVzb3VyY2VfYWNjZXNzIjp7IlRFU1RfUFJPRCI6eyJyb2xlcyI6WyJ1bWFfcHJvdGVjdGlvbiJdfSwiYWNjb3VudCI6eyJyb2xlcyI6WyJtYW5hZ2UtYWNjb3VudCIsIm1hbmFnZS1hY2NvdW50LWxpbmtzIiwidmlldy1wcm9maWxlIl19fSwic2NvcGUiOiJvcGVuaWQgZW1haWwgcHJvZmlsZSIsImNsaWVudElkIjoiVEVTVF9QUk9EIiwiY2xpZW50SG9zdCI6IjEwLjIzMy43Mi4xNDQiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsInByZWZlcnJlZF91c2VybmFtZSI6InNlcnZpY2UtYWNjb3VudC10ZXN0X3Byb2QiLCJjbGllbnRBZGRyZXNzIjoiMTAuMjMzLjcyLjE0NCJ9.aIzMeu30AJOsvnVju9bjNFmWuetQzRPgpNB4_c7O5HBQ088_q4dXIncKjcB2m9ywJMHZS0V97n1wXs06r7kfpvr28E_Z-D3-cawlcKmIMPo9FndPt4Z3ZURdhtTHXKJlpd6RUk2VTla1cNvf7lC-1-pyPEl8kkfzorwK274g9NlgPIRyq8HFHZkvaglA7UBiX694NDyKm_kDv_LDN2UaT3OSvhYileUaAXd00iNtq7I7Xp3aIxNWznbvLswDybrHdXHAp78xf7B7jksUnPUPxzCACMJnvbt_tgrgKUtZtopx3I6RkFOnhPC_ahiw0BgMr8R5fpNfW88wLoSt8AulWQ' \\\r\n\r\n--header 'Content-Type: application/json' \\\r\n\r\n--header 'Cookie: JSESSIONID=C313889D45450E126B42A48C13146049.node1; JSESSIONID=A3D66210CFC437CB18C8A8B31A33C3BA.node1; TS01ddee46=01445fed0479602d8ece0ed901ee3cbe9aa1aa9bede50645897445764a41a8a7fe6d0435838c523646277488c7ced488ee55f0709f60dcd5f322147bbd9438fa294070c328' \\\r\n\r\n--data '{\r\n\r\n    \"facilityId\": \"IN0110005827\",\r\n\r\n    \"facilityName\": \"TEST HIP\",\r\n\r\n    \"HRP\": [\r\n\r\n        {\r\n\r\n            \"bridgeId\": \"TEST_PROD\",\r\n\r\n            \"hipName\": \"TEST HIP\",\r\n\r\n            \"type\": \"HIP\",\r\n\r\n            \"active\": true\r\n\r\n        },\r\n\r\n                {\r\n\r\n            \"bridgeId\": \"TEST_PROD\",\r\n\r\n            \"hipName\": \"TEST HIP\",\r\n\r\n            \"type\": \"HIU\",\r\n\r\n            \"active\": true\r\n\r\n        }\r\n\r\n    ]\r\n\r\n}'"
+					},
+					"response": []
+				},
+				{
+					"name": "Find Bridge Service By Service ID",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"const datetime = require('moment');\r",
+									"pm.globals.set(\"current_timestamp\",datetime().format(\"YYYY-MM-DD HH:mm:ss.SSS\"));"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{accessToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "{{X-CM-ID}}"
+							}
+						],
+						"url": {
+							"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge-service/serviceId/{{service ID}}",
+							"protocol": "https",
+							"host": [
+								"dev",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"api",
+								"hiecm",
+								"gateway",
+								"v3",
+								"bridge-service",
+								"serviceId",
+								"{{service ID}}"
+							],
+							"query": [
+								{
+									"key": "stateCode",
+									"value": "10",
+									"disabled": true
+								},
+								{
+									"key": "districtCode",
+									"value": "20",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Success",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "REQUEST-ID",
+										"value": "{{$guid}}",
+										"type": "text"
+									},
+									{
+										"key": "TIMESTAMP",
+										"value": "{{$isoTimestamp}}",
+										"type": "text"
+									},
+									{
+										"key": "X-CM-ID",
+										"value": "sbx",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge-service/serviceId/Mohan_HIP1",
+									"protocol": "https",
+									"host": [
+										"dev",
+										"abdm",
+										"gov",
+										"in"
+									],
+									"path": [
+										"api",
+										"hiecm",
+										"gateway",
+										"v3",
+										"bridge-service",
+										"serviceId",
+										"Mohan_HIP1"
+									],
+									"query": [
+										{
+											"key": "stateCode",
+											"value": "10",
+											"disabled": true
+										},
+										{
+											"key": "districtCode",
+											"value": "20",
+											"disabled": true
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "expires",
+									"value": "0"
+								},
+								{
+									"key": "x-envoy-upstream-service-time",
+									"value": "31"
+								},
+								{
+									"key": "access-control-allow-origin",
+									"value": "*"
+								},
+								{
+									"key": "access-control-allow-methods",
+									"value": "GET"
+								},
+								{
+									"key": "x-frame-options",
+									"value": "DENY"
+								},
+								{
+									"key": "access-control-allow-headers",
+									"value": "authorization,Access-Control-Allow-Origin,Content-Type,SOAPAction,apikey,Internal-Key,Authorization"
+								},
+								{
+									"key": "pragma",
+									"value": "no-cache"
+								},
+								{
+									"key": "activityid",
+									"value": "1411d724-5426-4303-9c3a-61a12cb3887f"
+								},
+								{
+									"key": "access-control-expose-headers",
+									"value": ""
+								},
+								{
+									"key": "x-content-type-options",
+									"value": "nosniff"
+								},
+								{
+									"key": "x-xss-protection",
+									"value": "1 ; mode=block"
+								},
+								{
+									"key": "referrer-policy",
+									"value": "no-referrer"
+								},
+								{
+									"key": "content-type",
+									"value": "application/json"
+								},
+								{
+									"key": "cache-control",
+									"value": "no-cache, no-store, max-age=0, must-revalidate"
+								},
+								{
+									"key": "date",
+									"value": "Thu, 09 May 2024 11:46:12 GMT"
+								},
+								{
+									"key": "Strict-Transport-Security",
+									"value": "max-age=16070400; includeSubDomains"
+								},
+								{
+									"key": "Transfer-Encoding",
+									"value": "chunked"
+								}
+							],
+							"cookie": [],
+							"body": "{\n    \"id\": 9687,\n    \"bridgeId\": \"MOHANK_LTI\",\n    \"serviceId\": \"Mohan_HIP1\",\n    \"name\": \"Mohan Hospital\",\n    \"isHip\": true,\n    \"isPhr\": false,\n    \"endpoints\": {},\n    \"active\": true,\n    \"registerTime\": \"2022-06-10 09:02:52.252\",\n    \"dateCreated\": \"2022-06-10 09:02:52.252\",\n    \"dateModified\": \"2023-12-15 16:01:39.139\"\n}"
+						},
+						{
+							"name": "404 Not found",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "REQUEST-ID",
+										"value": "{{$guid}}",
+										"type": "text"
+									},
+									{
+										"key": "TIMESTAMP",
+										"value": "{{$isoTimestamp}}",
+										"type": "text"
+									},
+									{
+										"key": "X-CM-ID",
+										"value": "sbx",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge-service/serviceId/Mohan_HIP1$",
+									"protocol": "https",
+									"host": [
+										"dev",
+										"abdm",
+										"gov",
+										"in"
+									],
+									"path": [
+										"api",
+										"hiecm",
+										"gateway",
+										"v3",
+										"bridge-service",
+										"serviceId",
+										"Mohan_HIP1$"
+									],
+									"query": [
+										{
+											"key": "stateCode",
+											"value": "10",
+											"disabled": true
+										},
+										{
+											"key": "districtCode",
+											"value": "20",
+											"disabled": true
+										}
+									]
+								}
+							},
+							"status": "Not Found",
+							"code": 404,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "x-request-id",
+									"value": "fe0af795-5bf0-4732-a044-84537542e647"
+								},
+								{
+									"key": "x-forwarded-proto",
+									"value": "http"
+								},
+								{
+									"key": "postman-token",
+									"value": "f94fa938-c2ef-4559-9be5-c946d5fe5ccc"
+								},
+								{
+									"key": "x-b3-sampled",
+									"value": "0"
+								},
+								{
+									"key": "x-forwarded-for",
+									"value": "100.65.201.149"
+								},
+								{
+									"key": "request-id",
+									"value": "ccae69a6-3eb9-4dbb-a6e6-0cc8cfeff043"
+								},
+								{
+									"key": "x-envoy-attempt-count",
+									"value": "1"
+								},
+								{
+									"key": "activityid",
+									"value": "119233e0-e8ce-45ff-8cc0-aa33b41e61f4"
+								},
+								{
+									"key": "x-cm-id",
+									"value": "sbx"
+								},
+								{
+									"key": "x-envoy-external-address",
+									"value": "100.65.201.149"
+								},
+								{
+									"key": "x-b3-spanid",
+									"value": "9c77814d71528d6d"
+								},
+								{
+									"key": "x-b3-traceid",
+									"value": "03e852a044b577cc9c77814d71528d6d"
+								},
+								{
+									"key": "accept-encoding",
+									"value": "gzip, deflate, br"
+								},
+								{
+									"key": "timestamp",
+									"value": "2024-05-09T11:46:31.988Z"
+								},
+								{
+									"key": "content-type",
+									"value": "application/json; charset=UTF-8"
+								},
+								{
+									"key": "date",
+									"value": "Thu, 09 May 2024 11:46:31 GMT"
+								},
+								{
+									"key": "x-envoy-upstream-service-time",
+									"value": "2"
+								},
+								{
+									"key": "X-Frame-Options",
+									"value": "DENY"
+								},
+								{
+									"key": "X-XSS-Protection",
+									"value": "1; mode=block"
+								},
+								{
+									"key": "X-Content-Type-Options",
+									"value": "nosniff"
+								},
+								{
+									"key": "Strict-Transport-Security",
+									"value": "max-age=16070400; includeSubDomains"
+								},
+								{
+									"key": "Referrer-Policy",
+									"value": "strict-origin"
+								},
+								{
+									"key": "Transfer-Encoding",
+									"value": "chunked"
+								}
+							],
+							"cookie": [],
+							"body": "{\n    \"code\": \"404\",\n    \"type\": \"Status report\",\n    \"message\": \"Runtime Error\",\n    \"description\": \"No matching resource found for given API Request\"\n}"
+						}
+					]
+				},
+				{
+					"name": "Find Services By Bridge ID",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{accessToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "{{X-CM-ID}}"
+							}
+						],
+						"url": {
+							"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge-services",
+							"protocol": "https",
+							"host": [
+								"dev",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"api",
+								"hiecm",
+								"gateway",
+								"v3",
+								"bridge-services"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "Success",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "REQUEST-ID",
+										"value": "{{$guid}}",
+										"type": "text"
+									},
+									{
+										"key": "TIMESTAMP",
+										"value": "{{$isoTimestamp}}",
+										"type": "text"
+									},
+									{
+										"key": "X-CM-ID",
+										"value": "sbx",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge-services/SBX_002167",
+									"protocol": "https",
+									"host": [
+										"dev",
+										"abdm",
+										"gov",
+										"in"
+									],
+									"path": [
+										"api",
+										"hiecm",
+										"gateway",
+										"v3",
+										"bridge-services",
+										"SBX_002167"
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "expires",
+									"value": "0"
+								},
+								{
+									"key": "x-envoy-upstream-service-time",
+									"value": "40"
+								},
+								{
+									"key": "access-control-allow-origin",
+									"value": "*"
+								},
+								{
+									"key": "access-control-allow-methods",
+									"value": "GET"
+								},
+								{
+									"key": "x-frame-options",
+									"value": "DENY"
+								},
+								{
+									"key": "access-control-allow-headers",
+									"value": "authorization,Access-Control-Allow-Origin,Content-Type,SOAPAction,apikey,Internal-Key,Authorization"
+								},
+								{
+									"key": "pragma",
+									"value": "no-cache"
+								},
+								{
+									"key": "activityid",
+									"value": "a62c0d0c-ea45-4a80-bcfa-8d36085c0130"
+								},
+								{
+									"key": "access-control-expose-headers",
+									"value": ""
+								},
+								{
+									"key": "x-content-type-options",
+									"value": "nosniff"
+								},
+								{
+									"key": "x-xss-protection",
+									"value": "1 ; mode=block"
+								},
+								{
+									"key": "referrer-policy",
+									"value": "no-referrer"
+								},
+								{
+									"key": "content-type",
+									"value": "application/json"
+								},
+								{
+									"key": "cache-control",
+									"value": "no-cache, no-store, max-age=0, must-revalidate"
+								},
+								{
+									"key": "date",
+									"value": "Thu, 09 May 2024 11:47:04 GMT"
+								},
+								{
+									"key": "Strict-Transport-Security",
+									"value": "max-age=16070400; includeSubDomains"
+								},
+								{
+									"key": "Transfer-Encoding",
+									"value": "chunked"
+								}
+							],
+							"cookie": [],
+							"body": "{\n    \"bridge\": {\n        \"id\": \"SBX_002167\",\n        \"name\": \"barot dhruv\",\n        \"url\": \"https://webhook.site/23961f0f-3500-48d7-8ce2-8d48ad3dc0e9\",\n        \"active\": true,\n        \"blocklisted\": false\n    },\n    \"services\": [\n        {\n            \"id\": \"A1_HL\",\n            \"name\": \"Aarogya One Health Loker\",\n            \"types\": [\n                \"HIP\"\n            ],\n            \"endpoints\": {\n                \"hipEndpoints\": [\n                    {\n                        \"use\": \"registration\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://events.hookdeck.com/e/src_3gsnEgI941mh/registration\"\n                    },\n                    {\n                        \"use\": \"data-upload\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://events.hookdeck.com/e/src_3gsnEgI941mh/data-upload\"\n                    }\n                ],\n                \"hiuEndpoints\": [\n                    {\n                        \"use\": \"registration\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://events.hookdeck.com/e/src_3gsnEgI941mh/registration\"\n                    },\n                    {\n                        \"use\": \"data-upload\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://events.hookdeck.com/e/src_3gsnEgI941mh/data-upload\"\n                    }\n                ],\n                \"healthLockerEndpoints\": [\n                    {\n                        \"use\": \"registration\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://events.hookdeck.com/e/src_3gsnEgI941mh/registration\"\n                    },\n                    {\n                        \"use\": \"data-upload\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://events.hookdeck.com/e/src_3gsnEgI941mh/data-upload\"\n                    }\n                ]\n            },\n            \"active\": true\n        },\n        {\n            \"id\": \"DHRUV_DEV_PHR_001\",\n            \"name\": \"Dhruv PHR APP\",\n            \"types\": [\n                \"PHR\"\n            ],\n            \"endpoints\": {},\n            \"active\": true\n        },\n        {\n            \"id\": \"DHRUV_DEV_PHR_002\",\n            \"name\": \"Dhruv PHR APP Only PHR\",\n            \"types\": [\n                \"PHR\"\n            ],\n            \"endpoints\": {},\n            \"active\": true\n        },\n        {\n            \"id\": \"Dhruv_HEALTH_LOCKER\",\n            \"name\": \"Aarogya One Health Loker\",\n            \"types\": [],\n            \"endpoints\": {\n                \"healthLockerEndpoints\": [\n                    {\n                        \"use\": \"registration\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://webhook.site/248a81d7-4194-4445-ad9c-db7541d8983b/registration\"\n                    },\n                    {\n                        \"use\": \"data-upload\",\n                        \"connectionType\": \"HTTPS\",\n                        \"address\": \"https://webhook.site/248a81d7-4194-4445-ad9c-db7541d8983b/data-upload\"\n                    }\n                ]\n            },\n            \"active\": true\n        },\n        {\n            \"id\": \"Dhruv_HIP\",\n            \"name\": \"Dhruv HIP\",\n            \"types\": [\n                \"HIP\"\n            ],\n            \"endpoints\": {},\n            \"active\": true\n        },\n        {\n            \"id\": \"Dhruv_HIU\",\n            \"name\": \"Dhruv HIU\",\n            \"types\": [\n                \"HIU\"\n            ],\n            \"endpoints\": {},\n            \"active\": true\n        },\n        {\n            \"id\": \"IN1210000232\",\n            \"name\": \"NP AR WEST SIANG aalo hq\",\n            \"types\": [\n                \"HIP\"\n            ],\n            \"endpoints\": {},\n            \"active\": true\n        },\n        {\n            \"id\": \"IN1210000232_1\",\n            \"name\": \"NP AR WEST SIANG aalo hq\",\n            \"types\": [\n                \"HIP\"\n            ],\n            \"endpoints\": {},\n            \"active\": true\n        },\n        {\n            \"id\": \"IN2410000190\",\n            \"name\": \"dhruv hospital\",\n            \"types\": [\n                \"HIP\"\n            ],\n            \"endpoints\": {},\n            \"active\": true\n        }\n    ]\n}"
+						},
+						{
+							"name": "Access Denied",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "REQUEST-ID",
+										"value": "{{$guid}}",
+										"type": "text"
+									},
+									{
+										"key": "TIMESTAMP",
+										"value": "{{$isoTimestamp}}",
+										"type": "text"
+									},
+									{
+										"key": "X-CM-ID",
+										"value": "",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/bridge-services/SBX_002167",
+									"protocol": "https",
+									"host": [
+										"dev",
+										"abdm",
+										"gov",
+										"in"
+									],
+									"path": [
+										"api",
+										"hiecm",
+										"gateway",
+										"v3",
+										"bridge-services",
+										"SBX_002167"
+									]
+								}
+							},
+							"status": "Forbidden",
+							"code": 403,
+							"_postman_previewlanguage": "plain",
+							"header": [
+								{
+									"key": "expires",
+									"value": "0"
+								},
+								{
+									"key": "x-envoy-upstream-service-time",
+									"value": "23"
+								},
+								{
+									"key": "access-control-allow-origin",
+									"value": "*"
+								},
+								{
+									"key": "access-control-allow-methods",
+									"value": "GET"
+								},
+								{
+									"key": "x-frame-options",
+									"value": "DENY"
+								},
+								{
+									"key": "access-control-allow-headers",
+									"value": "authorization,Access-Control-Allow-Origin,Content-Type,SOAPAction,apikey,Internal-Key,Authorization"
+								},
+								{
+									"key": "pragma",
+									"value": "no-cache"
+								},
+								{
+									"key": "activityid",
+									"value": "75c8e478-2888-442c-9732-3fa93ad8c464"
+								},
+								{
+									"key": "access-control-expose-headers",
+									"value": ""
+								},
+								{
+									"key": "x-content-type-options",
+									"value": "nosniff"
+								},
+								{
+									"key": "x-xss-protection",
+									"value": "1 ; mode=block"
+								},
+								{
+									"key": "referrer-policy",
+									"value": "no-referrer"
+								},
+								{
+									"key": "content-type",
+									"value": "text/plain"
+								},
+								{
+									"key": "cache-control",
+									"value": "no-cache, no-store, max-age=0, must-revalidate"
+								},
+								{
+									"key": "date",
+									"value": "Thu, 09 May 2024 12:32:32 GMT"
+								},
+								{
+									"key": "Strict-Transport-Security",
+									"value": "max-age=16070400; includeSubDomains"
+								},
+								{
+									"key": "Transfer-Encoding",
+									"value": "chunked"
+								}
+							],
+							"cookie": [],
+							"body": "Access Denied"
+						}
+					]
+				},
+				{
+					"name": "certs",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {}
+					},
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}",
+								"type": "text"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}",
+								"type": "text"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "{{cm-id}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/certs",
+							"protocol": "https",
+							"host": [
+								"dev",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"api",
+								"hiecm",
+								"gateway",
+								"v3",
+								"certs"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "openid-configuration",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "{{cm-id}}"
+							}
+						],
+						"url": {
+							"raw": "https://dev.abdm.gov.in/api/hiecm/gateway/v3/.well-known/openid-configuration",
+							"protocol": "https",
+							"host": [
+								"dev",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"api",
+								"hiecm",
+								"gateway",
+								"v3",
+								".well-known",
+								"openid-configuration"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Scan and Share",
+			"item": [
+				{
+					"name": "01 profile-share (Callback to HIP)",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{BEARER_AUTH}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "{{cm-id}}"
+							},
+							{
+								"key": "",
+								"value": "",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"intent\": \"PROFILE_SHARE\",\n    \"metaData\": {\n        \"hipId\": \"{{hip-id}}\",\n        \"context\": \"1\",\n        \"hprId\": \"testhpr@hpr.abdm\",\n        \"latitude\": \"-38.670\",\n        \"longitude\": \"58.498\"\n    },\n    \"profile\": {\n        \"patient\": {\n            \"abhaNumber\": {{abha-number}},\n            \"abhaAddress\": \"{{abha-address}}\",\n            \"name\": \"{{name}}\",\n            \"gender\": \"M\",\n            \"dayOfBirth\": \"1*\",\n            \"monthOfBirth\": \"0*\",\n            \"yearOfBirth\": \"19**\",\n            \"address\": {\n                \"line\": \"{{Address}}\",\n                \"district\": null,\n                \"state\": null,\n                \"pinCode\": null\n            },\n            \"phoneNumber\": \"{{mobile}}\"\n        }\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{callback_url}}/api/v3/hip/patient/share",
+							"host": [
+								"{{callback_url}}"
+							],
+							"path": [
+								"api",
+								"v3",
+								"hip",
+								"patient",
+								"share"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "02 profile-on-share",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{BEARER_AUTH}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}",
+								"type": "text"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}",
+								"type": "text"
+							},
+							{
+								"key": "X-CM-ID",
+								"value": "{{cm-id}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"acknowledgement\": {\r\n        \"status\": \"SUCCESS\",\r\n        \"abhaAddress\": \"{{abha-address}}\",\r\n        \"profile\": {\r\n            \"context\": \"5\",\r\n            \"tokenNumber\": \"15\",\r\n            \"expiry\": \"1800\"\r\n        }\r\n    },\r\n    \"response\": {\r\n        \"requestId\": \"20a1b39a-87d7-456a-a95b-df0844c0a9c6\"\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://dev.abdm.gov.in/api/hiecm/patient-share/v3/on-share",
+							"protocol": "https",
+							"host": [
+								"dev",
+								"abdm",
+								"gov",
+								"in"
+							],
+							"path": [
+								"api",
+								"hiecm",
+								"patient-share",
+								"v3",
+								"on-share"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

@@ -1,0 +1,147 @@
+{
+	"info": {
+		"_postman_id": "637418f8-83b8-4599-a65a-98533db6a3af",
+		"name": "Running token status",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "33009625"
+	},
+	"item": [
+		{
+			"name": "Running Token Request",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{SK_AUTH}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "REQUEST-ID",
+						"value": "{{$guid}}"
+					},
+					{
+						"key": "TIMESTAMP",
+						"value": "{{$isoTimestamp}}"
+					},
+					{
+						"key": "X-CM-ID",
+						"value": "sbx"
+					},
+					{
+						"key": "X-HIU-ID",
+						"value": "Mohan_HIU"
+					},
+					{
+						"key": "X-AUTH-TOKEN",
+						"value": "{{X-token}}"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "Authorization",
+						"value": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJBbFJiNVdDbThUbTlFSl9JZk85ejA2ajlvQ3Y1MXBLS0ZrbkdiX1RCdkswIn0.eyJleHAiOjE3NTg3MDc4MjksImlhdCI6MTc1ODcwNjYyOSwianRpIjoiOTg5M2I5MzMtNDkzOC00NTgyLTkwODgtMGNjNWVkZTAxNmMzIiwiaXNzIjoiaHR0cHM6Ly9kZXYubmRobS5nb3YuaW4vYXV0aC9yZWFsbXMvY2VudHJhbC1yZWdpc3RyeSIsImF1ZCI6ImFjY291bnQiLCJzdWIiOiJjN2NhMjk3Yi0yZTVhLTRkN2UtOGY5YS0xYWU2NDAxYWQ0Y2YiLCJ0eXAiOiJCZWFyZXIiLCJhenAiOiJTQlhfMDAwMTM1Iiwic2Vzc2lvbl9zdGF0ZSI6ImMxNzkwNGVkLWIwZjEtNGI0Ni04Y2Y1LTE3NTA0NWJmMDhiYiIsImFjciI6IjEiLCJhbGxvd2VkLW9yaWdpbnMiOlsiaHR0cDovL2xvY2FsaG9zdDo5MDA3Il0sInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJISVVfUEFZRVIiLCJoZnIiLCJoaXUiLCJvZmZsaW5lX2FjY2VzcyIsImhlYWx0aElkIiwicGhyIiwiT0lEQyIsImhlYWx0aF9sb2NrZXIiLCJoaXAiLCJocF9pZCIsIkhJUF9QQVlFUiJdfSwicmVzb3VyY2VfYWNjZXNzIjp7IlNCWF8wMDAxMzUiOnsicm9sZXMiOlsidW1hX3Byb3RlY3Rpb24iXX0sImFjY291bnQiOnsicm9sZXMiOlsibWFuYWdlLWFjY291bnQiLCJtYW5hZ2UtYWNjb3VudC1saW5rcyIsInZpZXctcHJvZmlsZSJdfX0sInNjb3BlIjoib3BlbmlkIGVtYWlsIHByb2ZpbGUiLCJjbGllbnRJZCI6IlNCWF8wMDAxMzUiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsImNsaWVudEhvc3QiOiIxMDAuNjUuMTYwLjIxNSIsInByZWZlcnJlZF91c2VybmFtZSI6InNlcnZpY2UtYWNjb3VudC1zYnhfMDAwMTM1In0.WHLa6Hw7LA0TSs813mYFBV_m6DZS8FbbjNfp3t-rV5t4hLu50GgjOs1ZDPBKZKEyKe3fp36n0a-A77fke14TK6MZ2nPpNHPsbTrAM0t03rTVZbB9RfPSesv-GJeO4OkDCqziHD0IXwEHI7Wz5BBG-oaQrjMFpTd9B5fEkfiiWn9wuqzxxIWbnLIdI-u_sunc4XrMiW_OOHBFM2gDZc1gVCC3OljhDiOLQ-Q_nkec4A2P5V2kQPWSO1MKPOhsgI5XjHpjZmLo-uJbpjF1a3saQJWIQg4ff1NHhUhrgYxKES2H40J_nmnEhNOSvw2D8LVwYT9FogvaBD3yP5HWTsSCGQ",
+						"disabled": true
+					},
+					{
+						"key": "Cookie",
+						"value": "TS011c04bd=01445fed04231ff31aa29b16393ca60a6f5e9c74bf0bae4ee88c85679bf19ea926f79b0977515d708eefa9663ee212836caeb760bc"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"hipId\" : \"Mohan_HIP\",\n    \"context\": \"1\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://dev.abdm.gov.in/api/hiecm/patient-share/v3/running-token/status",
+					"protocol": "https",
+					"host": [
+						"dev",
+						"abdm",
+						"gov",
+						"in"
+					],
+					"path": [
+						"api",
+						"hiecm",
+						"patient-share",
+						"v3",
+						"running-token",
+						"status"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Running Token Response",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{SK_AUTH}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "REQUEST-ID",
+						"value": "{{$guid}}"
+					},
+					{
+						"key": "TIMESTAMP",
+						"value": "{{$isoTimestamp}}"
+					},
+					{
+						"key": "X-CM-ID",
+						"value": "sbx"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"token\": {\n        \"hipId\": \"Mohan_HIP\",\n        \"context\": \"1\",\n        \"runningTokenNumber\": \"51\",\n        \"averageTokenServiceTimeInMinutes\": 2\n    },\n    \"response\": {\n        \"requestId\": \"3d66c9b1-cabc-4c18-a835-2fd492787da3\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://dev.abdm.gov.in/api/hiecm/patient-share/v3/running-token/on-status",
+					"protocol": "https",
+					"host": [
+						"dev",
+						"abdm",
+						"gov",
+						"in"
+					],
+					"path": [
+						"api",
+						"hiecm",
+						"patient-share",
+						"v3",
+						"running-token",
+						"on-status"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

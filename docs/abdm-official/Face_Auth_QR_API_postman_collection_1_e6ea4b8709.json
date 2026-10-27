@@ -1,0 +1,393 @@
+{
+	"info": {
+		"_postman_id": "4270d1f2-cb4c-4885-8868-d4d6e057944b",
+		"name": "Face Auth QR API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "34082172"
+	},
+	"item": [
+		{
+			"name": "Search Copy",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = JSON.parse(pm.response.text());\r",
+							"pm.collectionVariables.set(\"searchTxnId\",jsonData[0].txnId);"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{token}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "REQUEST-ID",
+						"value": "{{$guid}}"
+					},
+					{
+						"key": "TIMESTAMP",
+						"value": "{{$isoTimestamp}}"
+					},
+					{
+						"key": "BENEFIT_NAME",
+						"value": "healthid api"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"scope\":[\"search-abha\"],\r\n    \"mobile\": \"{{rsaMobileEncryptionOutput}}\"\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://abhasbx.abdm.gov.in/abha/api/v3/profile/account/abha/search",
+					"protocol": "https",
+					"host": [
+						"abhasbx",
+						"abdm",
+						"gov",
+						"in"
+					],
+					"path": [
+						"abha",
+						"api",
+						"v3",
+						"profile",
+						"account",
+						"abha",
+						"search"
+					]
+				}
+			},
+			"response": [
+				{
+					"name": "200",
+					"originalRequest": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "REQUEST-ID",
+								"value": "{{$guid}}"
+							},
+							{
+								"key": "TIMESTAMP",
+								"value": "{{$isoTimestamp}}"
+							},
+							{
+								"key": "BENEFIT_NAME",
+								"value": "healthid api"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"scope\":[\"search-abha\"],\r\n    \"mobile\": \"{{rsaMobileEncryptionOutput}}\"\r\n}\r\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{BaseURI}}/{{BasePath}}/profile/account/abha/search",
+							"host": [
+								"{{BaseURI}}"
+							],
+							"path": [
+								"{{BasePath}}",
+								"profile",
+								"account",
+								"abha",
+								"search"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "expires",
+							"value": "0"
+						},
+						{
+							"key": "x-envoy-upstream-service-time",
+							"value": "191"
+						},
+						{
+							"key": "access-control-allow-origin",
+							"value": ""
+						},
+						{
+							"key": "vary",
+							"value": "Origin,Access-Control-Request-Method,Access-Control-Request-Headers"
+						},
+						{
+							"key": "access-control-allow-methods",
+							"value": "POST"
+						},
+						{
+							"key": "x-frame-options",
+							"value": "DENY"
+						},
+						{
+							"key": "permissions-policy",
+							"value": "geolocation=(self)"
+						},
+						{
+							"key": "access-control-allow-headers",
+							"value": "authorization,Content-Type,SOAPAction,apikey,Internal-Key,TIMESTAMP,REQUEST-ID,TRANSACTION_ID,Access-Control-Allow-Origin,Authorization"
+						},
+						{
+							"key": "pragma",
+							"value": "no-cache"
+						},
+						{
+							"key": "strict-transport-security",
+							"value": "max-age=31536000 ; includeSubDomains"
+						},
+						{
+							"key": "activityid",
+							"value": "2ef9cbd7-9568-4a4c-925a-c9f2f4676a78"
+						},
+						{
+							"key": "access-control-expose-headers",
+							"value": ""
+						},
+						{
+							"key": "content-security-policy",
+							"value": "form-action 'self'"
+						},
+						{
+							"key": "x-content-type-options",
+							"value": "nosniff"
+						},
+						{
+							"key": "x-xss-protection",
+							"value": "1 ; mode=block"
+						},
+						{
+							"key": "referrer-policy",
+							"value": "no-referrer"
+						},
+						{
+							"key": "content-type",
+							"value": "application/json"
+						},
+						{
+							"key": "cache-control",
+							"value": "no-cache, no-store, max-age=0, must-revalidate"
+						},
+						{
+							"key": "date",
+							"value": "Fri, 19 Jul 2024 13:33:17 GMT"
+						},
+						{
+							"key": "Transfer-Encoding",
+							"value": "chunked"
+						}
+					],
+					"cookie": [],
+					"body": "[\n    {\n        \"txnId\": \"d5b1fb36-e0be-401d-b4cf-cc71c5aca98a\",\n        \"ABHA\": [\n            {\n                \"index\": 1,\n                \"ABHANumber\": \"xx-xxxx-xxxx-XX31\",\n                \"name\": \"Username Sudhakarrao Pinge\",\n                \"gender\": \"F\"\n            }\n        ]\n    }\n]"
+				}
+			]
+		},
+		{
+			"name": "Request by Face Auth",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "TIMESTAMP",
+						"value": "2025-01-13T15:33:34.331Z"
+					},
+					{
+						"key": "REQUEST-ID",
+						"value": "26e2819f-532f-4a36-80ed-cd5ad204716f"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "Authorization",
+						"value": "Bearer ****"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"scope\": [\"abha-login\",\"search-abha\",\"qr-verify\"],\r\n    \"loginHint\": \"index\",\r\n    \"loginId\": \"<encrypted-index>\",\r\n    \"otpSystem\": \"aadhaar\",\r\n    \"txnId\":\"<txn-id-from-search-api-response>\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://abhasbx.abdm.gov.in/abha/api/v3/profile/login/request/otp",
+					"protocol": "https",
+					"host": [
+						"abhasbx",
+						"abdm",
+						"gov",
+						"in"
+					],
+					"path": [
+						"abha",
+						"api",
+						"v3",
+						"profile",
+						"login",
+						"request",
+						"otp"
+					]
+				},
+				"description": "Generated from cURL: curl --location 'https://abhasbx.abdm.gov.in/abha/api/v3/profile/login/request/otp' \\\r\n--header 'TIMESTAMP: 2025-01-13T15:33:34.331Z' \\\r\n--header 'REQUEST-ID: 26e2819f-532f-4a36-80ed-cd5ad204716f' \\\r\n--header 'Content-Type: application/json' \\\r\n--header 'Authorization: Bearer ****' \\\r\n--data '{\r\n    \"scope\": [\"abha-login\",\"search-abha\",\"aadhaar-face-verify\"],\r\n    \"loginHint\": \"index\",\r\n    \"loginId\": \"<encrypted-index>\",\r\n    \"otpSystem\": \"aadhaar\",\r\n    \"txnId\":\"<txn-id-from-search-api-response>\"\r\n}' \r\n"
+			},
+			"response": []
+		},
+		{
+			"name": "Capture PID",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "TIMESTAMP",
+						"value": "2025-01-13T15:33:34.331Z"
+					},
+					{
+						"key": "REQUEST-ID",
+						"value": "26e2819f-532f-4a36-80ed-cd5ad204716f"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "Authorization",
+						"value": "Bearer ****"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"scope\": [\r\n        \"abha-login\",\r\n        \"face-verify\"\r\n    ],\r\n    \"txnId\": \"d059e607-564b-4202-8bd6-6e45a7d9a477\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://abhasbx.abdm.gov.in/abha/api/v3/enrollment/enrol/capturePID",
+					"protocol": "https",
+					"host": [
+						"abhasbx",
+						"abdm",
+						"gov",
+						"in"
+					],
+					"path": [
+						"abha",
+						"api",
+						"v3",
+						"enrollment",
+						"enrol",
+						"capturePID"
+					]
+				},
+				"description": "Generated from cURL: curl --location 'https://abhasbx.abdm.gov.in/abha/api/v3/profile/login/request/otp' \\\r\n--header 'TIMESTAMP: 2025-01-13T15:33:34.331Z' \\\r\n--header 'REQUEST-ID: 26e2819f-532f-4a36-80ed-cd5ad204716f' \\\r\n--header 'Content-Type: application/json' \\\r\n--header 'Authorization: Bearer ****' \\\r\n--data '{\r\n    \"scope\": [\"abha-login\",\"search-abha\",\"aadhaar-face-verify\"],\r\n    \"loginHint\": \"index\",\r\n    \"loginId\": \"<encrypted-index>\",\r\n    \"otpSystem\": \"aadhaar\",\r\n    \"txnId\":\"<txn-id-from-search-api-response>\"\r\n}' \r\n"
+			},
+			"response": []
+		},
+		{
+			"name": "VERIFY-FACE",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var verifyResponse = JSON.parse(responseBody);\r",
+							"\r",
+							"if(verifyResponse!=null && verifyResponse.token!=null)\r",
+							"    pm.environment.set(\"jwtToken\", verifyResponse.token);\r",
+							"\r",
+							"if(verifyResponse!=null && verifyResponse.refreshToken!=null)\r",
+							"    pm.collectionVariables.set(\"R-jwtToken\", verifyResponse.refreshToken);"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{AccessToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "REQUEST-ID",
+						"value": "{{$randomUUID}}",
+						"type": "text"
+					},
+					{
+						"key": "TIMESTAMP",
+						"value": "{{$isoTimestamp}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"scope\": [\r\n        \"abha-login\",\r\n        \"aadhaar-face-verify\"\r\n    ],\r\n    \"authData\": {\r\n        \"authMethods\": [\r\n            \"face\"\r\n        ],\r\n        \"face\": {\r\n            \"txnId\": \"{{txnId}}\",\r\n            \"faceAuthPid\": \"PFBpZERhdGE+PEN1c3RPcHRzPjxQYXJhbSBuYW1lPSJ0eG5JZCIgdmFsdWU9IjM3NTciLz48UGFyYW0gbmFtZT0idHhuU3RhdHVzIiB2YWx1ZT0iUElEX0NSRUFURUQiLz48UGFyYW0gbmFtZT0icmVzcG9uc2VDb2RlIiB2YWx1ZT0iY2NiZGMxODQtZjExNC00ZjNiLWEwMGYtMzk3YWQ5MzJlZWJkIi8+PFBhcmFtIG5hbWU9ImZhY2VSZFZlcnNpb25XaXRoRW52IiB2YWx1ZT0iMS4xLjEgIi8+PFBhcmFtIG5hbWU9ImNsaWVudENvbXB1dGVUaW1lIiB2YWx1ZT0iNDM5MiIvPjxQYXJhbSBuYW1lPSJzZXJ2ZXJDb21wdXRlVGltZSIgdmFsdWU9Ijg4Ii8+PFBhcmFtIG5hbWU9Im5ldHdvcmtMYXRlbmN5VGltZSIgdmFsdWU9IjMwMTkiLz48L0N1c3RPcHRzPjxEYXRhIHR5cGU9IlgiPk1qQXlOQzB4TUMwd01WUXhORG8xTlRvd012bmRUMlJvY0k2WHhRckNNSnZyTGQ5a2JtejZMY2wzTHA1b2RsbTN4RVByTGJQQkJnenI3UUVQSmp5RnJWbkVLak5jN3dCQ3JJQWdRdmp2R2hjdVBvUkZqS1JZaTdGbjg4ZVV5SkNPYTN5REpKZGxCRW1NdERVVVJEVnR4blowbmI3bE1BUktCYU55MXEvTFJ0Q3VLcGthbUNyQjJVekJzVFZCYU81RUNxVUlwNkZJNHY4SDRzVDB5VjVLN0N3cUszd0VXR1lpakQ0aFdCWkVLQUh6NU1MaXYvMFV5bCtuNHNQN3ppL2RsVGxXeG52U2pJSjVabkRtMEl4TFBFVC9aOG9jWERXUTRIVUVJVzd2eE5rbzZhVHVVdmY1RkNXaytCait5UFU0dUUwUEJwUU80NDZmYUo2bThUa3ZpelZlWUdRWnkzVTN0d3ZkSEswSEtIMWV1cWg1eWszaUJzVWg0VnAvWVdTa3BtK0FwVmdFWjR4WE1XeGduVWFvaWYweGsxL1FjNHhlUVQ5dkZUQ1c1cGk1WFV3MlFieHNPV1FUbEROUDdVOGR4b2dWMURWZUVpanZYZXVsZmVpZTlhY3lIUFFENk1FWnBibkxJVE9CTU91SWcyQUwzSmE2cDNXQVp0N0E1RWtvcUV0VEJaUHNuU3dqa1BHekVWc3RVbWEvRGlYYUxOYTdvc3NpTnNUOFFYcElUSlhhR1hxR0ZyUWtUc2RWUzA2T0czVmhyMjk3Q0s0RC9EN0hPRWhNTXZ6OU9SSnRBTDA1d0QrZEcyVWVRUHJram80K2pLMjh2djA2aTVVejJqZlRQQ0lOWWdqdE13aGxGZU5zSk9zb0VSTTdXYmdHOXdWWHNMTjU5U1duZXZ4Y2xuT1d5S1hFK0xiQjdGZjBtU1ZENXJyb1p4bEdZVDB4VEI3TmJxaWV0Z0FTRFByT1YralpPNytzTnpvcTh3VGJhWFBPNjZ2VUZRQnFzU3JSZlJSdUFYMVl4SUVxMDFNZ2xpNmZIZlZvVC8wMzFRbWNqRWMyVWd1TXlTZk0vVzRRYXBGTDBnclpTUEpiWVN2Q0w2ZGg3ZThPeFlNYlZ3YWg1Z2FhZmhZMjYzU1pWQ0F4cnFabE00dFNMUlVhTUhPRTlVWVlPZERNang3Q1J6eE1jNkEwOHRWQmZpcTBhNGErQ2JuRDlxK3ZPSWwvdEQ1c3Ywd0IrYTc2VnhWeE5Fa05FMUxEdUlJSUYvbW5Nbm14SkRidHV3VW9CcUZJbmxwK3NnRmczK2ZXYXowR2gwSllGSkdjZ1l3YXl2UXBnUEtrOHduTUxpMk5uTlVVWHpVZTdOV3VYbVZUSlk5ZzAwNFZWYVl2TG1IMDVLeVYxUk10SGUxVGJEM2dXbTMzY205NzU0bkZ1WU5KSVJZR0F1QmxIVWwxQUNhaFFxeStqWDNYNW8vM0ZuM2R5NHJuR01kRDNWNUlEUHNpbUJVUEtWeFEwdjZKUnphQkZVT2dQenFWMlc1emJ1RVFramtwVDlGUDlqUGV6Ykg3NDg2TlFTN1hDL0pvN090WjZzTWlOLzlaTEl6U0dFV1hYeEtGWWlVbEFGbnFUd3NkYWJkaEEvdnptOFIzcEpyb2ZWK2tCZHRobzUwY3lnL1ZaeGJtRkViWjNlcHRpVEZ4b2tsQmlVNEZ5STNYY0xzcWVMcWttS2MxUUpoZkgrOCt1RUIrc3cwSHhLMEhZWUh4VktLQTJqVllKQjgzczllOFNGZWdTN1JMRUVIdjA2S0FVMUIvQnEzSkdjZzhGQkJ0Ym1wQVZpUG15MUJQWjQwNi9POWhYYzNaN0tsME90cExNVXFNYkRzV2N3V0tBNW93R1hYS2tJZ2NuV0hqNDNNdk42ZTBSL2N3cVd3dFZrbDNTUTRaUzJuMDdPMFNaTzNYTTgvWFRPM2EzbjdFOHdMSG9QR0FSVDFtUHlwRVAzajhabWJ1WHp2QktGcU9lcFYwMEdINWJpd0JDVWZpTXpMaS9UN204K3YvMGlYdjNNZEJ6Smd4WXhTRVdScEh4ckE5dDBkaTIrcmpOMm9yVDRFY0ZuZnMybmI1bUZoeVYxbjkrS0hRU3EwN1lTdVNzSE5pMUdwaHZaN1hqTFd5Rm03RXpjUTNxbDMrTE9SbXV6YmxTeGFqbkdORU9NaStCRklxeDlnaGIvd2NhOGZIZ1VLU21vMTA5aWpOVGJBcVdCT2hhTEJlZTlNZC9tQTg4Zk5CWTJyQmliZ21OdnZYQjh3Qmd1RGRYa1pRZHRwM1N2SFREK3hheCt5aXNzZ2xUaUZaTFBZNGc4VmhzRGE3K2VwNG9oMGRHV01HS3F1b2oxR2dsYlkwUDgvUFVTV2hMVmwyeS9na2xjZnFRTVRhK0liQ3gzdFVYamdiZElCVUVqcXJqZCt5dS81YWgyUWxVNEMweWN6OEtIMWhXc0pHd1AxdU40czV5TmZUMmcvcDRSNCtvOUNHWDl2TitqcjFvYS9wTlJGOEsxaGxBd1RZYmhjZDJXcTNsY2V4UGErNmpuWUhQTmsvTlNxZjNQRlJ0T256ZDVvQThmTWtMdjZQR3VTcmdqVTFORE5nNDB3NlpPVDBXd3c3SVkweWFURnN3RDd3MHZwWHpnaGg4KzVxV1h6Lyt1RFZveGxaSk9VVnp2MXRTVUc1L2pYWTBCMWV5SnhVMVRIam43cElFekxwM2p5aitlVzA5Nzk0TldyNlVJWVhPdmNidmoxRzlXbmlMZFRsdkJhMHZYekhCaFFiOHdnSTNidjBzRnJhMWd1cWJEUVZueFJ1NTNNaGV4NG0wS3NveU5maktKUTgxRG84dWFLZ1pEK04xMGhLa2NzZHhtZWMvRlY2WGtldmswSEVETDIvS2pBYzRiajNMY29iczEyTUlSalIvcHd2UzN0ZFVnT3Z6RmtpMDBDSFdmd3Ixb0J1cG8xcnBxaEFmRHVyTEtzRXNXOGEyeWFtSlBvS1ZsL0ZqajhSK2FoQ2NPOURxOXZTNjFaWVFldURrWExabHMvTEhiWTBhUmtvV2FScitJMzJkc3l1b21lNzdiTUc1RHZJSFFmeDJ3Qm80U2oxaHhQL3Q0UjZ3RFRDV1RTUWxLUWVyMlFQRlBHWWxZR0svbktzQ3pqcEs4TFdDL1hKUm1SbVZpU0xxZ1hWWXprQzRhU2tLdDk3RnZFV05kWjFqdkhGd2ltSGxJYnR0ckRrZitRNHpDZ1lpQTRNT282bHJ6ZzVkaU9wSlVoK2FNaTh3bGlsbFBHcTd4cFhELzJPb2R2MWptYnlXbzR6ekFQcEZZd0V5RFNTZzRSc0EvOFBMcUlKUW8za2hTUnJrWkpMQnkvWjlwTkp2aTVsVXdna3hoMTdOS2hqZHRoT0diWGN5VTh1SThZTFYxdkp2aUhhMUV3MFJHWE9Fa1VualpTSmNITnZ6Vmh2Y2lHNDB0M0p1NDYxd3VjUDRJa05jYTFmcTlCNFlIN0F1cTJqZElvdHFrMEIrVkZKVlNiVUhwalJoa09oR2VQMDdEOFVTQ1pKaEJJV05MRGtoOTNnbW0xT0dtdjdxSWZiM3UzdVRhYnFFdDRiZUUvMG01cXRXOWxwdkR3Qk9xU296NmxUVW9ocnhKbnpsazd2MS9YYllFc0NhMzFxZ1RzWG53b0ZYNzdLTVNoWnVzcTlWZ0xNTytZUkMxczNNZlBGZVNpV2JUM1o5VkM4ZUtQQXJnU3pRTFpMTUtoTm42UUptUjRMbGFQSGVVbCtyeVJBZVRsMkk1Mk5oOUtUUmRiRDMvZEZVRDBCVnF3cFBnK2dGaDlQMjVjblJzSWZwc3RVaE9IVzFJbndYWHJNZW5LOGMzRDlwdVJTV2swT3hCWTRpNk51eWJiTjdVMk9MNGxKU3NMWW9DdmFCNHg2ZW4wRTlaQTM3M1F6SnJSOWR4dFRMbExpY0VGMFFLdHNTSlIyaXQ5Qmo1ZEQ4ZXEzbzdSUXRjQWM2MUhod25aZEVZT3Z2YVkrSy8vbE94VkdVVi9uTFl1VUs2bkY2UGp2L0dGNVRKRTd5ai8zbm9BK3VBVnB4a29nOVpCUFdqTm1NM044RzEwc05NU0VJMHRjL1NVYUszZHRMdmxRMnhLMUxCZG5HVVc1N3ZHaWtkVElURjdEdWxWM3QyNm01R0NRNHBiSVp2TEJuSU9XLzZSdWU0cStYMzJMOVgrN0hYVkEzUHpLWmpWd2ZWTUtaV2JuVzQwM1BEUTdkN3d2Tm1zWUpFRnZOOXJUSFFpQXZwVTkrZnh5WFdtWTlhU09uaElNK0JCV3BKZU9lVmZCM2ZzeEdOeWtWNnJCOG5OdzJGWWNwdkxZSHo4c3lZRXJOalB2UE1kRWV1K2l6VklsN1JUQlR0ZmFoRC9IM1YvN2FUTHl2UHVtSHZjOFJtZm5leXB1TnJtb0hwS1BoZWxad1NadFpFV3RDTjVOcDhmeWhqaHdJVXN4eWh0MlNpZ3ZaZVNJbWdDekxhZlVKWWZXVEV5cCtIRVdrb1pGWXl1bHNjWDd0VTZIeEUraVhzNHU5VGJGOVZWb1RMc1pRZm1qVjkzdVRpaHJhSlBXdEVWdHJQODdlUzRzdkNoVFcwdFNuZDlqMXdKa1BPZWRORnNzOFRqcWc4SHNuS056K1ZadU9OUE5maFlTOUJ4SDd3NFdCOGJZYWRHUmlINThKckJqKzZvdDNTVEt3enZwWXpJMnVnMldOVGJFUzRWREdKU1pXRGVpd2tDcDJtakRlanhib3JMTHVNbzdhQ0tsMFFSN3VNTDVvTWFtUW0yTUd6RkM3TDltYnA2Z3hEZlllUVI0SG9oTjRLZkRPMWloQWtrWlhBMkJ2RnZFMVFxUitvNXNVUVQ0THplSCtwNnlWa003Q0ZzU2hMQzROSXpRSTRoY1ZEYkp2SHZNdmJ1c25DZmZYN2xrbVN3SGJzUlZrOXZuU0o0Q1o1N2tSQmMzQ0VtbFcxcGdSV3VTZFRLV0hWYnhkSDhKclNkWWdrZkxjdkZ4aklOSXY1S1U2eit6M2c0MFJLSXFhQThUVEVXNkRmMW9GR3hXbWJTNkFaTUhrRVgxUkpORWxiMXpmNWs1ME8xSWNyaytzWG1CaG56SHFYVVpHcFJGZjVKbU1ZOTM2aXdGMGF4QTdIZmRHZXEwa1FFQzFwbis2OWZHWUtpUmZOK3BXVkVGOUZkK3dDMTM3MjQwUTV2K2JqMGhHWmV1RlBKN0pJbjhtalVkUFd3SENZK3B0MXZ1OC8ySkY4MDRyRUZXY1ZxOWZ0bnZtWkZMc2E3U2IwbUNtSXhrb3NpSitlSWJicG9DSFRNd29vQmJvaUM5aG01N0ZhOGtiS0NNeHdKbzR2angvdzZZb21kdUpJYXRoaFg2NEJwc1I2MDNGeE9ucVpCV2pLL1didHhoUW5Md3o4em5ZZWpUZllwTUJIV2l5UFNSOEtKTUhzZU5PaVV5dVZLRk10bEYxd1BQZmlEUkdrMVpNYU8zaVR2SmY0RkMwNVhpc1dNM3FySkJST3VrNVJlZ3BPUVFpZVZkb202elZ0dkxCMGQ4MFA0bG1tenlUaytGcTZPaVMzNG5IRGlTdVFzMHVkZkxVY2pnTlFBRWtjT1BaeHFBeW5jdGh3bUxVdEEybFBYdjhTN0Y1bHJpbkNRY2N6aWs5UkhobitXVmVXaVlab0FTZzlqbGVZYjJVc3RyRjVoRzZNWXpPSGE1Tmp2WThQVmwxb1pSUEhqMXlrdFN3dnNXMGtwekJQNkVmS0l6UU01Kzd4M3JVUnlGcjBDTWZ3V21SWkh5M2gvYUlSTWY1UFBJcTY0U3RMZDl6MjFtU3JyNVJqTWtKcmNvUmdOanFkK1Vidys5QXhvQ09MQUNJYWlvQWlJNTVVcW5oTDRCMktxc2VMYms5cldJdDRpbktscHduQy9nV25mRGF0eEJNVG1UM1MrZUVpVml6REJZMW1wTENYd0JHbk1neVU5ZEFMVWptNzlnOEhFM2hkakdQR1VJRnlKQUNBa2QxZz09PC9EYXRhPjxEZXZpY2VJbmZvIGRjPSI2YTM0YjRhYS0yNDQ2LTRlM2YtODY0YS03YWM0OTE0N2FmZTQiIGRwSWQ9IlVJREFJLlVJREFJIiBtYz0iTUlJRHJEQ0NBcFNnQXdJQkFnSUVGdVNiYURBTkJna3Foa2lHOXcwQkFRc0ZBRENCaGpFTE1Ba0dBMVVFQmhNQ1NVNHhFakFRQmdOVkJBZ1RDVXRoY201aGRHRnJZVEVTTUJBR0ExVUVCeE1KUW1GdVoyRnNiM0psTVJzd0dRWURWUVFLRXhKVlNVUkJTU0JHUVVORklFRkJSRWhCUVZJeEdEQVdCZ05WQkFzVEQwWmhZMlVnUVdGa2FHRmhjaUJFVURFWU1CWUdBMVVFQXhNUFJtRmpaU0JCWVdSb1lXRnlJRVJRTUI0WERUSTBNRFF5TkRFME5ESTFORm9YRFRJMU1EUXlOREUwTkRJMU5Gb3dnWVl4R0RBV0JnTlZCQU1URDBaaFkyVWdRV0ZrYUdGaGNpQk5RekVZTUJZR0ExVUVDeE1QUm1GalpTQkJZV1JvWVdGeUlFMURNUnN3R1FZRFZRUUtFeEpWU1VSQlNTQkdRVU5GSUVGQlJFaEJRVkl4RWpBUUJnTlZCQWNUQ1VKaGJtZGhiRzl5WlRFU01CQUdBMVVFQ0JNSlMyRnlibUYwWVd0aE1Rc3dDUVlEVlFRR0V3SkpUakNDQVNJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFKcEZvcHRRWi9nV2FoYTloQllaTXA3b1NZeTBsZUVTNWZLMkx3ZkRaM3docE14eVVUSTRIeUVsbVJKVmFRbVFnS1R5L010NHFoUU10L0hoSWdlQWpqM1NBMXN1dG9Fa1lCWVRpTHlQSERwTkNiQ1JZd1Uwb0E4TTJNaEVSeTdXTTVmd2FBMGtLRkJnWmNuTW1nTG5pNFYzUi9JMWhlbnVvVFI3YnNtaE5Jc2l5MmdBQUZITnpyVjNENW5tL0VWM0M0R0tsaTRQekJYSjlnK2xUdi9RcFoxK0dFcGZFQ0VQUXFFeXFLZXpjbDZlTUozQWV1Vk1zNGJHb3BZYXM1eFJwcEdoZko2cFViTVhlcCtZcElmNXZuZ0dZTlJIbVlDSWtlcVFqSS9uWUNDV3pKWDdid2NTK0gxcmtrUXVGYmFEcHFwbEpWc29Bd2J6SUpyWm9rVFc0TnNDQXdFQUFhTWdNQjR3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFMQmdOVkhROEVCQU1DQmFBd0RRWUpLb1pJaHZjTkFRRUxCUUFEZ2dFQkFIaHFQOUZ4WDZjMktQa1ZrYUlBQTg0N2ZtLysrdWFPZ3RjUXRCbkg1SkxhVzBlYkh1RWtvOG9oWk9VemFQUjdNUHZQVWlvUTV4YmVCdm5ZQXRWQjgyb3FvSHdJQlZCL3JYZ3pWZGJmYitSaWk2UHdYNnN4QlRmS3JMM1MwdUo4WGpaZ0tsQmdTRW9MN2hFajZTdnI3K09NOGkrKzdIQXQxZkFRa1FrcEV6cE4rdjZEem9MaTMzOURYQ1B0YThCWVVveTFsR3B1QU1VRXh1MjlPNE1TZFM0S2I1SmdQZXZFQVoxOWh5UDZnY1JaU3pOSkVld0NUTkszdkxBTHZZTTZicG91TFI4ZFJneVZ4bFNTMXMxWlBXWldSeEd5OHg3Szc3QUVrWTFEOVBBdjZHMHJJeEhUTkh2NzBtSUJ2WENEUGFXZ0ZNYXFSZ1VGOW5zQjRFdHNqNlk9IiBtaT0iVUlEQUkuT05MSU5FIiByZHNJZD0iVUlEQUkuT05MSU5FLjAwMSIgcmRzVmVyPSIxLjAuMCI+PEFkZGl0aW9uYWxfSW5mby8+PC9EZXZpY2VJbmZvPjxIbWFjPjBZYUQ1NEQwSnlhZmVVd0RCaWRXOU9nS2xORHJGRC9iWkVERFp3aE1zUC9FYWY5c1pxenQ1SlpFWUdNazlYalA8L0htYWM+PFJlc3AgZXJyQ29kZT0iMCIgZkNvdW50PSIwIiBmVHlwZT0iMCIgaUNvdW50PSIwIiBpVHlwZT0iMCIgbm1Qb2ludHM9IjAiIHBDb3VudD0iMSIgcFR5cGU9IjMiIHFTY29yZT0iLTEiLz48U2tleSBjaT0iMjAyNTA5MjMiPkorS3pJK1VCM2hpSVBzYTdFa05zdDNQRjhCOGY3c2NyM2plUmE0bHpNb1VOd3pzNEdVMFQxdnRjV1BQZldPb0p0OWRWWGQrWnhLUzBHV3JUa0RISXdPdmpwci9LWDNadFlsQ2RQZnRrd1I2VmsyQmlLdHdVMEM3WUUvVXJxSlVHczgxTFdqQjZjZmZKTS9aenByUUJwMVRQdHlSYklIY0FEUm9MRHdweTNGUDAyaHNvbzN0dzllQTZwSTBzTXNlNVRKMzFBaHE4MGRJN0huTWx3c3FRcnlURXl3eW1Jd2dYQ0lNNVVpVW1XNUhwdTJDT0FGSXZEM3I2ajdCYTBZSzNCUVB4NEk3bVlSVVlPZ1hZY1FrOEM2TnA4VlpOL0VYTTN1RUx0eUtLKzJxRXZ1R3ozVmZNR2krOHdGdCtUbmZNclBGQzRpZkRDWmhWYXZicjlPaGFhdz09PC9Ta2V5PjwvUGlkRGF0YT4=\"\r\n        }\r\n    }\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://abhasbx.abdm.gov.in/abha/api/v3/profile/login/verify",
+					"protocol": "https",
+					"host": [
+						"abhasbx",
+						"abdm",
+						"gov",
+						"in"
+					],
+					"path": [
+						"abha",
+						"api",
+						"v3",
+						"profile",
+						"login",
+						"verify"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

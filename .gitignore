@@ -75,3 +75,6 @@ skill-output/
 
 # CDK synth output
 cdk.out/
+
+# Official ABDM reference docs (local only, never committed — see AGENTS.md)
+docs/abdm-official/

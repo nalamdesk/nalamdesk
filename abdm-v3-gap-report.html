@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ABDM v3 Gap Report — NalamDesk</title>
+<style>
+  :root { --bg:#0b1220; --card:#111a2e; --fg:#e6ecf5; --muted:#9aa7c0; --accent:#4f8cff; --good:#2ecc71; --warn:#f1c40f; --bad:#e74c3c; --border:#1f2a44; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--fg); line-height:1.55; }
+  header { padding:2rem 2.5rem; border-bottom:1px solid var(--border); background:linear-gradient(135deg,#111a2e,#0b1220); }
+  header h1 { margin:0 0 .4rem; font-size:1.9rem; }
+  header p { margin:0; color:var(--muted); }
+  main { max-width:1100px; margin:0 auto; padding:2rem 2.5rem; }
+  section { margin-bottom:2.5rem; }
+  h2 { border-left:4px solid var(--accent); padding-left:.75rem; margin-top:0; }
+  h3 { color:var(--accent); margin-top:1.5rem; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:1.25rem 1.5rem; margin-bottom:1rem; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th, td { text-align:left; padding:.6rem .75rem; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; background:#0e1628; }
+  .badge { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.75rem; font-weight:600; }
+  .good { background:#1e3a2a; color:var(--good); }
+  .warn { background:#3a331e; color:var(--warn); }
+  .bad  { background:#3a1e1e; color:var(--bad); }
+  ul { padding-left:1.25rem; }
+  code { background:#0e1628; padding:.1rem .35rem; border-radius:4px; font-size:.85em; }
+  footer { padding:1.5rem 2.5rem; color:var(--muted); border-top:1px solid var(--border); font-size:.85rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ABDM v3 Gap &amp; Defect Report</h1>
+  <p>NalamDesk (desktop + cloud) — validated against ABDM v3 sandbox docs, the Nirmitee v3 Postman collection, and NHA functional test-case workbooks (M1/M2/M3). M4 (NHCX) out of scope.</p>
+</header>
+<main>
+
+<section>
+  <h2>Top defects</h2>
+  <div class="card">
+    <ol>
+      <li><span class="badge bad">DEFECT</span> ABHA card fetch uses wrong path+method: <code>GET /v3/profile/account/abha-card</code> vs v3 <code>POST /v3/profile/account/getAbhaCard</code>. Allowlist only permits the GET variant, so the live call is rejected before the vendor token attaches.</li>
+      <li><span class="badge bad">DEFECT</span> ABHA enrollment paths do not match v3: service uses <code>enrol/byMobile</code> and <code>enrol/verify</code>; v3 uses <code>enrol/byAbdm</code>. <code>enrol/byAbdm</code> is never called.</li>
+      <li><span class="badge bad">DEFECT</span> HIP callback paths are v0.5-era: <code>/api/v3/hip/token/on-generate-token</code> and <code>/api/v3/link/on_carecontext</code> are not in the v3 callback set, so HIP-initiated linking may silently never complete.</li>
+      <li><span class="badge warn">GAP</span> Allowlist missing v3 endpoints: <code>/hip/v3/link/patient/links/sms/notify2</code> (M2) and <code>GET /gateway/v3/bridge/getServices</code> (M2).</li>
+      <li><span class="badge warn">GAP</span> HIU uses a non-v3 callback path: <code>/api/v3/hiu/health-information/on-request</code> is not part of the v3 inbound set (likely dead code).</li>
+      <li><span class="badge warn">GAP</span> Scan-and-share reply shape and endpoint marked 403 in sandbox (WSO2 issue) — implementation not validated live.</li>
+      <li><span class="badge warn">GAP</span> All paths carry "reconfirm against sandbox" TODOs (#152); the mock responder masks path drift.</li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <h2>M1 — ABHA (AbdmAbhaService)</h2>
+  <table>
+    <tr><th>Area</th><th>Implementation</th><th>v3 expectation</th><th>Status</th></tr>
+    <tr><td>Session</td><td>relay /abdm/abha/…</td><td>/gateway/v3/sessions</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>Enrol OTP</td><td>/v3/enrollment/request/otp</td><td>/v3/enrollment/request/otp</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>Enrol by Aadhaar</td><td>/v3/enrollment/enrol/byAadhaar</td><td>/v3/enrollment/enrol/byAadhaar</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>Enrol by ABDM</td><td>not implemented</td><td>/v3/enrollment/enrol/byAbdm</td><td><span class="badge bad">GAP</span></td></tr>
+    <tr><td>Enrol by mobile</td><td>/v3/enrollment/enrol/byMobile</td><td>not in v3</td><td><span class="badge warn">LEGACY</span></td></tr>
+    <tr><td>Enrol verify</td><td>/v3/enrollment/enrol/verify</td><td>not in v3</td><td><span class="badge warn">LEGACY</span></td></tr>
+    <tr><td>Login request OTP</td><td>/v3/profile/login/request/otp</td><td>/v3/profile/login/request/otp</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>Login verify</td><td>/v3/profile/login/verify</td><td>/v3/profile/login/verify</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>Account verify</td><td>/v3/profile/account/verify</td><td>not in v3</td><td><span class="badge warn">EXTRA</span></td></tr>
+    <tr><td>ABHA card</td><td>GET /v3/profile/account/abha-card</td><td>POST /v3/profile/account/getAbhaCard</td><td><span class="badge bad">DEFECT</span></td></tr>
+    <tr><td>Public cert</td><td>GET /v3/profile/public/certificate</td><td>(not in collection)</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>ABHA address suggestion</td><td>not implemented</td><td>/v3/enrollment/enrol/suggestion, /abha-address</td><td><span class="badge warn">GAP</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>M2 — HIP (HipService)</h2>
+  <h3>Inbound callbacks</h3>
+  <p>discover, link init, link confirm, consent notify, health-information request, patient share — all match v3 inbound paths. <span class="badge good">OK</span></p>
+  <h3>Outbound calls</h3>
+  <table>
+    <tr><th>Call</th><th>Implementation</th><th>v3</th><th>Allowlisted</th><th>Status</th></tr>
+    <tr><td>on-discover</td><td>/user-initiated-linking/v3/patient/care-context/on-discover</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>on-init</td><td>/user-initiated-linking/v3/link/care-context/on-init</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>on-confirm</td><td>/user-initiated-linking/v3/link/care-context/on-confirm</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>consent on-notify</td><td>/consent/v3/request/hip/on-notify</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>health-info on-request</td><td>/data-flow/v3/health-information/hip/on-request</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>health-info notify</td><td>/data-flow/v3/health-information/notify</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>patient-share on-share</td><td>/patient-share/v3/on-share</td><td>same</td><td>yes (M1)</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>generate-token</td><td>/v3/token/generate-token</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>link carecontext</td><td>/hip/v3/link/carecontext</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>link context notify</td><td>/hip/v3/link/context/notify</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>link sms notify2</td><td>not implemented</td><td>/hip/v3/link/patient/links/sms/notify2</td><td>no</td><td><span class="badge bad">GAP</span></td></tr>
+    <tr><td>bridge getServices</td><td>not implemented</td><td>GET /gateway/v3/bridge/getServices</td><td>no</td><td><span class="badge bad">GAP</span></td></tr>
+  </table>
+  <h3>Legacy / v0.5 handlers (possibly dead)</h3>
+  <ul>
+    <li><code>/api/v3/hip/token/on-generate-token</code></li>
+    <li><code>/api/v3/link/on_carecontext</code></li>
+  </ul>
+  <p>Fidelius data transfer pushes one page per care context with MD5 checksum, HTTPS-only public host, 30s timeout — matches v3 shape. Max 100 records per push enforced. <span class="badge good">OK</span></p>
+</section>
+
+<section>
+  <h2>M3 — HIU (HiuService)</h2>
+  <h3>Inbound callbacks</h3>
+  <p>on-init, on-fetch, on-request handled; v3 inbound set also includes on-status. <code>/api/v3/hiu/consent/request/on-status</code> is not explicitly handled (status arrives via consent notify). <span class="badge warn">VERIFY</span></p>
+  <p><code>HIU_ON_REQUEST_PATH</code> (<code>/api/v3/hiu/health-information/on-request</code>) is not in the v3 inbound set — likely dead code. <span class="badge warn">DEAD?</span></p>
+  <h3>Outbound calls</h3>
+  <table>
+    <tr><th>Call</th><th>Implementation</th><th>v3</th><th>Allowlisted</th><th>Status</th></tr>
+    <tr><td>consent init</td><td>/consent/v3/request/init</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>consent status</td><td>not called (uses notify)</td><td>/consent/v3/request/status</td><td>yes</td><td><span class="badge warn">GAP</span></td></tr>
+    <tr><td>consent fetch</td><td>/consent/v3/fetch</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+    <tr><td>data-flow request</td><td>/data-flow/v3/health-information/request</td><td>same</td><td>yes</td><td><span class="badge good">OK</span></td></tr>
+  </table>
+  <p>Data-push decryption supports both <code>{ requestId, records }</code> and <code>{ transactionId, keyMaterial, entries }</code>; consent-gated storage enforced; 30-day retention. <span class="badge good">OK</span></p>
+</section>
+
+<section>
+  <h2>Cross-cutting</h2>
+  <ul>
+    <li>Relay allowlist gaps listed above; callback path regex allows up to 8 segments. <span class="badge good">OK</span></li>
+    <li>FHIR serializer: HPR/HFR system URLs marked "reconfirm against ABDM docs". <span class="badge warn">TODO</span></li>
+    <li>Mailbox processor: request-id dedupe, no retry on failure (by design). <span class="badge good">OK</span></li>
+    <li>Scan-and-share token expiry 15 min. <span class="badge good">OK</span></li>
+  </ul>
+</section>
+
+<section>
+  <h2>Test-suite improvements</h2>
+  <ul>
+    <li>Path/method contract tests asserting each service call matches the v3 Postman path.</li>
+    <li>Negative tests for the allowlist (non-allowlisted paths refused by <code>resolveRoute</code>).</li>
+    <li>M1: tests for <code>enrol/byAbdm</code>, suggested ABHA address, card fetch via <code>getAbhaCard</code>.</li>
+    <li>M2: tests for HIP-initiated linking SMS notify and bridge getServices.</li>
+    <li>M3: test for on-status callback handling and the consent status endpoint.</li>
+    <li>Integration-style tests using Postman collection payloads as fixtures.</li>
+    <li>FHIR: validate generated bundles against ABDM's FHIR validator.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Recommended next actions</h2>
+  <ol>
+    <li>Fix <code>AbdmAbhaService</code>: <code>abha-card</code> → <code>getAbhaCard</code> (POST); add <code>enrol/byAbdm</code>; gate <code>byMobile</code>/<code>enrol/verify</code>.</li>
+    <li>Reconfirm/rename <code>HipService</code> legacy callback paths.</li>
+    <li>Add missing allowlist entries or document exclusions.</li>
+    <li>Handle <code>/api/v3/hiu/consent/request/on-status</code> or confirm notify covers it.</li>
+    <li>Add path-contract tests to prevent drift.</li>
+    <li>Run against sandbox with real credentials to close #152.</li>
+  </ol>
+</section>
+
+</main>
+<footer>NalamDesk ABDM v3 validation — generated 2026-10-26. Sources: sandbox.abdm.gov.in, Nirmitee v3 Postman collection, NHA test-case workbooks.</footer>
+</body>
+</html>

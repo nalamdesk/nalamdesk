@@ -11,6 +11,13 @@ export interface AbdmOtpRequest {
     identifier: string;
 }
 
+export interface AbdmEnrolConfirm {
+    /** Mobile-update verify uses auth/byAbdm; default Aadhaar enrol uses byAadhaar. */
+    via?: 'byAadhaar' | 'byAbdm';
+    txnId: string;
+    otp: string;
+}
+
 export interface AbdmCard {
     abhaAddress: string;
     name: string;
@@ -21,17 +28,26 @@ export interface AbdmCard {
     mock: boolean;
 }
 
-// Endpoint paths follow the ABDM sandbox layout referenced from the M1 plan.
-// Reconfirm each path against the live gateway docs when real credentials land;
-// the mock responder below mirrors these shapes either way.
+// Endpoint paths follow the official ABDM v3 sandbox docs and Postman
+// collection (M1_ABHA_V3_AP_Is + Milestone_1_Postman_Collection_18_08_2025).
+// Strict v3 only; no v0.5/v1/v2 or third-party routes.
 const PATHS = {
+    enrolRequestOtp: '/v3/enrollment/request/otp',
     enrolByAadhaar: '/v3/enrollment/enrol/byAadhaar',
-    enrolByMobile: '/v3/enrollment/enrol/byMobile',
-    enrolVerify: '/v3/enrollment/enrol/verify',
+    enrolAuthByAbdm: '/v3/enrollment/auth/byAbdm',
+    enrolByDocument: '/v3/enrollment/enrol/byDocument',
+    enrolSuggestion: '/v3/enrollment/enrol/suggestion',
+    enrolAbhaAddress: '/v3/enrollment/enrol/abha-address',
     loginRequestOtp: '/v3/profile/login/request/otp',
     loginVerify: '/v3/profile/login/verify',
+    loginVerifyUser: '/v3/profile/login/verify/user',
+    loginSearch: '/v3/profile/login/search',
     verifyAbha: '/v3/profile/account/verify',
+    profileAccount: '/v3/profile/account',
+    profileQrCode: '/v3/profile/account/qrCode',
     abhaCard: '/v3/profile/account/abha-card',
+    profileRequestOtp: '/v3/profile/account/request/otp',
+    abhaSearch: '/v3/profile/account/abha/search',
     // ABHA public key for encrypting Aadhaar, mobile, login IDs and OTPs.
     authCert: '/v3/profile/public/certificate'
 };
@@ -104,7 +120,7 @@ export class AbdmAbhaService {
         return pem;
     }
 
-    /** Starts enrollment: sends an OTP for an Aadhaar number or mobile number. */
+    /** Starts enrollment: sends an OTP for an Aadhaar number or mobile number (v3 request/otp). */
     async requestEnrollmentOtp(request: AbdmOtpRequest): Promise<{ txnId: string; mock: boolean; hint?: string }> {
         const via = request?.via === 'mobile' ? 'mobile' : 'aadhaar';
         const identifier = String(request?.identifier || '').replace(/\D/g, '');
@@ -114,7 +130,7 @@ export class AbdmAbhaService {
         if (via === 'mobile' && (identifier.length < 10 || identifier.length > 15)) {
             throw new Error('Mobile number must be 10 to 15 digits.');
         }
-        const path = via === 'mobile' ? PATHS.enrolByMobile : PATHS.enrolByAadhaar;
+        const path = PATHS.enrolRequestOtp;
         // Live identifiers travel RSA-encrypted; mock traffic stays plaintext.
         // The session is resolved once so the decision and the request agree.
         const field = via === 'mobile' ? 'mobile' : 'aadhaar';
@@ -129,11 +145,19 @@ export class AbdmAbhaService {
     }
 
     /** Verifies the enrollment OTP; returns the created health ID and name. */
-    async confirmEnrollmentOtp(txnId: string, otp: string): Promise<{ abhaAddress: string; name: string; mock: boolean }> {
-        if (!String(txnId || '').trim()) throw new Error('Enrollment transaction is missing. Request a new code.');
-        const code = String(otp || '').replace(/\D/g, '');
+    async confirmEnrollmentOtp(txnId: string, otp: string): Promise<{ abhaAddress: string; name: string; mock: boolean }>;
+    async confirmEnrollmentOtp(input: AbdmEnrolConfirm): Promise<{ abhaAddress: string; name: string; mock: boolean }>;
+    async confirmEnrollmentOtp(txnIdOrInput: string | AbdmEnrolConfirm, otp?: string): Promise<{ abhaAddress: string; name: string; mock: boolean }> {
+        const input: AbdmEnrolConfirm = typeof txnIdOrInput === 'string'
+            ? { txnId: txnIdOrInput, otp: otp ?? '' }
+            : txnIdOrInput;
+        const via = input?.via === 'byAbdm' ? 'byAbdm' : 'byAadhaar';
+        const txnId = String(input?.txnId || '').trim();
+        if (!txnId) throw new Error('Enrollment transaction is missing. Request a new code.');
+        const code = String(input?.otp || '').replace(/\D/g, '');
         if (code.length !== 6) throw new Error('The 6-digit code is required.');
-        const { json, mock } = await this.authorized(PATHS.enrolVerify, { txnId, otp: code });
+        const path = via === 'byAbdm' ? PATHS.enrolAuthByAbdm : PATHS.enrolByAadhaar;
+        const { json, mock } = await this.authorized(path, { txnId, otp: code });
         const abhaAddress = String(json?.abhaAddress || json?.abha_address || '').trim();
         if (!abhaAddress) throw new Error('ABDM could not create the health ID. Please retry.');
         return { abhaAddress, name: String(json?.name || '').trim(), mock };
@@ -210,6 +234,71 @@ export class AbdmAbhaService {
         return { exists: true, name: String(json?.name || '').trim(), mock };
     }
 
+    /** Fetches the address suggestions offered during enrollment (v3 suggestion). */
+    async suggestAbhaAddresses(): Promise<{ suggestions: string[]; mock: boolean }> {
+        const { json, mock } = await this.authorized(PATHS.enrolSuggestion, null, 'GET');
+        const list = Array.isArray(json?.abhaAddresses) ? json.abhaAddresses
+            : Array.isArray(json?.suggestions) ? json.suggestions
+            : Array.isArray(json) ? json : [];
+        return { suggestions: list.map((s: unknown) => String(s ?? '').trim()).filter(Boolean), mock };
+    }
+
+    /** Registers the chosen ABHA address for the enrollment transaction (v3 abha-address). */
+    async setEnrolAbhaAddress(txnId: string, abhaAddress: string): Promise<{ mock: boolean }> {
+        if (!String(txnId || '').trim()) throw new Error('Enrollment transaction is missing. Request a new code.');
+        const address = String(abhaAddress || '').trim();
+        if (!address) throw new Error('ABHA address is required.');
+        const { mock } = await this.authorized(PATHS.enrolAbhaAddress, { txnId: txnId.trim(), abhaAddress: address });
+        return { mock };
+    }
+
+    /** Finds ABHA records matching the given identifiers (v3 abha/search). */
+    async searchAbha(criteria: Record<string, string>): Promise<{ results: any[]; mock: boolean }> {
+        const { json, mock } = await this.authorized(PATHS.abhaSearch, criteria || {});
+        const results = Array.isArray(json?.results) ? json.results
+            : Array.isArray(json?.abhaProfiles) ? json.abhaProfiles
+            : Array.isArray(json) ? json : [];
+        return { results, mock };
+    }
+
+    /** Reads the profile for the logged-in session token (v3 profile/account). */
+    async getProfile(): Promise<{ profile: any; mock: boolean }> {
+        const { json, mock } = await this.authorized(PATHS.profileAccount, null, 'GET');
+        return { profile: json, mock };
+    }
+
+    /** Fetches the QR code payload for the logged-in profile (v3 qrCode). */
+    async getQrCode(): Promise<{ qrCode: string | null; mock: boolean }> {
+        const { json, mock } = await this.authorized(PATHS.profileQrCode, null, 'GET');
+        const qr = json?.qrCode ?? json?.qr_code ?? json?.qr ?? null;
+        return { qrCode: typeof qr === 'string' && qr ? qr : null, mock };
+    }
+
+    /** Sends a profile OTP for email/mobile update, re-KYC, password or delete flows (v3 account/request/otp). */
+    async requestProfileOtp(purpose: string): Promise<{ txnId: string; mock: boolean }> {
+        const { json, mock } = await this.authorized(PATHS.profileRequestOtp, { purpose: String(purpose || '').trim() || 'update' });
+        const txnId = String(json?.txnId || json?.txn_id || '');
+        if (!txnId) throw new Error('ABDM did not return a transaction.');
+        return { txnId, mock };
+    }
+
+    /** Searches login auth methods before an address login (v3 login/search). */
+    async searchLoginMethods(query: Record<string, string>): Promise<{ methods: any; mock: boolean }> {
+        const { json, mock } = await this.authorized(PATHS.loginSearch, query || {});
+        return { methods: json, mock };
+    }
+
+    /** Verifies a login OTP for a secondary user of the same device (v3 login/verify/user). */
+    async verifySecondaryUser(txnId: string, otp: string): Promise<{ abhaAddress: string; name: string; mock: boolean }> {
+        if (!String(txnId || '').trim()) throw new Error('Login transaction is missing. Request a new code.');
+        const code = String(otp || '').replace(/\D/g, '');
+        if (code.length !== 6) throw new Error('The 6-digit code is required.');
+        const { json, mock } = await this.authorized(PATHS.loginVerifyUser, { txnId: txnId.trim(), otp: code });
+        const abhaAddress = String(json?.abhaAddress || json?.abha_address || '').trim();
+        if (!abhaAddress) throw new Error('ABDM could not verify the health ID. Please retry.');
+        return { abhaAddress, name: String(json?.name || '').trim(), mock };
+    }
+
     /** Fetches the printable health ID card for a verified address. */
     async getCard(abhaAddress: string): Promise<AbdmCard> {
         const address = String(abhaAddress || '').trim();
@@ -230,12 +319,33 @@ export class AbdmAbhaService {
     // demo values derived from the transaction so repeated calls agree.
     private mockRespond(path: string, body: any): any {
         const now = this.nowMs();
-        if (path === PATHS.enrolByAadhaar || path === PATHS.enrolByMobile) {
+        if (path === PATHS.enrolRequestOtp) {
             return { txnId: `mock-txn-${now}` };
         }
-        if (path === PATHS.enrolVerify) {
+        if (path === PATHS.enrolByAadhaar || path === PATHS.enrolAuthByAbdm) {
             const tail = String(body?.txnId || now).slice(-4);
             return { abhaAddress: `demo.patient${tail}@sbx`, name: 'Demo Patient' };
+        }
+        if (path === PATHS.enrolSuggestion) {
+            return { abhaAddresses: ['demo.patient@sbx', 'demo.patient1@sbx'] };
+        }
+        if (path === PATHS.enrolAbhaAddress) {
+            return { success: true };
+        }
+        if (path === PATHS.abhaSearch || path === PATHS.loginSearch) {
+            return { results: [{ abhaAddress: 'demo.patient@sbx', name: 'Demo Patient' }] };
+        }
+        if (path === PATHS.profileAccount) {
+            return { abhaAddress: 'demo.patient@sbx', name: 'Demo Patient' };
+        }
+        if (path === PATHS.profileQrCode) {
+            return { qrCode: 'mock-qr-payload' };
+        }
+        if (path === PATHS.profileRequestOtp) {
+            return { txnId: `mock-profile-${now}` };
+        }
+        if (path === PATHS.loginVerifyUser) {
+            return { abhaAddress: 'demo.patient@sbx', name: 'Demo Patient' };
         }
         if (path === PATHS.loginRequestOtp) {
             return { txnId: `mock-login-${now}` };

@@ -420,7 +420,7 @@ it('applies a status callback to the matching consent request', async () => {
 
     it('returns null for an on-status callback with no matching consent', () => {
         const { svc } = live();
-        expect(svc.applyCallback(HIU_ON_STATUS_PATH, { consentRequest: { id: 'unknown', status: 'GRANTED' } })).toBeNull();
+        expect(() => svc.applyCallback(HIU_ON_STATUS_PATH, { consentRequest: { id: 'unknown', status: 'GRANTED' } })).toThrow('not found');
     });
 
     it('marks a request the consent manager refused, and fails an on-init it does not know', async () => {

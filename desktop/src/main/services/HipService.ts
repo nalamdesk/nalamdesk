@@ -9,8 +9,8 @@ import { FideliusService, parseKeyMaterial, type FideliusKeyMaterial } from './F
 // callbacks reach it through the relay's mailbox; answers go back through
 // the relay. Records go straight to the requesting HIU's data push URL,
 // Fidelius-encrypted to its key, with no relay in between. Paths and bodies
-// follow the public ABDM v3 docs; reconfirm them against the sandbox once
-// credentials land (#152).
+// follow the official ABDM v3 M2 document (M2_Document_16_02_2026) and the
+// official Postman collections; strict v3 only.
 
 export const HIP_DISCOVER_PATH = '/api/v3/hip/patient/care-context/discover';
 export const HIP_LINK_INIT_PATH = '/api/v3/hip/link/care-context/init';
@@ -19,6 +19,8 @@ export const HIP_CONSENT_NOTIFY_PATH = '/api/v3/consent/request/hip/notify';
 export const HIP_HI_REQUEST_PATH = '/api/v3/hip/health-information/request';
 export const HIP_ON_GENERATE_TOKEN_PATH = '/api/v3/hip/token/on-generate-token';
 export const HIP_ON_CARE_CONTEXT_PATH = '/api/v3/link/on_carecontext';
+export const HIP_CONTEXT_NOTIFY_ACK_PATH = '/api/v3/links/context/on-notify';
+export const HIP_SMS_NOTIFY_ACK_PATH = '/api/v3/patients/sms/on-notify';
 
 const ON_DISCOVER = '/user-initiated-linking/v3/patient/care-context/on-discover';
 const ON_LINK_INIT = '/user-initiated-linking/v3/link/care-context/on-init';
@@ -28,6 +30,9 @@ const HI_ON_REQUEST = '/data-flow/v3/health-information/hip/on-request';
 const HI_NOTIFY = '/data-flow/v3/health-information/notify';
 const GENERATE_TOKEN = '/v3/token/generate-token';
 const LINK_CARE_CONTEXT = '/hip/v3/link/carecontext';
+const CONTEXT_NOTIFY = '/hip/v3/link/context/notify';
+const LINKED_CONTEXTS = '/hip/v3/link/patient/links';
+const SMS_NOTIFY2 = '/hip/v3/link/patient/links/sms/notify2';
 
 // The only record type this clinic writes: one OP consultation per visit.
 const HI_TYPE = 'OPConsultation';
@@ -144,6 +149,8 @@ export class HipService {
             case HIP_HI_REQUEST_PATH: return this.healthInformationRequest(body, requestId);
             case HIP_ON_GENERATE_TOKEN_PATH: return this.onGenerateToken(body);
             case HIP_ON_CARE_CONTEXT_PATH: return this.onCareContext(body);
+            case HIP_CONTEXT_NOTIFY_ACK_PATH: return this.onContextNotifyAck(body);
+            case HIP_SMS_NOTIFY_ACK_PATH: return this.onSmsNotifyAck(body);
             default: return null;
         }
     }
@@ -366,7 +373,7 @@ export class HipService {
     }
 
     private onCareContext(body: any): HipCallbackResult {
-        const requestId = String(body?.response?.requestId ?? '').trim();
+        const requestId = String(body?.response?.requestId ?? body?.resp?.requestId ?? '').trim();
         const request = requestId ? this.deps.store.getHipRequest(requestId) : null;
         if (!request || request.kind !== 'link') throw new Error('Care context link request not found.');
         if (body?.error) {
@@ -378,6 +385,44 @@ export class HipService {
         this.deps.store.updateHipRequest(requestId, 'done');
         this.deps.store.saveHipLinks(request.abha_address, Number(request.patient_id), JSON.parse(request.care_context_refs || '[]'), 'clinic');
         return {};
+    }
+
+    private onContextNotifyAck(body: any): HipCallbackResult {
+        const status = String(body?.acknowledgement?.status ?? '').toUpperCase();
+        if (status && status !== 'OK' && status !== 'SUCCESS') {
+            throw new Error(`Context notify not acknowledged: ${status}`);
+        }
+        return {};
+    }
+
+    private onSmsNotifyAck(body: any): HipCallbackResult {
+        const status = String(body?.status ?? body?.acknowledgement?.status ?? '').toUpperCase();
+        if (status && status !== 'OK' && status !== 'SUCCESS') {
+            throw new Error(`SMS notify not acknowledged: ${status}`);
+        }
+        return {};
+    }
+
+    /**
+     * Notifies subscribed HIUs that a linked care context has new data
+     * (official M2: POST /hip/v3/link/context/notify).
+     */
+    async notifyContextUpdate(refs: string[], hiTypes: string[]): Promise<void> {
+        const addresses = this.deps.store.getHipLinkAddresses(refs);
+        const abhaAddress = refs.map((ref) => addresses[ref]).find(Boolean);
+        if (!abhaAddress) throw new Error('None of these visits are linked to a health ID.');
+        await this.gateway(CONTEXT_NOTIFY, {
+            patient: { id: abhaAddress },
+            careContext: refs.map((ref) => ({ referenceNumber: ref })),
+            hiTypes,
+            date: new Date(this.nowMs()).toISOString(),
+            hip: { id: this.hipId() }
+        });
+    }
+
+    /** Returns the linked care contexts for an ABHA address (official M2: GET links). */
+    linkedContexts(abhaAddress: string): string[] {
+        return this.deps.store.getHipLinkedRefs(String(abhaAddress || '').trim());
     }
 
     // --- Consent and data transfer ----------------------------------------

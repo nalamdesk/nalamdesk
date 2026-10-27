@@ -99,28 +99,53 @@ describe('AbdmAbhaService (mock gateway)', () => {
 });
 
 describe('AbdmAbhaService (through the relay)', () => {
-    it('sends every call to the ABHA host through the relay, RSA-encrypting the identifier', async () => {
+    it('sends enrollment through v3 request/otp then byAadhaar, RSA-encrypting the identifier', async () => {
         const relay = liveRelay({
-            '/v3/enrollment/enrol/byAadhaar': { txnId: 'live-txn-1' },
-            '/v3/enrollment/enrol/verify': { abhaAddress: 'real@abdm', name: 'Real Patient' }
+            '/v3/enrollment/request/otp': { txnId: 'live-txn-1' },
+            '/v3/enrollment/enrol/byAadhaar': { abhaAddress: 'real@abdm', name: 'Real Patient' }
         });
         const svc = new AbdmAbhaService({ relay });
 
         const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '1234 5678 9012' });
         expect(started).toEqual({ txnId: 'live-txn-1', mock: false });
         const [upstream, method, path, body] = relay.send.mock.calls[1]!;
-        expect([upstream, method, path]).toEqual(['abha', 'POST', '/v3/enrollment/enrol/byAadhaar']);
+        expect([upstream, method, path]).toEqual(['abha', 'POST', '/v3/enrollment/request/otp']);
         expect(decrypt((body as any).aadhaar)).toBe('123456789012');
         expect(relay.send.mock.calls[0]!.slice(0, 3)).toEqual(['abha', 'GET', '/v3/profile/public/certificate']);
 
         expect(await svc.confirmEnrollmentOtp('live-txn-1', '482916')).toEqual({ abhaAddress: 'real@abdm', name: 'Real Patient', mock: false });
+        const [, confirmMethod, confirmPath] = relay.send.mock.calls[2]!;
+        expect([confirmMethod, confirmPath]).toEqual(['POST', '/v3/enrollment/enrol/byAadhaar']);
     });
 
-    it('encrypts mobile enrollment and refuses an answer without a transaction', async () => {
-        const relay = liveRelay({ '/v3/enrollment/enrol/byMobile': {} });
+    it('verifies mobile updates through v3 auth/byAbdm', async () => {
+        const relay = liveRelay({ '/v3/enrollment/auth/byAbdm': { abhaAddress: 'real@abdm', name: 'Real Patient' } });
         const svc = new AbdmAbhaService({ relay });
-        await expect(svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' })).rejects.toThrow('did not return a transaction');
-        expect(decrypt((relay.send.mock.calls[1]![3] as any).mobile)).toBe('9876543210');
+        expect(await svc.confirmEnrollmentOtp({ via: 'byAbdm', txnId: 'live-txn-2', otp: '482916' }))
+            .toEqual({ abhaAddress: 'real@abdm', name: 'Real Patient', mock: false });
+        expect(relay.send.mock.calls[0]!.slice(1, 3)).toEqual(['POST', '/v3/enrollment/auth/byAbdm']);
+    });
+
+    it('suggests and registers ABHA addresses through strict v3 routes', async () => {
+        const relay = liveRelay({
+            '/v3/enrollment/enrol/suggestion': { abhaAddresses: ['real@abdm'] },
+            '/v3/enrollment/enrol/abha-address': { success: true }
+        });
+        const svc = new AbdmAbhaService({ relay });
+        expect(await svc.suggestAbhaAddresses()).toMatchObject({ suggestions: ['real@abdm'], mock: false });
+        expect(relay.send.mock.calls[0]!.slice(1, 3)).toEqual(['GET', '/v3/enrollment/enrol/suggestion']);
+        expect(await svc.setEnrolAbhaAddress('txn-1', 'real@abdm')).toEqual({ mock: false });
+        expect(relay.send.mock.calls[1]!.slice(1, 3)).toEqual(['POST', '/v3/enrollment/enrol/abha-address']);
+    });
+
+    it('reads profile, QR, search and secondary-user routes through strict v3', async () => {
+        const relay = liveRelay({
+            '/v3/profile/account': { abhaAddress: 'real@abdm' },
+            '/v3/profile/account/qrCode': { qrCode: 'qr-payload' }
+        });
+        const svc = new AbdmAbhaService({ relay });
+        expect((await svc.getProfile()).profile).toMatchObject({ abhaAddress: 'real@abdm' });
+        expect((await svc.getQrCode()).qrCode).toBe('qr-payload');
     });
 
     it('runs profile login with an encrypted login ID and OTP', async () => {
@@ -153,7 +178,7 @@ describe('AbdmAbhaService (through the relay)', () => {
     it('looks up an address and fetches the card through the relay', async () => {
         const relay = liveRelay({
             '/v3/profile/account/verify': { exists: false },
-            '/v3/profile/account/getAbhaCard': { name: 'Real', gender: 'M', dob: '1990-01-01', image: 'AAAA', mimeType: 'image/png' }
+            '/v3/profile/account/abha-card': { name: 'Real', gender: 'M', dob: '1990-01-01', image: 'AAAA', mimeType: 'image/png' }
         });
         const svc = new AbdmAbhaService({ relay });
 
@@ -163,12 +188,12 @@ describe('AbdmAbhaService (through the relay)', () => {
         expect(await svc.getCard('real@abdm')).toEqual({
             abhaAddress: 'real@abdm', name: 'Real', gender: 'M', dateOfBirth: '1990-01-01', imageBase64: 'AAAA', mimeType: 'image/png', mock: false
         });
-        expect(relay.send).toHaveBeenLastCalledWith('abha', 'POST', '/v3/profile/account/getAbhaCard', { abhaAddress: 'real@abdm' });
+        expect(relay.send).toHaveBeenLastCalledWith('abha', 'GET', '/v3/profile/account/abha-card', undefined);
     });
 
     it('fetches the certificate once a day, and again after invalidation', async () => {
         let now = 1_000;
-        const relay = liveRelay({ '/v3/enrollment/enrol/byMobile': { txnId: 't' } });
+        const relay = liveRelay({ '/v3/enrollment/request/otp': { txnId: 't' } });
         const svc = new AbdmAbhaService({ relay, nowMs: () => now });
         const certCalls = () => relay.send.mock.calls.filter((call) => call[2] === '/v3/profile/public/certificate').length;
 
@@ -191,7 +216,7 @@ describe('AbdmAbhaService (through the relay)', () => {
     });
 
     it('decides mock or relay once per operation, so pairing mid-flight never sends plaintext', async () => {
-        const relay = liveRelay({ '/v3/enrollment/enrol/byMobile': { txnId: 't' } });
+        const relay = liveRelay({ '/v3/enrollment/request/otp': { txnId: 't' } });
         relay.isMockMode.mockReturnValueOnce(true);
         const svc = new AbdmAbhaService({ relay });
 

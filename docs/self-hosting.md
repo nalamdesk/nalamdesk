@@ -127,6 +127,28 @@ Logs are in `C:\ProgramData\NalamDesk\server\logs`. To remove the service,
 run `service\uninstall-service.ps1` from the install folder. Both scripts
 leave the clinic's data in place.
 
+## Join the clinic's computers
+
+Each computer joins the server once with a one-time join code, then staff
+sign in with their own accounts. With the server running, issue a code for
+each computer:
+
+```sh
+sudo nalamdesk-server join-code --name "Reception"            # .deb
+docker exec nalamdesk nalamdesk-server join-code --name "Reception"   # Docker
+nalamdesk-server join-code --name "Reception"                 # Windows, as administrator
+```
+
+Enter the code in NalamDesk on that computer within 15 minutes
+(`--minutes N` for longer, up to a day). The code also carries part of the
+server's certificate fingerprint, so the computer knows it reached the right
+server. `join-code` works only after the server has started once, because it
+pins exactly what the running server serves.
+
+`nalamdesk-server devices list` shows the joined computers.
+`nalamdesk-server devices revoke <id>` removes a lost or retired computer
+and signs out its sessions.
+
 ## Move a desktop clinic onto the server
 
 A clinic that has used the desktop app on one computer can move its records
@@ -144,7 +166,8 @@ onto the server.
    sudo nalamdesk-server import /path/to/nalamdesk-backup.ndbackup
    ```
 
-   For Docker, mount the file and pass the code as a file with
+   The file can be anywhere root can read, such as your home folder. For
+   Docker, mount the file and pass the code as a file with
    `NALAMDESK_RECOVERY_CODE_FILE`, or add `-it` and type it in.
 4. Start the server. Staff sign in with their existing accounts and
    passwords.
@@ -210,7 +233,11 @@ the vault.
 
 | Provider | Restarts unattended | Protects against | Use when |
 |---|---|---|---|
-| `key-file` (default) | Yes | Copied database or backups without the key file | Most servers, with full-disk encryption on |
+| `key-file` (default) | Yes | Copied database or backups without the key file | Docker, Windows, and any server with full-disk encryption |
+| `systemd-creds` | Yes | Copied files, and a disk moved to another machine | Linux with systemd 250 or later (recommended for the .deb) |
+| `tpm` | Yes | As above, bound to this machine's TPM chip | Linux servers with a TPM 2.0 |
+| `dpapi` | Yes | Copied files, and a disk moved to another machine | Windows, with the vault created as the service account |
+| `kms` | Yes | All of the above, with audited key use | A cloud KMS or Vault you already run |
 | `passphrase` | No: someone types it, or supplies `NALAMDESK_PASSPHRASE_FILE` | A stolen disk or machine | Someone is on site to start the server |
 | Recovery code (always present) | n/a | A lost or dead server | Disaster recovery only |
 
@@ -224,10 +251,15 @@ sudo nalamdesk-server key remove <slot-id>
 ```
 
 Every change is written to the audit log. The recovery code slot cannot be
-removed. Machine-bound providers, which keep the key off the disk in
-readable form, are on the way: Linux `systemd-creds`, TPM and Windows DPAPI.
-On Linux, `systemd-creds` (`LoadCredentialEncrypted=`) will be the
-recommended setup once it ships.
+removed. A good pattern is to add a machine-bound slot, check that the
+service starts with it, and then remove the key file slot.
+
+The machine-bound providers and their options (`--credential-name`,
+`--dpapi-blob`, `--key-command`) are described in the
+[developer guide](../desktop/DEVELOPER_GUIDE.md). On the .deb, a
+`systemd-creds` slot also needs `Environment=NALAMDESK_KEY_PROVIDER=systemd-creds`
+and `LoadCredentialEncrypted=nalamdesk-vault-key` in a drop-in
+(`sudo systemctl edit nalamdesk-server`).
 
 **Keep the key file separate from your backups.** A backup and its key file
 together open the clinic's records.

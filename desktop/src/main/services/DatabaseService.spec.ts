@@ -521,7 +521,7 @@ describe('DatabaseService', () => {
             service.addToQueue(1, 2, 999); // Patient 1, Priority 2, User 999
 
             expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO patient_queue'));
-            expect(mockStatement.run).toHaveBeenCalledWith(1, 2);
+            expect(mockStatement.run).toHaveBeenCalledWith(1, 2, 1, null);
         });
 
         it('should throw if patient already in queue', () => {

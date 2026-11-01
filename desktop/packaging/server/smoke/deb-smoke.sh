@@ -13,5 +13,8 @@ test -z "$(ls /tmp | grep nalamdesk-import || true)"
 test "$(stat -c %U /var/lib/nalamdesk/security.json)" = "nalamdesk"
 nalamdesk-server status | grep -q 'Vault: set up'
 nalamdesk-server start > /tmp/server.log 2>&1 &
-/opt/nalamdesk-server/runtime/node /smoke/login.js "${SMOKE_URL:-http://127.0.0.1:3000}" admin /work/desktop-password \
-    || { cat /tmp/server.log; exit 1; }
+NODE=/opt/nalamdesk-server/runtime/node
+URL="${SMOKE_URL:-https://127.0.0.1:3000}"
+$NODE /smoke/login.js wait "$URL" || { cat /tmp/server.log; exit 1; }
+CODE="$(nalamdesk-server join-code --name "Smoke test" | grep -oE '[0-9A-Z]{5}(-[0-9A-Z]{5}){3}' | head -n 1)"
+$NODE /smoke/login.js "$URL" admin /work/desktop-password "$CODE" || { cat /tmp/server.log; exit 1; }

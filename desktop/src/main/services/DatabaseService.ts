@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
 import { validateAbhaNumber, validateIdentifier } from '../../shared/patient-identifiers';
 import { durationEndDate } from '../../shared/clinical-timing';
+import { currentAuditDeviceId } from './AuditContext';
 import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder, type FinalRxLine } from '../../shared/prescription-order';
 
 export class DatabaseService {
@@ -73,6 +74,11 @@ export class DatabaseService {
         if (row && Number(row.facility_id ?? DEFAULT_FACILITY_ID) !== this.facilityId()) {
             throw new Error(`${what} belongs to another facility.`);
         }
+    }
+
+    /** The open database handle, or undefined before the vault unlocks. */
+    rawDb(): any {
+        return this.db;
     }
 
     beginWork(): void {
@@ -4025,11 +4031,15 @@ export class DatabaseService {
     // Audit Logging
     logAudit(action: string, tableName: string, recordId: number | bigint | null, userId: number | null | undefined, details: string) {
         try {
+            // Calls through NalamDesk Server also name the joined computer (#193);
+            // every row records the facility it happened in (#195).
             this.db.prepare(`
-                INSERT INTO audit_logs(action, table_name, record_id, user_id, details, facility_id)
-        VALUES(@action, @tableName, @recordId, @userId, @details, @facilityId)
-            `).run({ action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details,
-                facilityId: this.facilityId() });
+                INSERT INTO audit_logs(action, table_name, record_id, user_id, details, device_id, facility_id)
+                VALUES(@action, @tableName, @recordId, @userId, @details, @deviceId, @facilityId)
+            `).run({
+                action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details,
+                deviceId: currentAuditDeviceId(), facilityId: this.facilityId()
+            });
         } catch (e) {
             console.error('Failed to log audit:', e);
         }
@@ -4037,9 +4047,10 @@ export class DatabaseService {
 
     getAuditLogs(limit: number = 100) {
         return this.db.prepare(`
-            SELECT al.*, u.name as actor_name 
+            SELECT al.*, u.name as actor_name, d.name as device_name
             FROM audit_logs al 
             LEFT JOIN users u ON al.user_id = u.id 
+            LEFT JOIN joined_devices d ON al.device_id = d.id
             ORDER BY al.timestamp DESC LIMIT ?
         `).all(limit);
     }

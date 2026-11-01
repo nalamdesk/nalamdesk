@@ -121,6 +121,9 @@ describe('PassphraseKeyStore', () => {
     it('refuses short passphrases and out-of-range costs', () => {
         expect(() => new PassphraseKeyStore('short')).toThrow(/PASSPHRASE_TOO_SHORT/);
         expect(() => new PassphraseKeyStore('correct horse battery', { logN: 10 })).toThrow('INVALID_PASSPHRASE_COST');
+        // 12 UTF-16 units before NFKC, 6 characters after.
+        expect(() => new PassphraseKeyStore('e\u0301'.repeat(6))).toThrow(/PASSPHRASE_TOO_SHORT/);
+        expect(() => new PassphraseKeyStore('😀'.repeat(6))).toThrow(/PASSPHRASE_TOO_SHORT/);
     });
 
     it('becomes unavailable once cleared', () => {

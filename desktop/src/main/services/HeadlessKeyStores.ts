@@ -73,11 +73,15 @@ export class KeyFileStore implements DeviceKeyStore {
     static create(keyPath: string, options: KeyFileStoreOptions = {}): KeyFileStore {
         fs.mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
         const fd = fs.openSync(keyPath, 'wx', 0o600);
+        let written = false;
         try {
             fs.writeFileSync(fd, crypto.randomBytes(KEY_LENGTH));
             fs.fsyncSync(fd);
+            written = true;
         } finally {
             fs.closeSync(fd);
+            // A partial key would block every later create(); remove it.
+            if (!written) fs.rmSync(keyPath, { force: true });
         }
         return new KeyFileStore(keyPath, options);
     }
@@ -141,7 +145,9 @@ export class PassphraseKeyStore implements DeviceKeyStore {
     private passphrase: Buffer | null;
 
     constructor(passphrase: string, options: PassphraseKeyStoreOptions = {}) {
-        if (typeof passphrase !== 'string' || passphrase.length < PASSPHRASE_MIN_LENGTH) {
+        // Count code points after normalisation, so combining sequences can't pad the length.
+        const normalized = typeof passphrase === 'string' ? passphrase.normalize('NFKC') : '';
+        if ([...normalized].length < PASSPHRASE_MIN_LENGTH) {
             throw new Error(`PASSPHRASE_TOO_SHORT: use at least ${PASSPHRASE_MIN_LENGTH} characters.`);
         }
         const logN = options.logN ?? PASSPHRASE_DEFAULT_LOG_N;
@@ -149,7 +155,7 @@ export class PassphraseKeyStore implements DeviceKeyStore {
             throw new Error('INVALID_PASSPHRASE_COST');
         }
         this.logN = logN;
-        this.passphrase = Buffer.from(passphrase.normalize('NFKC'), 'utf8');
+        this.passphrase = Buffer.from(normalized, 'utf8');
     }
 
     status(): DeviceKeyStoreStatus {

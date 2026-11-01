@@ -37,7 +37,8 @@ import type { EventTopic } from '../server/events';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { registerJoinIpc } from './client/join-ipc';
 import { safeStorageCipher } from './client/electron-env';
-import { setFallbackFacility } from '../shared/request-context';
+import { DEFAULT_FACILITY_ID, setFallbackFacility } from '../shared/request-context';
+import { chooseFacility, type FacilityGrant } from './services/FacilitySession';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import {
     DEV_APP_NAME,
@@ -662,16 +663,38 @@ function initializeServices(settings: any): void {
     }
 }
 
-async function handleAdminLogin(password: string): Promise<{ success: boolean; user?: any; error?: string } | null> {
+/**
+ * Starts the desktop session in one facility, with the user's role there
+ * (#195). Returns the facilities they can switch between, or null when they
+ * hold no role at any active facility.
+ */
+function startFacilitySession(user: any, requestedFacility?: unknown): FacilityGrant[] | null {
+    const facilities = databaseService.getUserFacilities(Number(user.id));
+    const facility = chooseFacility(facilities, requestedFacility);
+    if (!facility) return null;
+    sessionService.setUser({ ...user, role: facility.role, facilityId: facility.id });
+    return facilities;
+}
+
+function facilityLoginResult(facilities: FacilityGrant[]) {
+    return {
+        ...buildAuthenticatedLoginResult(sessionService.getUser()!, securityService),
+        facilityId: sessionService.getUser()!.facilityId,
+        facilities
+    };
+}
+
+async function handleAdminLogin(password: string, requestedFacility?: unknown): Promise<{ success: boolean; user?: any; error?: string } | null> {
     const user = await databaseService.getUserByUsername('admin');
     if (!user) return null;
 
     const argon2 = await import('argon2');
     if (!await argon2.verify(user.password, password)) return null;
 
-    sessionService.setUser(user);
+    const facilities = startFacilitySession(user, requestedFacility);
+    if (!facilities) return { success: false, error: 'NO_FACILITY_ACCESS' };
     initializeServices(databaseService.getSettings());
-    return buildAuthenticatedLoginResult(sessionService.getUser()!, securityService);
+    return facilityLoginResult(facilities);
 }
 
 import { AccessPolicy } from './services/AccessPolicy';
@@ -753,6 +776,24 @@ function handleGuardedDb(channel: string, handler: (...args: any[]) => any) {
     }));
 }
 
+ipcMain.handle('auth:getFacilities', () => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return { facilityId: user.facilityId ?? DEFAULT_FACILITY_ID, facilities: databaseService.getUserFacilities(user.id) };
+});
+
+ipcMain.handle('auth:switchFacility', (_event, facilityId: unknown) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    const facility = chooseFacility(databaseService.getUserFacilities(user.id), facilityId ?? '');
+    if (!facility || facilityId === undefined || facilityId === null || facilityId === '') {
+        return { success: false, error: 'NO_FACILITY_ACCESS' };
+    }
+    sessionService.setUser({ ...user, role: facility.role, facilityId: facility.id });
+    databaseService.logAudit('FACILITY_SWITCH', 'users', user.id, user.id, `Switched to facility ${facility.code}`);
+    return { success: true, facilityId: facility.id, user: buildAuthenticatedLoginResult(sessionService.getUser()!, securityService).user };
+});
+
 ipcMain.handle('auth:logout', () => {
     try {
         const user = sessionService.getUser();
@@ -789,10 +830,9 @@ handleDb('auth:login', async (event, credentials) => {
 
         // 3. Admin fast path
         if (username === 'admin') {
-            const adminResult = await handleAdminLogin(password);
+            const adminResult = await handleAdminLogin(password, credentials.facilityId);
             if (adminResult) {
-                const user = sessionService.getUser();
-                auditLogin(true, username, user);
+                auditLogin(adminResult.success, username, adminResult.success ? sessionService.getUser() : null);
                 return adminResult;
             }
             // Fallthrough to standard validation if admin user missing from DB
@@ -803,10 +843,14 @@ handleDb('auth:login', async (event, credentials) => {
         const result = await databaseService.validateUser(username, password);
 
         if (result.success && result.user) {
-            sessionService.setUser(result.user);
+            const facilities = startFacilitySession(result.user, credentials.facilityId);
+            if (!facilities) {
+                auditLogin(false, username, result.user);
+                return { success: false, error: 'NO_FACILITY_ACCESS' };
+            }
             initializeServices(databaseService.getSettings());
-            auditLogin(true, username, result.user);
-            return buildAuthenticatedLoginResult(sessionService.getUser()!, securityService);
+            auditLogin(true, username, sessionService.getUser());
+            return facilityLoginResult(facilities);
         }
 
         auditLogin(false, username, null);

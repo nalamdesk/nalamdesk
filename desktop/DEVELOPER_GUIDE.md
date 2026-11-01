@@ -35,6 +35,40 @@ This will:
 - `ElectronSafeStorageDeviceKeyStore` still rejects `basic_text` (`INSECURE_LINUX_BACKEND`).
 - If encryption is still unavailable, setup/login surfaces `ENCRYPTION_UNAVAILABLE` naming gnome-libsecret / `libsecret-1-0` / gnome-keyring. There is no second crypto stack.
 
+## Headless key providers (#192)
+
+NalamDesk Server ([ADR 0001](../docs/architecture/0001-headless-server.md)) has no desktop keychain, so `HeadlessKeyStores.ts` adds two more `DeviceKeyStore` providers. `SecurityService` uses them unchanged:
+
+- `KeyFileStore` (`key-file`): a random 32-byte key in a file. `KeyFileStore.create` writes it with mode 0600 and never overwrites an existing file. On POSIX the store refuses a key file that group or other users can read.
+- `PassphraseKeyStore` (`passphrase`): scrypt (N=2^17, r=8) with a fresh salt for each protected value. The cost and salt are bound into the AES-GCM AAD. Passphrases are NFKC-normalised, at least 12 characters, and `clear()` wipes them from memory.
+
+Both providers seal values with AES-256-GCM behind a provider magic prefix, so neither one opens the other's payloads.
+
+### Key slots
+
+`security.json` can hold several unlock methods for the same DEK. `device` stays the primary slot, and extra slots live in an optional `slots` array, so the config is still version 3 and older app versions read it unchanged.
+
+- `initializeDevice` tries the primary slot, then each extra slot, with the service's key store. A slot that decrypts but names another vault stops the search with `VAULT_BINDING_MISMATCH`.
+- `addKeySlot(store, label?)` needs an open vault. It wraps the DEK with the new store and proves the result opens before saving it.
+- `removeKeySlot(id)` refuses the recovery code and the last unlock method. Removing `primary` promotes the oldest extra slot.
+- `listKeySlots()` never returns payloads.
+- `rotateDeviceEnvelope` re-wraps the slot the process unlocked with.
+- Portable backup metadata still carries only the recovery envelope, so slots never travel in backups.
+
+## NalamDesk Server CLI (#192)
+
+`src/server/headless/` is the headless server entry point ([ADR 0001](../docs/architecture/0001-headless-server.md)). Build it with `npm run build:server`, then run `node dist/server/server/headless/main.js <command>`. `npm run start:server` builds and starts it with the development `.env` files.
+
+| Command | What it does |
+|---|---|
+| `init [--clinic-name X]` | Creates the vault (`ProvisioningService`) and the admin account, and prints the recovery code once |
+| `start` (default) | Unlocks the vault, migrates, and serves `ApiServer` until SIGINT or SIGTERM |
+| `status` | Shows the data directory, whether the vault is set up, the key provider, and the listen address |
+| `key list`, `key add --provider key-file --key-file P`, `key add --provider passphrase`, `key remove <id>` | Manages key slots. Each change is written to `audit_logs` |
+| `recovery confirm` | Confirms the recovery code in a terminal |
+
+Configuration comes from an optional JSON file (`--config` or `NALAMDESK_CONFIG`), overridden by `NALAMDESK_DATA_DIR`, `NALAMDESK_HOST`, `NALAMDESK_PORT`, `NALAMDESK_STATIC_PATH`, `NALAMDESK_KEY_PROVIDER` and `NALAMDESK_KEY_FILE`. Secrets are refused in the JSON file. Pass them as `NAME_FILE` (preferred) or `NAME`: `NALAMDESK_PASSPHRASE`, `NALAMDESK_NEW_PASSPHRASE` and `NALAMDESK_ADMIN_PASSWORD`, which needs at least 12 characters. The process runs with umask 077. Until Cloud pairing moves into the server (#196), ABDM runs against the mock gateway, with HIU keys protected by the server's key store.
+
 ## Application version
 - Settings reads a single IPC, `app:getVersion`, backed by packaged `app.getVersion()` plus `build-identity.json` (commit / CI run id when stamped).
 - Development builds append `(development)` to the displayed version.

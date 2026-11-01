@@ -716,8 +716,8 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
 
         it('keeps no callback password: callbacks arrive sealed through the relay', () => {
             service.saveSettings({ clinic_name: 'Test Clinic', abdm_callback_secret: 's3cret-shared-token' });
-            const row: any = db.prepare('SELECT clinic_name, abdm_callback_secret FROM settings LIMIT 1').get();
-            expect(row.clinic_name).toBe('Test Clinic');
+            const row: any = db.prepare('SELECT abdm_callback_secret FROM settings LIMIT 1').get();
+            expect((service.getSettings() as any).clinic_name).toBe('Test Clinic');
             expect(row.abdm_callback_secret).toBeNull();
         });
 
@@ -1229,7 +1229,7 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             });
 
             it('creates invoices with derived totals and auto consultation fee', () => {
-                db.prepare(`INSERT INTO settings (consultation_fee) VALUES (200)`).run();
+                service.saveSettings({ consultation_fee: 200 });
                 const invoice: any = service.createInvoice({
                     visitId, items: [{ description: 'X-ray', quantity: 1, rate: 350 }]
                 }, 99);
@@ -1447,8 +1447,8 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         });
 
         it('serves sanitized settings without secrets', () => {
-            db.prepare(`INSERT INTO settings (clinic_name, abdm_callback_secret)
-                VALUES ('Test Clinic', 'super-secret')`).run();
+            db.prepare(`INSERT INTO settings (abdm_callback_secret) VALUES ('super-secret')`).run();
+            service.saveSettings({ clinic_name: 'Test Clinic' });
             const settings: any = service.getSanitizedSettings();
             expect(settings?.clinic_name).toBe('Test Clinic');
             expect('abdm_callback_secret' in settings).toBe(false);

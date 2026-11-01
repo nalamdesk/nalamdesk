@@ -358,12 +358,13 @@ export class SecurityService {
         if (!this.dek) throw new Error('VAULT_LOCKED');
         this.assertDeviceStoreAvailable();
         const config = this.loadConfigV3();
-        const slot = config.slots?.find((entry) => entry.id === this.unlockedSlotId);
-        if (slot) {
-            // Re-wrap the slot this process opened, never overwrite the primary with it.
-            slot.protectedPayload = this.createDeviceEnvelope(this.dek, config.vaultId, config.keyVersion).protectedPayload;
-        } else {
+        // Re-wrap only the slot this process opened, and only while it still exists.
+        if (this.unlockedSlotId === PRIMARY_SLOT_ID) {
             config.device = { ...config.device, ...this.createDeviceEnvelope(this.dek, config.vaultId, config.keyVersion) };
+        } else {
+            const slot = config.slots?.find((entry) => entry.id === this.unlockedSlotId);
+            if (!slot) throw new Error('UNLOCKED_SLOT_REMOVED');
+            slot.protectedPayload = this.createDeviceEnvelope(this.dek, config.vaultId, config.keyVersion).protectedPayload;
         }
         this.saveConfigAtomic(config);
     }

@@ -44,6 +44,17 @@ NalamDesk Server ([ADR 0001](../docs/architecture/0001-headless-server.md)) has 
 
 Both providers seal values with AES-256-GCM behind a provider magic prefix, so neither one opens the other's payloads.
 
+### Key slots
+
+`security.json` can hold several unlock methods for the same DEK. `device` stays the primary slot, and extra slots live in an optional `slots` array, so the config is still version 3 and older app versions read it unchanged.
+
+- `initializeDevice` tries the primary slot, then each extra slot, with the service's key store. A slot that decrypts but names another vault stops the search with `VAULT_BINDING_MISMATCH`.
+- `addKeySlot(store, label?)` needs an open vault. It wraps the DEK with the new store and proves the result opens before saving it.
+- `removeKeySlot(id)` refuses the recovery code and the last unlock method. Removing `primary` promotes the oldest extra slot.
+- `listKeySlots()` never returns payloads.
+- `rotateDeviceEnvelope` re-wraps the slot the process unlocked with.
+- Portable backup metadata still carries only the recovery envelope, so slots never travel in backups.
+
 ## Application version
 - Settings reads a single IPC, `app:getVersion`, backed by packaged `app.getVersion()` plus `build-identity.json` (commit / CI run id when stamped).
 - Development builds append `(development)` to the displayed version.

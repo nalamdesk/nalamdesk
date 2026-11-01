@@ -8,7 +8,7 @@ import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
 import { buildIdentityPath, readBuildIdentityFile } from '../../main/appVersionInfo';
 import { getCloudServiceUrl } from '../../shared/runtime-config';
 import { ApiServer } from '../app';
-import { createClinicServices } from '../runtime/clinicServices';
+import { CLINIC_EVENT_TOPICS, createClinicServices } from '../runtime/clinicServices';
 import { backupScheduleFollower, createBackupMethods, createCloudMethods } from '../runtime/clinicMethods';
 import { runCli, type CliDeps, type CliIO } from './cli';
 import type { ServerConfig } from './config';
@@ -66,26 +66,30 @@ const deps: CliDeps = {
     async startServer(vault, database, store, config) {
         const db = database as unknown as DatabaseService;
         // Cloud pairing, the mailbox, ABDM and scheduled backups run here (#196).
+        let api: ApiServer | null = null;
         const services = createClinicServices({
             db,
             keyStore: store,
             appVersion,
-            baseUrl: (audience) => getCloudServiceUrl(audience, buildIdentity)
+            baseUrl: (audience) => getCloudServiceUrl(audience, buildIdentity),
+            // Clients refetch through the API when a topic changes.
+            notify: (event) => api?.events.publish(CLINIC_EVENT_TOPICS[event])
         });
         const backups = createBackups(vault as unknown as SecurityService, db, store, config);
-        const api = new ApiServer(db, config.staticPath, undefined, services);
-        api.registerServiceMethods(
+        const server = new ApiServer(db, config.staticPath, undefined, services);
+        api = server;
+        server.registerServiceMethods(
             { ...createCloudMethods(db, services), ...createBackupMethods(backups) },
             backupScheduleFollower(backups)
         );
         backups.initAutomatedBackup();
         services.start();
-        await api.start(config.port, config.host);
+        await server.start(config.port, config.host);
         return {
             close: async () => {
                 services.stop();
                 backups.stopSchedules();
-                await api.close();
+                await server.close();
             }
         };
     },

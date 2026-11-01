@@ -18,16 +18,25 @@ import { AccessPolicy } from '../main/services/AccessPolicy';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import { FideliusService, parseKeyMaterial } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
+import { auditContext } from '../main/services/AuditContext';
+import { AuthStoreNotReady, DEFAULT_SESSION_POLICY, JoinedDevice, ServerAuthStore, ServerSession, SIGNING_KEY_SECRET } from './auth-store';
+import { EventHub } from './events';
+import { ApiServerOptions, DEFAULT_JOIN_CODE_TTL_MS, issueJoinCode, joinFingerprint } from './network';
+import { LoginLimiter, SlidingWindowLimiter } from './rate-limit';
+import { parseJoinCode, fingerprintPrefix } from '../shared/join-code';
+import {
+    checkClientProtocol, DEVICE_HEADER, MIN_SUPPORTED_PROTOCOL, PROTOCOL_HEADER, PROTOCOL_VERSION, SERVER_VERSION_HEADER
+} from '../shared/protocol';
+import { serverReleaseVersion } from './release-version';
 import { assertMethodAccess, MethodAccessError, type ClinicMethod } from './runtime/clinicMethods';
 
 loadDevelopmentEnv();
 dotenv.config();
 
-if (process.env['NODE_ENV'] === 'production' && !process.env['JWT_SECRET']) {
-    console.error('FATAL: JWT_SECRET must be set in production');
-    process.exit(1);
-}
-const JWT_SECRET = process.env['JWT_SECRET'] || crypto.randomBytes(64).toString('hex');
+/** Legacy in-app LAN server: a 12h token, since its browser UI never refreshes. */
+const LEGACY_ACCESS_TTL_SEC = 12 * 60 * 60;
+/** NalamDesk Server: short access tokens, renewed with the refresh token. */
+const SERVER_ACCESS_TTL_SEC = 15 * 60;
 
 const ABDM_SERVICE_METHODS = new Set([
     'abdmGetConfig', 'abdmSaveConfig', 'abdmTestConnectivity',
@@ -80,6 +89,11 @@ export const ALLOWED_IPC_METHODS = [
     'replaceConditionMedPresets'
 ];
 
+interface RequestAuth {
+    session: ServerSession | null;
+    device: JoinedDevice | null;
+}
+
 export interface ApiAbdmServices {
     relay: AbdmRelayService;
     abha: AbdmAbhaService;
@@ -120,7 +134,9 @@ export class ApiServer {
         }
         const run = async () => method.run(args, user);
         try {
-            return await (method.selfFenced ? run() : this.dbService.runWork(run));
+            const result = await (method.selfFenced ? run() : this.dbService.runWork(run));
+            this.events.publishForMethod(name);
+            return result;
         } catch (error: any) {
             if (error?.message === 'RESTORE_IN_PROGRESS') return reply.code(503).send({ error: 'RESTORE_IN_PROGRESS' });
             console.error(`[IPC Error] method: ${name}`, error);
@@ -301,13 +317,99 @@ export class ApiServer {
     private oauthTimeout: ReturnType<typeof setTimeout> | null = null;
     private expectedOAuthState: string | null = null;
     private devUiProxyUrl?: string;
+    private readonly options: ApiServerOptions;
+    private readonly now: () => number;
+    private readonly envSigningKey: string | undefined;
+    // Without a vault (tests, or a DatabaseService stand-in) tokens are signed
+    // with a per-process key and carry no server session.
+    private readonly processSigningKey = crypto.randomBytes(64).toString('hex');
+    private store: ServerAuthStore | null | undefined;
+    private readonly loginLimiter: LoginLimiter;
+    private readonly joinIpLimiter: SlidingWindowLimiter;
+    private readonly joinFailureLimiter: SlidingWindowLimiter;
+    private readonly accessTtlSec: number;
+    /** Live events stream for clients; the desktop also publishes here. */
+    readonly events: EventHub;
 
-    constructor(dbService: DatabaseService, staticPath: string, devUiProxyUrl?: string, abdm?: ApiAbdmServices) {
+    constructor(dbService: DatabaseService, staticPath: string, devUiProxyUrl?: string, abdm?: ApiAbdmServices, options: ApiServerOptions = {}) {
         this.abdm = abdm ?? null;
         this.dbService = dbService;
         this.staticPath = staticPath;
         this.devUiProxyUrl = devUiProxyUrl;
-        this.fastify = Fastify({ logger: true });
+        this.options = options;
+        this.now = options.now ?? Date.now;
+        // JWT_SECRET pins the signing key for development and tests; otherwise
+        // the key lives in the vault so restarts keep users signed in.
+        this.envSigningKey = process.env['JWT_SECRET'] || undefined;
+        this.loginLimiter = options.loginLimiter ?? new LoginLimiter({ now: this.now });
+        this.joinIpLimiter = new SlidingWindowLimiter(10, 15 * 60_000, this.now);
+        this.joinFailureLimiter = new SlidingWindowLimiter(20, 15 * 60_000, this.now);
+        this.accessTtlSec = options.accessTokenTtlSec
+            ?? (options.requireDevice ? SERVER_ACCESS_TTL_SEC : LEGACY_ACCESS_TTL_SEC);
+        this.events = new EventHub({ now: this.now });
+        this.events.sessionCheck = (sessionId, deviceId) => this.streamStillValid(sessionId, deviceId);
+        const fastifyOptions: Record<string, unknown> = { logger: true };
+        if (options.tls) fastifyOptions['https'] = { key: options.tls.key, cert: options.tls.cert };
+        if (options.behindProxy) fastifyOptions['trustProxy'] = true;
+        this.fastify = Fastify(fastifyOptions as any) as unknown as FastifyInstance;
+    }
+
+    /** Server-side auth state, or null when the database has no vault handle (tests). */
+    get authStore(): ServerAuthStore | null {
+        if (this.store === undefined) {
+            const db = this.dbService as any;
+            this.store = typeof db?.rawDb === 'function'
+                ? new ServerAuthStore(() => db.rawDb(), this.now, this.options.sessionPolicy ?? DEFAULT_SESSION_POLICY)
+                : null;
+        }
+        return this.store;
+    }
+
+    /** Issues a join code for a computer (admin API and `join-code` CLI). */
+    issueJoinCode(input: { createdBy: number | null; deviceName?: string | null; ttlMs?: number }) {
+        const store = this.requireStore();
+        return issueJoinCode(store, this.options, { ttlMs: this.options.joinCodeTtlMs ?? DEFAULT_JOIN_CODE_TTL_MS, ...input });
+    }
+
+    /** Revokes a joined computer, signs out its sessions and ends its event streams. */
+    revokeDevice(deviceId: string, revokedBy: number | null): boolean {
+        const revoked = this.requireStore().revokeDevice(deviceId, revokedBy);
+        if (revoked) {
+            this.events.disconnect({ deviceId });
+            this.audit('DEVICE_REVOKE', revokedBy, `Revoked computer ${deviceId}`);
+        }
+        return revoked;
+    }
+
+    private requireStore(): ServerAuthStore {
+        const store = this.authStore;
+        if (!store) throw new AuthStoreNotReady();
+        store.assertReady();
+        return store;
+    }
+
+    private signingKey(): string {
+        if (this.envSigningKey) return this.envSigningKey;
+        const store = this.authStore;
+        return store ? store.getOrCreateSecret(SIGNING_KEY_SECRET) : this.processSigningKey;
+    }
+
+    private audit(action: string, userId: number | null, details: string, deviceId: string | null = null): void {
+        try {
+            auditContext.run({ deviceId }, () => (this.dbService as any).logAudit?.(action, 'server_auth', null, userId, details));
+        } catch { /* audit must not block auth */ }
+    }
+
+    private streamStillValid(sessionId: string | null, deviceId: string | null): boolean {
+        const store = this.authStore;
+        if (!store) return true;
+        try {
+            if (sessionId && !store.getActiveSession(sessionId)) return false;
+            if (deviceId && store.getDevice(deviceId)?.revokedAt != null) return false;
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     private async setup() {
@@ -345,8 +447,38 @@ export class ApiServer {
             });
         }
 
+        // Protocol handshake (#193): every API response names the server's
+        // protocol and release; a client outside the supported window gets
+        // 426 and is told which side needs the upgrade.
+        this.fastify.addHook('onRequest', async (request, reply) => {
+            if (!request.url.startsWith('/api/')) return;
+            reply.header(PROTOCOL_HEADER, String(PROTOCOL_VERSION));
+            reply.header(SERVER_VERSION_HEADER, serverReleaseVersion());
+            const verdict = checkClientProtocol(request.headers[PROTOCOL_HEADER]);
+            if (!verdict.ok) {
+                return reply.code(426).send({
+                    error: verdict.error,
+                    upgrade: verdict.upgrade,
+                    protocol: PROTOCOL_VERSION,
+                    minProtocol: MIN_SUPPORTED_PROTOCOL,
+                    serverVersion: serverReleaseVersion()
+                });
+            }
+        });
+
+        // Store not ready (vault still locked) is a 503, never a 500.
+        this.fastify.setErrorHandler((error, _request, reply) => {
+            if (error instanceof AuthStoreNotReady) {
+                return reply.code(503).send({ error: 'SERVER_STARTING' });
+            }
+            return reply.send(error);
+        });
+
         // API Routes
+        this.fastify.get('/api/server/hello', this.handleHello.bind(this));
+        this.fastify.post('/api/devices/join', this.handleJoin.bind(this));
         this.fastify.post('/api/auth/login', this.handleLogin.bind(this));
+        this.fastify.post('/api/auth/refresh', this.handleRefresh.bind(this));
 
         // Google Drive OAuth callback (same port as API — avoids a second listener)
         this.fastify.get('/oauth2callback', async (request, reply) => {
@@ -388,6 +520,32 @@ export class ApiServer {
         this.fastify.register(async (instance) => {
             instance.addHook('preValidation', this.authenticate.bind(this));
             instance.post('/api/ipc/:method', this.handleIpcCall.bind(this));
+            instance.post('/api/auth/logout', this.handleLogout.bind(this));
+            instance.get('/api/events', (request, reply) => {
+                const auth = (request as any).auth as RequestAuth;
+                this.events.stream(request, reply, { sessionId: auth.session?.id ?? null, deviceId: auth.device?.id ?? null });
+            });
+
+            // Joined computers (admin only).
+            instance.post('/api/admin/join-codes', this.adminOnly(async (request) => {
+                const body = (request.body ?? {}) as { deviceName?: unknown };
+                const user = (request as any).user;
+                const issued = this.issueJoinCode({
+                    createdBy: user.id,
+                    deviceName: typeof body.deviceName === 'string' ? body.deviceName : null
+                });
+                this.audit('JOIN_CODE_ISSUE', user.id,
+                    `Issued a join code${issued.deviceName ? ` for ${issued.deviceName}` : ''}`, this.deviceIdOf(request));
+                return issued;
+            }));
+            instance.get('/api/admin/devices', this.adminOnly(async () => this.requireStore().listDevices()));
+            instance.delete('/api/admin/devices/:id', this.adminOnly(async (request, reply) => {
+                const { id } = request.params as { id: string };
+                if (!this.revokeDevice(id, (request as any).user.id)) {
+                    return reply.code(404).send({ error: 'Not found' });
+                }
+                return { revoked: true };
+            }));
         });
 
         // SPA Fallback (prod: index.html; dev: proxy to ng serve for LAN access)
@@ -499,7 +657,7 @@ export class ApiServer {
         try {
             await this.ensureSetup();
             await this.fastify.listen({ port, host });
-            console.log(`API Server running on http://${host}:${port}`);
+            console.log(`API Server running on ${this.options.tls ? 'https' : 'http'}://${host}:${port}`);
         } catch (err) {
             this._started = false;
             console.error('[API Server] Failed to start:', err);
@@ -516,6 +674,7 @@ export class ApiServer {
 
     async close() {
         try {
+            this.events.close();
             await this.fastify.close();
         } finally {
             this._started = false;
@@ -554,18 +713,177 @@ export class ApiServer {
 
     // Middleware: Auth
     private async authenticate(request: FastifyRequest, reply: FastifyReply) {
+        let decoded: any;
         try {
             const authHeader = request.headers.authorization;
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
                 throw new Error('Missing or invalid token scheme');
             }
             const token = authHeader.split(' ')[1];
-            const decoded = jwt.verify(token, JWT_SECRET) as any;
-            (request as any).user = decoded;
+            decoded = jwt.verify(token, this.signingKey(), { algorithms: ['HS256'] }) as any;
         } catch (err) {
-            reply.code(401).send({ error: 'Unauthorized' });
-            return;
+            if (err instanceof AuthStoreNotReady) {
+                return reply.code(503).send({ error: 'SERVER_STARTING' });
+            }
+            return reply.code(401).send({ error: 'Unauthorized' });
         }
+
+        const auth: RequestAuth = { session: null, device: null };
+        if (decoded.sid) {
+            // A server session: still active, same user, and (when bound)
+            // presented from the computer it was issued to.
+            const store = this.authStore;
+            const session = store?.getActiveSession(String(decoded.sid)) ?? null;
+            // A role change since the token was minted needs a refresh.
+            if (!store || !session || session.userId !== decoded.id || session.role !== decoded.role) {
+                return reply.code(401).send({ error: 'Unauthorized' });
+            }
+            if (session.deviceId) {
+                const device = store.authenticateDevice(request.headers[DEVICE_HEADER], request.ip);
+                if (!device || device.id !== session.deviceId) {
+                    return reply.code(401).send({ error: 'Unauthorized' });
+                }
+                auth.device = device;
+            }
+            auth.session = session;
+        } else if (this.options.requireDevice) {
+            return reply.code(401).send({ error: 'Unauthorized' });
+        }
+        (request as any).user = decoded;
+        (request as any).auth = auth;
+    }
+
+    private deviceIdOf(request: FastifyRequest): string | null {
+        return ((request as any).auth as RequestAuth | undefined)?.device?.id ?? null;
+    }
+
+    private adminOnly(handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) {
+        return async (request: FastifyRequest, reply: FastifyReply) => {
+            if ((request as any).user?.role !== 'admin') {
+                return reply.code(403).send({ error: 'Forbidden' });
+            }
+            return handler(request, reply);
+        };
+    }
+
+    /** Mints an access token for a user, from their server session when there is one. */
+    private issueAccessToken(user: { id: number; role: string; username: string }, session: ServerSession | null): string {
+        const claims: Record<string, unknown> = { id: user.id, role: user.role, username: user.username };
+        if (session) {
+            claims['sid'] = session.id;
+            if (session.deviceId) claims['dev'] = session.deviceId;
+            // Facility the session is working in (#195); absent means facility 1.
+            if (session.facilityId != null) claims['facility_id'] = session.facilityId;
+        }
+        return jwt.sign(claims, this.signingKey(), { algorithm: 'HS256', expiresIn: this.accessTtlSec });
+    }
+
+    /** The calling computer, from its device credential; required on NalamDesk Server. */
+    private resolveDevice(request: FastifyRequest): JoinedDevice | null {
+        const header = request.headers[DEVICE_HEADER];
+        if (!header) return null;
+        return this.authStore?.authenticateDevice(header, request.ip) ?? null;
+    }
+
+    private async handleHello() {
+        return {
+            product: 'nalamdesk-server',
+            protocol: PROTOCOL_VERSION,
+            minProtocol: MIN_SUPPORTED_PROTOCOL,
+            serverVersion: serverReleaseVersion(),
+            requireDevice: !!this.options.requireDevice,
+            tls: this.options.tls
+                ? { selfSigned: this.options.tls.selfSigned, fingerprint256: this.options.tls.fingerprint256 }
+                : null
+        };
+    }
+
+    // Join: a computer trades a one-time code from an admin for a device credential.
+    private async handleJoin(request: FastifyRequest, reply: FastifyReply) {
+        const ip = request.ip;
+        const limited = this.joinIpLimiter.check(ip);
+        if (!limited.allowed) {
+            return reply.code(429).header('retry-after', String(limited.retryAfterSec)).send({ error: 'TOO_MANY_ATTEMPTS' });
+        }
+        const store = this.requireStore();
+        const body = (request.body ?? {}) as { code?: unknown; name?: unknown };
+        const parsed = typeof body.code === 'string' ? parseJoinCode(body.code) : null;
+        const deviceName = typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 100) : 'Unnamed computer';
+        const fail = (status: number, error: string) => {
+            this.joinIpLimiter.record(ip);
+            this.joinFailureLimiter.record('all');
+            if (!this.joinFailureLimiter.check('all').allowed) {
+                // Too many wrong codes across the network: void every
+                // outstanding code so guessing cannot succeed.
+                const voided = store.revokeOutstandingJoinCodes();
+                this.joinFailureLimiter.reset('all');
+                this.audit('JOIN_CODES_VOIDED', null, `Voided ${voided} outstanding join code(s) after repeated wrong attempts`);
+            }
+            return reply.code(status).send({ error });
+        };
+        if (!parsed) return fail(400, 'INVALID_CODE');
+        if (parsed.fingerprintPrefix !== fingerprintPrefix(joinFingerprint(this.options))) {
+            return fail(400, 'WRONG_SERVER');
+        }
+        const joined = store.redeemJoinCode(parsed.secret, { deviceName, ip });
+        if (!joined) return fail(401, 'INVALID_CODE');
+        this.audit('DEVICE_JOIN', null, `Computer "${joined.device.name}" joined from ${ip}`, joined.device.id);
+        return {
+            deviceId: joined.device.id,
+            deviceName: joined.device.name,
+            deviceToken: joined.token,
+            protocol: PROTOCOL_VERSION,
+            serverVersion: serverReleaseVersion(),
+            tls: this.options.tls
+                ? { selfSigned: this.options.tls.selfSigned, fingerprint256: this.options.tls.fingerprint256 }
+                : null
+        };
+    }
+
+    private async handleRefresh(request: FastifyRequest, reply: FastifyReply) {
+        const store = this.requireStore();
+        const body = (request.body ?? {}) as { refreshToken?: unknown };
+        let deviceId: string | null = null;
+        if (request.headers[DEVICE_HEADER]) {
+            const device = this.resolveDevice(request);
+            if (!device) return reply.code(401).send({ error: 'DEVICE_NOT_JOINED' });
+            deviceId = device.id;
+        } else if (this.options.requireDevice) {
+            return reply.code(401).send({ error: 'DEVICE_NOT_JOINED' });
+        }
+        const result = store.refreshSession(body.refreshToken, deviceId, request.ip);
+        if ('error' in result) {
+            if (result.error === 'reused') {
+                this.audit('SESSION_REFRESH_REUSED', null, 'A used refresh token was presented again; the session was ended', deviceId);
+            }
+            return reply.code(401).send({ error: 'SESSION_EXPIRED' });
+        }
+        // Current role and status, so changes apply at the next refresh.
+        const user = store.getUser(result.session.userId);
+        if (!user || user.active !== 1) {
+            store.revokeSession(result.session.id, 'user_inactive');
+            return reply.code(401).send({ error: 'SESSION_EXPIRED' });
+        }
+        if (user.role === 'admin' && process.env['STRICT_ADMIN_IP'] === 'true'
+            && request.ip !== '127.0.0.1' && request.ip !== '::1') {
+            return reply.code(403).send({ error: 'Admin login restricted to Master System' });
+        }
+        return {
+            token: this.issueAccessToken(user, result.session),
+            refreshToken: result.refreshToken,
+            expiresIn: this.accessTtlSec,
+            user: { id: user.id, username: user.username, role: user.role, name: user.name }
+        };
+    }
+
+    private async handleLogout(request: FastifyRequest) {
+        const auth = (request as any).auth as RequestAuth;
+        if (auth.session && this.authStore) {
+            this.authStore.revokeSession(auth.session.id, 'logout');
+            this.events.disconnect({ sessionId: auth.session.id });
+            this.audit('LOGOUT', auth.session.userId, 'Signed out', auth.device?.id ?? null);
+        }
+        return { ok: true };
     }
 
     // Login Handler
@@ -575,6 +893,30 @@ export class ApiServer {
             return reply.code(400).send({ error: 'Invalid input' });
         }
         const { username, password } = body;
+        const ip = request.ip;
+
+        // Joined computers only on NalamDesk Server; elsewhere a credential,
+        // when sent, still binds the session to the computer.
+        let device: JoinedDevice | null = null;
+        if (request.headers[DEVICE_HEADER] || this.options.requireDevice) {
+            device = this.resolveDevice(request);
+            if (!device) return reply.code(401).send({ error: 'DEVICE_NOT_JOINED' });
+        }
+
+        const limited = this.loginLimiter.check(ip, username);
+        if (!limited.allowed) {
+            return reply.code(429).header('retry-after', String(limited.retryAfterSec))
+                .send({ error: 'TOO_MANY_ATTEMPTS', retryAfterSec: limited.retryAfterSec });
+        }
+        const failed = (userId: number | null) => {
+            if (this.loginLimiter.recordFailure(ip, username)) {
+                this.audit('LOGIN_LOCKED', userId, `Sign-in locked for "${String(username).slice(0, 50)}" after repeated failures from ${ip}`, device?.id ?? null);
+            } else if (userId != null) {
+                this.audit('LOGIN_FAILED', userId, `Wrong password from ${ip}`, device?.id ?? null);
+            }
+            return reply.code(401).send({ error: 'Invalid credentials' });
+        };
+
         try {
             this.dbService.beginWork();
         } catch (error: any) {
@@ -592,7 +934,7 @@ export class ApiServer {
             }
 
             if (!user || user.active === 0) {
-                return reply.code(401).send({ error: 'Invalid credentials' });
+                return failed(null);
             }
 
             // Admin IP Restriction
@@ -605,15 +947,25 @@ export class ApiServer {
 
             // Verify Password
             try {
-                if (await argon2.verify(user.password, password)) {
-                    const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, JWT_SECRET, { expiresIn: '12h' });
-                    return { token, user: { id: user.id, username: user.username, role: user.role, name: user.name } };
-                } else {
-                    return reply.code(401).send({ error: 'Invalid credentials' });
+                if (!(await argon2.verify(user.password, password))) {
+                    return failed(user.id);
                 }
             } catch (e) {
                 return reply.code(500).send({ error: 'Auth error' });
             }
+            this.loginLimiter.recordSuccess(ip, username);
+            const created = this.authStore
+                ? this.authStore.createSession({ userId: user.id, deviceId: device?.id ?? null, ip })
+                : null;
+            if (created) {
+                this.audit('LOGIN', user.id, `Signed in${device ? ` on "${device.name}"` : ''} from ${ip}`, device?.id ?? null);
+            }
+            return {
+                token: this.issueAccessToken(user, created?.session ?? null),
+                ...(created ? { refreshToken: created.refreshToken } : {}),
+                expiresIn: this.accessTtlSec,
+                user: { id: user.id, username: user.username, role: user.role, name: user.name }
+            };
         } finally {
             this.dbService.endWork();
         }
@@ -659,9 +1011,12 @@ export class ApiServer {
 
             // 3. Execution: ABDM service methods first, then DatabaseService.
             // Same arg unpacking contract as Electron IPC.
+            const deviceId = this.deviceIdOf(request);
             if (ABDM_SERVICE_METHODS.has(method)) {
                 try {
-                    return await this.invokeAbdmMethod(method, args, user);
+                    const result = await auditContext.run({ deviceId }, () => this.invokeAbdmMethod(method, args, user));
+                    this.events.publishForMethod(method);
+                    return result;
                 } catch (e: any) {
                     console.error(`[IPC Error] method: ${method}`, e);
                     return reply.code(500).send({ error: 'Internal server error' });
@@ -669,7 +1024,8 @@ export class ApiServer {
             }
             if (typeof dbAny[method] === 'function') {
                 try {
-                    const result = await invokeDbMethod(dbAny, method, args, user.id);
+                    const result = await auditContext.run({ deviceId }, () => invokeDbMethod(dbAny, method, args, user.id));
+                    this.events.publishForMethod(method);
                     if (method === 'saveUserOverride' || method === 'deleteUserOverride'
                         || method === 'saveRole' || method === 'deleteRole') {
                         this.refreshAccessPolicy();

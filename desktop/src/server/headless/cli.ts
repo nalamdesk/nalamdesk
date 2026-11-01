@@ -8,8 +8,20 @@ import {
     PASSPHRASE_PROVIDER,
     PassphraseKeyStore
 } from '../../main/services/HeadlessKeyStores';
+import {
+    DEFAULT_CREDENTIAL_NAME,
+    DEFAULT_CREDSTORE_DIR,
+    DPAPI_PROVIDER,
+    DpapiStore,
+    KMS_PROVIDER,
+    KeyCommandStore,
+    SYSTEMD_CREDS_PROVIDER,
+    SystemdCredsStore,
+    TPM_PROVIDER,
+    type KeyExec
+} from '../../main/services/ExternalKeyStores';
 import type { KeySlotSummary } from '../../main/services/SecurityService';
-import { loadServerConfig, readSecretFromEnv, type ServerConfig } from './config';
+import { KEY_PROVIDERS, loadServerConfig, readSecretFromEnv, type KeyProviderConfig, type ServerConfig } from './config';
 
 /**
  * `nalamdesk-server` commands (ADR 0001, #192). Everything the CLI touches is
@@ -67,6 +79,8 @@ export interface CliDeps {
     createBackups(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig): CliBackups;
     /** Resolves when the process is asked to stop. */
     waitForShutdown(): Promise<void>;
+    /** Runs systemd-creds, PowerShell (DPAPI) and key commands. Tests replace it. */
+    keyExec?: KeyExec;
 }
 
 interface ParsedArgs {
@@ -108,8 +122,11 @@ Commands:
   start                          Unlock the vault and serve clients (default).
   status                         Show whether the vault is set up.
   key list                       List the ways this vault can be unlocked.
-  key add --provider key-file [--key-file <path>] [--label <text>]
+  key add --provider key-file --key-file <path> [--label <text>]
   key add --provider passphrase [--label <text>]
+  key add --provider systemd-creds|tpm [--credential-name <name>] [--credential-path <path>]
+  key add --provider dpapi --dpapi-blob <path>
+  key add --provider kms --key-command <command>
   key remove <slot-id>           Remove an unlock method.
   recovery confirm               Confirm you saved the recovery code.
   backup [--out <file>]          Write an encrypted backup (default: <data dir>/backups).
@@ -120,8 +137,10 @@ Options:
 
 Environment:
   NALAMDESK_DATA_DIR, NALAMDESK_HOST, NALAMDESK_PORT, NALAMDESK_STATIC_PATH,
-  NALAMDESK_KEY_PROVIDER (key-file | passphrase), NALAMDESK_KEY_FILE,
-  NALAMDESK_PASSPHRASE_FILE or NALAMDESK_PASSPHRASE,
+  NALAMDESK_KEY_PROVIDER (key-file | passphrase | systemd-creds | tpm | dpapi | kms),
+  NALAMDESK_KEY_FILE, NALAMDESK_PASSPHRASE_FILE or NALAMDESK_PASSPHRASE,
+  NALAMDESK_CREDENTIAL_NAME, NALAMDESK_CREDENTIAL_PATH, NALAMDESK_DPAPI_BLOB,
+  NALAMDESK_KEY_COMMAND,
   NALAMDESK_RECOVERY_CODE_FILE or NALAMDESK_RECOVERY_CODE (restore only),
   NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only).`;
 
@@ -141,26 +160,109 @@ async function readPassphrase(io: CliIO, confirm: boolean, envName = 'NALAMDESK_
     return confirm ? askTwice(io, 'Vault passphrase') : io.prompt('Vault passphrase: ', { secret: true });
 }
 
-/** Opens the configured key store. `create` makes a key file on first init. */
-export async function openKeyStore(config: ServerConfig, io: CliIO, options: { create?: boolean } = {}): Promise<DeviceKeyStore> {
-    const provider = config.keyProvider;
-    if (provider.provider === KEY_FILE_PROVIDER) {
-        if (options.create && !fs.existsSync(provider.keyPath)) {
-            const store = KeyFileStore.create(provider.keyPath);
-            io.out(`Created key file ${provider.keyPath}. Back it up separately from the database, and keep disk encryption on.`);
+function credentialUnitLine(name: string, credentialPath: string): string {
+    return path.dirname(credentialPath) === DEFAULT_CREDSTORE_DIR && path.basename(credentialPath) === name
+        ? `LoadCredentialEncrypted=${name}`
+        : `LoadCredentialEncrypted=${name}:${credentialPath}`;
+}
+
+function assertAvailable(store: DeviceKeyStore): DeviceKeyStore {
+    const status = store.status();
+    if (!status.available) throw new Error(status.message || `The ${status.provider} key is not usable.`);
+    return store;
+}
+
+/**
+ * Builds a key store for a provider. `create` makes new key material (a key
+ * file, an encrypted systemd credential, a DPAPI blob) when none exists yet.
+ */
+async function buildKeyStore(provider: KeyProviderConfig, io: CliIO, exec: KeyExec | undefined,
+    options: { create: boolean; passphraseEnv: string; reuseLoaded?: boolean }): Promise<DeviceKeyStore> {
+    switch (provider.provider) {
+        case KEY_FILE_PROVIDER: {
+            if (options.create && !fs.existsSync(provider.keyPath)) {
+                const store = KeyFileStore.create(provider.keyPath);
+                io.out(`Created key file ${provider.keyPath}. Back it up separately from the database, and keep disk encryption on.`);
+                return store;
+            }
+            return assertAvailable(new KeyFileStore(provider.keyPath));
+        }
+        case PASSPHRASE_PROVIDER: {
+            const passphrase = await readPassphrase(io, options.create, options.passphraseEnv);
+            if (options.create && [...passphrase.normalize('NFKC')].length < PASSPHRASE_MIN_LENGTH) {
+                throw new Error(`Use at least ${PASSPHRASE_MIN_LENGTH} characters.`);
+            }
+            return new PassphraseKeyStore(passphrase);
+        }
+        case SYSTEMD_CREDS_PROVIDER:
+        case TPM_PROVIDER: {
+            const tpm = provider.provider === TPM_PROVIDER;
+            const loaded = new SystemdCredsStore({ name: provider.credentialName, tpm, env: io.env });
+            if (!options.create) return assertAvailable(loaded);
+            // init may adopt a credential the admin already loaded; key add always makes a new one.
+            if (options.reuseLoaded && loaded.status().available) return loaded;
+            const store = SystemdCredsStore.create({ name: provider.credentialName, tpm, env: io.env, outputPath: provider.credentialPath, exec });
+            io.out(`Created encrypted credential ${provider.credentialPath}${tpm ? ' (sealed to this TPM)' : ''}.`);
+            io.out(`Add \`${credentialUnitLine(provider.credentialName, provider.credentialPath)}\` to the nalamdesk-server service unit.`);
             return store;
         }
-        const store = new KeyFileStore(provider.keyPath);
-        const status = store.status();
-        if (!status.available) throw new Error(status.message || 'The key file is not usable.');
-        return store;
+        case DPAPI_PROVIDER: {
+            if (options.create && !fs.existsSync(provider.blobPath)) {
+                const store = DpapiStore.create(provider.blobPath, { exec });
+                io.out(`Created DPAPI key ${provider.blobPath}. Only this Windows account on this machine can open it.`);
+                return store;
+            }
+            return assertAvailable(new DpapiStore(provider.blobPath, { exec }));
+        }
+        case KMS_PROVIDER:
+            return assertAvailable(new KeyCommandStore(provider.command, { exec }));
     }
-    const passphrase = await readPassphrase(io, !!options.create);
-    return new PassphraseKeyStore(passphrase);
+}
+
+/** Opens the configured key store. `create` makes new key material on first init. */
+export async function openKeyStore(config: ServerConfig, io: CliIO, options: { create?: boolean; exec?: KeyExec } = {}): Promise<DeviceKeyStore> {
+    return buildKeyStore(config.keyProvider, io, options.exec, {
+        create: !!options.create, passphraseEnv: 'NALAMDESK_PASSPHRASE', reuseLoaded: true
+    });
+}
+
+/** The provider settings for `key add`, from flags. New key material is always created. */
+async function newSlotProvider(args: ParsedArgs, io: CliIO): Promise<KeyProviderConfig> {
+    const provider = flagString(args, 'provider');
+    switch (provider) {
+        case KEY_FILE_PROVIDER: {
+            const keyPath = flagString(args, 'key-file');
+            if (!keyPath) throw new Error('--key-file <path> is required: the new key file to create.');
+            if (fs.existsSync(keyPath)) throw new Error(`${keyPath} already exists. Choose a new path.`);
+            return { provider, keyPath: path.resolve(keyPath) };
+        }
+        case PASSPHRASE_PROVIDER:
+            return { provider };
+        case SYSTEMD_CREDS_PROVIDER:
+        case TPM_PROVIDER: {
+            const credentialName = flagString(args, 'credential-name') ?? DEFAULT_CREDENTIAL_NAME;
+            const credentialPath = path.resolve(flagString(args, 'credential-path') ?? path.join(DEFAULT_CREDSTORE_DIR, credentialName));
+            if (fs.existsSync(credentialPath)) throw new Error(`${credentialPath} already exists. Choose a new --credential-name or --credential-path.`);
+            return { provider, credentialName, credentialPath };
+        }
+        case DPAPI_PROVIDER: {
+            const blobPath = flagString(args, 'dpapi-blob');
+            if (!blobPath) throw new Error('--dpapi-blob <path> is required: the new DPAPI key file to create.');
+            if (fs.existsSync(blobPath)) throw new Error(`${blobPath} already exists. Choose a new path.`);
+            return { provider, blobPath: path.resolve(blobPath) };
+        }
+        case KMS_PROVIDER: {
+            const command = flagString(args, 'key-command') ?? io.env['NALAMDESK_NEW_KEY_COMMAND'];
+            if (!command?.trim()) throw new Error('--key-command <command> is required: a command that prints the key.');
+            return { provider, command };
+        }
+        default:
+            throw new Error(`--provider must be one of: ${KEY_PROVIDERS.join(', ')}.`);
+    }
 }
 
 async function unlock(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<{ vault: CliVault; database: CliDatabase; store: DeviceKeyStore }> {
-    const store = await openKeyStore(config, io);
+    const store = await openKeyStore(config, io, { exec: deps.keyExec });
     const vault = deps.createVault(store);
     vault.reconcileProvisioning(config.dbPath, config.dataDir);
     const state = vault.isSetup(config.dataDir);
@@ -169,7 +271,7 @@ async function unlock(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<{
         await vault.initializeDevice(config.dbPath, config.dataDir);
     } catch (error: any) {
         if (error?.message === 'DEVICE_UNLOCK_FAILED') {
-            throw new Error('DEVICE_UNLOCK_FAILED: this key provider does not open the vault. Check the key file or passphrase, or recover with the recovery code.');
+            throw new Error('DEVICE_UNLOCK_FAILED: this key provider does not open the vault. Check its key, or recover with the recovery code.');
         }
         throw error;
     }
@@ -222,7 +324,7 @@ async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: 
         throw new Error(`The admin password needs at least ${ADMIN_PASSWORD_MIN_LENGTH} characters on a server.`);
     }
 
-    const store = await openKeyStore(config, io, { create: true });
+    const store = await openKeyStore(config, io, { create: true, exec: deps.keyExec });
     const vault = deps.createVault(store);
     const database = deps.createDatabase();
     const clinicName = flagString(args, 'clinic-name');
@@ -235,7 +337,7 @@ async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: 
     io.out(`  Recovery code:  ${recoveryCode}`);
     io.out('');
     io.out('Store the recovery code somewhere safe and offline. It is the only way to open this');
-    io.out('vault if the key file, passphrase or machine is lost. It will not be shown again.');
+    io.out('vault if its key or this machine is lost. It will not be shown again.');
     const confirmed = await confirmRecovery(vault, io);
     if (!confirmed) {
         io.out('Run `nalamdesk-server recovery confirm` once the code is stored.');
@@ -381,7 +483,7 @@ async function cmdStatus(config: ServerConfig, io: CliIO, deps: CliDeps): Promis
 async function cmdKey(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     const action = args.positional[1];
     if (!['list', 'add', 'remove'].includes(action ?? '')) {
-        io.err('Usage: nalamdesk-server key list | key add --provider <key-file|passphrase> | key remove <slot-id>');
+        io.err(`Usage: nalamdesk-server key list | key add --provider <${KEY_PROVIDERS.join('|')}> | key remove <slot-id>`);
         return 2;
     }
     const { vault, database } = await unlock(config, io, deps);
@@ -391,23 +493,9 @@ async function cmdKey(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: C
             return 0;
         }
         if (action === 'add') {
-            const provider = flagString(args, 'provider');
             const label = flagString(args, 'label');
-            let store: DeviceKeyStore;
-            if (provider === KEY_FILE_PROVIDER) {
-                const keyPath = flagString(args, 'key-file');
-                if (!keyPath) throw new Error('--key-file <path> is required: the new key file to create.');
-                if (fs.existsSync(keyPath)) throw new Error(`${keyPath} already exists. Choose a new path.`);
-                store = KeyFileStore.create(keyPath);
-            } else if (provider === PASSPHRASE_PROVIDER) {
-                const passphrase = await readPassphrase(io, true, 'NALAMDESK_NEW_PASSPHRASE');
-                if ([...passphrase.normalize('NFKC')].length < PASSPHRASE_MIN_LENGTH) {
-                    throw new Error(`Use at least ${PASSPHRASE_MIN_LENGTH} characters.`);
-                }
-                store = new PassphraseKeyStore(passphrase);
-            } else {
-                throw new Error('--provider must be key-file or passphrase.');
-            }
+            const provider = await newSlotProvider(args, io);
+            const store = await buildKeyStore(provider, io, deps.keyExec, { create: true, passphraseEnv: 'NALAMDESK_NEW_PASSPHRASE' });
             const slot = vault.addKeySlot(store, label);
             database.logAudit('KEY_SLOT_ADD', 'vault', null, null, `Added ${slot.provider} unlock method ${slot.id}`);
             io.out(`Added ${slot.provider} slot ${slot.id}.`);

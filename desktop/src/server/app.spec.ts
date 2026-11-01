@@ -563,6 +563,17 @@ describe('HTTP /api/ipc service methods (#196)', () => {
         expect(db.runWork).toHaveBeenCalledTimes(2);
     });
 
+    it('announces cloud changes on the events stream, not reads or refusals', async () => {
+        const publish = vi.spyOn(server.events, 'publish');
+        await post('cloudGetStatus', [], { id: 5, role: 'nurse' });
+        await post('cloudRequestPairing', [{}], { id: 5, role: 'doctor' });
+        expect(publish).not.toHaveBeenCalled();
+        await post('cloudRequestPairing', [{}], { id: 1, role: 'admin' });
+        expect(publish).toHaveBeenCalledWith('cloud', 'cloudRequestPairing');
+        await post('cloudDecide', [{}], { id: 6, role: 'receptionist' });
+        expect(publish).toHaveBeenCalledWith('bookings', 'cloudDecide');
+    });
+
     it('refuses and audits other roles', async () => {
         const denied = await post('cloudRequestPairing', [{}], { id: 5, role: 'doctor' });
         expect(denied.statusCode).toBe(403);

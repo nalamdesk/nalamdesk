@@ -1,6 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { KEY_FILE_PROVIDER, PASSPHRASE_PROVIDER } from '../../main/services/HeadlessKeyStores';
+import {
+    DEFAULT_CREDENTIAL_NAME, DEFAULT_CREDSTORE_DIR, DPAPI_PROVIDER, KMS_PROVIDER, SYSTEMD_CREDS_PROVIDER, TPM_PROVIDER
+} from '../../main/services/ExternalKeyStores';
 import { PROD_API_PORT } from '../../shared/runtime-config';
 
 /**
@@ -19,7 +22,15 @@ export interface ServerConfig {
 
 export type KeyProviderConfig =
     | { provider: typeof KEY_FILE_PROVIDER; keyPath: string }
-    | { provider: typeof PASSPHRASE_PROVIDER };
+    | { provider: typeof PASSPHRASE_PROVIDER }
+    /** credentialPath is where `init` writes a new encrypted credential. */
+    | { provider: typeof SYSTEMD_CREDS_PROVIDER | typeof TPM_PROVIDER; credentialName: string; credentialPath: string }
+    | { provider: typeof DPAPI_PROVIDER; blobPath: string }
+    | { provider: typeof KMS_PROVIDER; command: string };
+
+export const KEY_PROVIDERS = [
+    KEY_FILE_PROVIDER, PASSPHRASE_PROVIDER, SYSTEMD_CREDS_PROVIDER, TPM_PROVIDER, DPAPI_PROVIDER, KMS_PROVIDER
+] as const;
 
 export interface ConfigFile {
     dataDir?: string;
@@ -28,13 +39,19 @@ export interface ConfigFile {
     staticPath?: string;
     keyProvider?: string;
     keyFile?: string;
+    credentialName?: string;
+    credentialPath?: string;
+    dpapiBlob?: string;
+    keyCommand?: string;
 }
 
 export const DEFAULT_DATA_DIR = process.platform === 'win32'
     ? path.join(process.env['ProgramData'] || 'C:\\ProgramData', 'NalamDesk', 'server')
     : '/var/lib/nalamdesk';
 
-const CONFIG_KEYS = new Set(['dataDir', 'host', 'port', 'staticPath', 'keyProvider', 'keyFile']);
+const CONFIG_KEYS = new Set([
+    'dataDir', 'host', 'port', 'staticPath', 'keyProvider', 'keyFile', 'credentialName', 'credentialPath', 'dpapiBlob', 'keyCommand'
+]);
 const SECRET_KEYS = /pass(word|phrase)?|secret|token/i;
 
 export interface LoadConfigOptions {
@@ -95,17 +112,7 @@ export function loadServerConfig(options: LoadConfigOptions = {}): ServerConfig 
             : options.defaultStaticPath ?? path.join(__dirname, '..', '..', '..', 'nalamdesk', 'browser');
 
     const providerName = env['NALAMDESK_KEY_PROVIDER'] || file.keyProvider || KEY_FILE_PROVIDER;
-    let keyProvider: KeyProviderConfig;
-    if (providerName === KEY_FILE_PROVIDER) {
-        const keyPath = env['NALAMDESK_KEY_FILE']
-            ? path.resolve(cwd, env['NALAMDESK_KEY_FILE'])
-            : file.keyFile ? resolve(file.keyFile) : path.join(dataDir, 'vault.key');
-        keyProvider = { provider: KEY_FILE_PROVIDER, keyPath };
-    } else if (providerName === PASSPHRASE_PROVIDER) {
-        keyProvider = { provider: PASSPHRASE_PROVIDER };
-    } else {
-        throw new Error(`CONFIG_INVALID: key provider "${providerName}" is not supported yet. Use key-file or passphrase.`);
-    }
+    const keyProvider = resolveKeyProvider(providerName, { env, file, cwd, dataDir, resolve });
 
     return {
         dataDir,
@@ -115,6 +122,42 @@ export function loadServerConfig(options: LoadConfigOptions = {}): ServerConfig 
         staticPath,
         keyProvider
     };
+}
+
+interface ProviderContext {
+    env: NodeJS.ProcessEnv;
+    file: ConfigFile;
+    cwd: string;
+    dataDir: string;
+    resolve: (value: string) => string;
+}
+
+function resolveKeyProvider(providerName: string, { env, file, cwd, dataDir, resolve }: ProviderContext): KeyProviderConfig {
+    /** An environment path wins over a config-file path (resolved next to the file), then the default. */
+    const pathSetting = (envName: string, fileValue: string | undefined, fallback: string) =>
+        env[envName] ? path.resolve(cwd, env[envName]!) : fileValue ? resolve(fileValue) : fallback;
+
+    switch (providerName) {
+        case KEY_FILE_PROVIDER:
+            return { provider: KEY_FILE_PROVIDER, keyPath: pathSetting('NALAMDESK_KEY_FILE', file.keyFile, path.join(dataDir, 'vault.key')) };
+        case PASSPHRASE_PROVIDER:
+            return { provider: PASSPHRASE_PROVIDER };
+        case SYSTEMD_CREDS_PROVIDER:
+        case TPM_PROVIDER: {
+            const credentialName = env['NALAMDESK_CREDENTIAL_NAME'] || file.credentialName || DEFAULT_CREDENTIAL_NAME;
+            const credentialPath = pathSetting('NALAMDESK_CREDENTIAL_PATH', file.credentialPath, path.join(DEFAULT_CREDSTORE_DIR, credentialName));
+            return { provider: providerName, credentialName, credentialPath };
+        }
+        case DPAPI_PROVIDER:
+            return { provider: DPAPI_PROVIDER, blobPath: pathSetting('NALAMDESK_DPAPI_BLOB', file.dpapiBlob, path.join(dataDir, 'vault.dpapi')) };
+        case KMS_PROVIDER: {
+            const command = env['NALAMDESK_KEY_COMMAND'] || file.keyCommand;
+            if (!command?.trim()) throw new Error('CONFIG_INVALID: the kms provider needs a key command. Set NALAMDESK_KEY_COMMAND or keyCommand.');
+            return { provider: KMS_PROVIDER, command };
+        }
+        default:
+            throw new Error(`CONFIG_INVALID: unknown key provider "${providerName}". Use one of: ${KEY_PROVIDERS.join(', ')}.`);
+    }
 }
 
 /**

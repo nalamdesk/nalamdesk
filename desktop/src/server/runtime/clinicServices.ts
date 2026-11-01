@@ -9,8 +9,17 @@ import { CloudLink } from '../../main/cloud/CloudLink';
 import { AbdmMailboxProcessor } from '../../main/cloud/AbdmMailboxProcessor';
 import type { Audience } from '../../main/cloud/SignedCloudClient';
 
+import type { EventTopic } from '../events';
+
 /** Events the services raise for clients (renderer push or the server's events stream). */
 export type ClinicServiceEvent = 'cloud:newRequests' | 'cloud:pairingChanged' | 'abdm:shareReceived';
+
+/** The events-stream topic each service event maps to. */
+export const CLINIC_EVENT_TOPICS: Readonly<Record<ClinicServiceEvent, EventTopic>> = {
+    'cloud:newRequests': 'bookings',
+    'cloud:pairingChanged': 'cloud',
+    'abdm:shareReceived': 'abdm.inbox'
+};
 
 export interface ClinicServicesDeps {
     db: DatabaseService;

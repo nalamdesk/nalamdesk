@@ -19,7 +19,7 @@ import { abdmConfigView } from './services/AbdmRelayService';
 import { FideliusService, parseKeyMaterial } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
-import { createClinicServices } from '../server/runtime/clinicServices';
+import { CLINIC_EVENT_TOPICS, createClinicServices, type ClinicServiceEvent } from '../server/runtime/clinicServices';
 import {
     assertMethodAccess, BACKUP_IPC_CHANNELS, backupScheduleFollower, CLOUD_IPC_CHANNELS, createBackupMethods, createCloudMethods
 } from '../server/runtime/clinicMethods';
@@ -164,8 +164,13 @@ const googleDriveService = new GoogleDriveService();
 // NalamDesk Cloud (#154, #155) and ABDM through the relay (#160): the same
 // wiring NalamDesk Server uses, run in-process for single-PC mode.
 const stampedIdentity = readBuildIdentityFile(buildIdentityPath(app.getAppPath()));
+// Renderer pushes that clients of the API server also need (#193).
 const notifyRenderer = (channel: string, payload: unknown) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+    const topic = CLINIC_EVENT_TOPICS[channel as ClinicServiceEvent];
+    if (topic) {
+        try { apiServer.events.publish(topic); } catch { /* server not up yet */ }
+    }
 };
 const clinicServices = createClinicServices({
     db: databaseService,

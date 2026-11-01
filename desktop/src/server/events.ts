@@ -38,7 +38,7 @@ export function topicsForMethod(method: string): EventTopic[] {
     if (/Queue|Consultation|checkIn/i.test(method)) topics.add('queue');
     if (/AppointmentRequest/.test(method)) topics.add('bookings');
     else if (/Appointment|checkIn|fulfill/i.test(method)) topics.add('appointments');
-    if (/^abdm(Accept|Ack|Simulate)|ShareToken|Inbox/.test(method)) topics.add('abdm.inbox');
+    if (/(^abdm(Accept|Ack|Simulate))|ShareToken|Inbox/.test(method)) topics.add('abdm.inbox');
     if (/Patient|Identifier|Abha|merge/i.test(method)) topics.add('patients');
     if (/Invoice|Payment/.test(method)) topics.add('billing');
     if (/Visit|Vitals|Allerg|Condition|Medication|Prescription/.test(method)) topics.add('clinical');

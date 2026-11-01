@@ -1951,6 +1951,7 @@ export const MIGRATIONS = [
                     device_id TEXT REFERENCES joined_devices(id),
                     facility_id INTEGER,
                     refresh_hash TEXT NOT NULL,
+                    credential_stamp TEXT,
                     ip TEXT,
                     created_at INTEGER NOT NULL,
                     last_used_at INTEGER NOT NULL,

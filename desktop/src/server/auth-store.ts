@@ -33,6 +33,8 @@ export interface JoinedDevice {
 export interface ServerSession {
     id: string;
     userId: number;
+    /** The user's current role (the token's role must match it). */
+    role: string | null;
     deviceId: string | null;
     facilityId: number | null;
     expiresAt: number;
@@ -56,6 +58,8 @@ const REFRESH_TOKEN_PREFIX = 'ndr_';
 const LAST_SEEN_THROTTLE_MS = 60_000;
 
 const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+/** Changes whenever the user's password hash changes; never reveals it. */
+const credentialStamp = (passwordHash: unknown) => sha256(`nalamdesk-session:${String(passwordHash ?? '')}`);
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 
 function hashesEqual(a: string, b: string): boolean {
@@ -221,27 +225,51 @@ export class ServerAuthStore {
         return this.db().prepare('SELECT id, username, role, name, active FROM users WHERE id = ?').get(id) ?? null;
     }
 
+    /**
+     * Ends the session when its user was deactivated or removed, or their
+     * password changed since sign-in, whichever path made the change.
+     * Returns the user's current role while the session stays valid.
+     */
+    private checkSessionUser(db: SqlHandle, row: any): { ok: true; role: string } | { ok: false } {
+        const user = db.prepare('SELECT active, role, password FROM users WHERE id = ?').get(row.user_id) as any;
+        const reason = !user ? 'user_removed'
+            : user.active !== 1 ? 'user_inactive'
+                : !row.credential_stamp || !hashesEqual(row.credential_stamp, credentialStamp(user.password)) ? 'password_changed'
+                    : null;
+        if (reason) {
+            db.prepare('UPDATE server_sessions SET revoked_at = ?, revoked_reason = ? WHERE id = ? AND revoked_at IS NULL')
+                .run(this.now(), reason, row.id);
+            return { ok: false };
+        }
+        return { ok: true, role: user.role };
+    }
+
     createSession(input: { userId: number; deviceId: string | null; ip: string | null; facilityId?: number | null }) {
+        const db = this.db();
+        const user = db.prepare('SELECT password, role FROM users WHERE id = ?').get(input.userId) as any;
+        if (!user) throw new Error('Unknown user');
         const now = this.now();
         const id = crypto.randomUUID();
         const secret = randomToken();
         const absolute = now + this.policy.absoluteMs;
         const expiresAt = Math.min(now + this.policy.idleMs, absolute);
-        this.db().prepare(`
-            INSERT INTO server_sessions (id, user_id, device_id, facility_id, refresh_hash, ip, created_at, last_used_at, expires_at, absolute_expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(id, input.userId, input.deviceId, input.facilityId ?? null, sha256(secret), input.ip, now, now, expiresAt, absolute);
+        db.prepare(`
+            INSERT INTO server_sessions (id, user_id, device_id, facility_id, refresh_hash, credential_stamp, ip, created_at, last_used_at, expires_at, absolute_expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, input.userId, input.deviceId, input.facilityId ?? null, sha256(secret), credentialStamp(user.password), input.ip, now, now, expiresAt, absolute);
         return {
-            session: { id, userId: input.userId, deviceId: input.deviceId, facilityId: input.facilityId ?? null, expiresAt },
+            session: { id, userId: input.userId, role: user.role as string, deviceId: input.deviceId, facilityId: input.facilityId ?? null, expiresAt },
             refreshToken: `${REFRESH_TOKEN_PREFIX}${id}.${secret}`
         };
     }
 
-    /** An active session by id, or null when revoked or expired. */
+    /** An active session by id, or null when revoked, expired, or its user changed. */
     getActiveSession(id: string): ServerSession | null {
-        const row = this.db().prepare('SELECT * FROM server_sessions WHERE id = ?').get(id) as any;
+        const db = this.db();
+        const row = db.prepare('SELECT * FROM server_sessions WHERE id = ?').get(id) as any;
         if (!row || row.revoked_at != null || row.expires_at <= this.now()) return null;
-        return toSession(row);
+        const user = this.checkSessionUser(db, row);
+        return user.ok ? toSession(row, user.role) : null;
     }
 
     /**
@@ -264,12 +292,14 @@ export class ServerAuthStore {
                 return { error: 'reused' as const };
             }
             if (row.expires_at <= now) return { error: 'expired' as const };
+            const user = this.checkSessionUser(db, row);
+            if (!user.ok) return { error: 'invalid' as const };
             const secret = randomToken();
             const expiresAt = Math.min(now + this.policy.idleMs, row.absolute_expires_at);
             db.prepare('UPDATE server_sessions SET refresh_hash = ?, last_used_at = ?, expires_at = ?, ip = ? WHERE id = ?')
                 .run(sha256(secret), now, expiresAt, ip, row.id);
             return {
-                session: toSession({ ...row, expires_at: expiresAt }),
+                session: toSession({ ...row, expires_at: expiresAt }, user.role),
                 refreshToken: `${REFRESH_TOKEN_PREFIX}${row.id}.${secret}`
             };
         })();
@@ -305,10 +335,11 @@ function toDevice(row: any): JoinedDevice {
     };
 }
 
-function toSession(row: any): ServerSession {
+function toSession(row: any, role: string | null): ServerSession {
     return {
         id: row.id,
         userId: row.user_id,
+        role,
         deviceId: row.device_id ?? null,
         facilityId: row.facility_id ?? null,
         expiresAt: row.expires_at

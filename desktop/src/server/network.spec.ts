@@ -151,6 +151,50 @@ describe('NalamDesk Server network and auth', () => {
         expect((await post('/api/auth/refresh', { refreshToken: first.refreshToken }, headers)).statusCode).toBe(401);
     });
 
+    it('ends sessions at once when the user is deactivated or their password changes', async () => {
+        const device = await joinComputer();
+        const headers = { [DEVICE_HEADER]: device.deviceToken };
+        const call = (token: string) => post('/api/ipc/getQueue', [], { authorization: `Bearer ${token}`, ...headers });
+
+        const a = (await signIn(device.deviceToken)).json();
+        db.raw.prepare(`UPDATE users SET password = 'changed-elsewhere' WHERE username = 'admin'`).run();
+        expect((await call(a.token)).statusCode).toBe(401);
+        expect((await post('/api/auth/refresh', { refreshToken: a.refreshToken }, headers)).statusCode).toBe(401);
+
+        await db.service.saveUser({ username: 'nurse2', password: PASSWORD, role: 'nurse', name: 'Nurse' } as any, 1);
+        const b = (await post('/api/auth/login', { username: 'nurse2', password: PASSWORD }, headers)).json();
+        db.raw.prepare(`UPDATE users SET active = 0 WHERE username = 'nurse2'`).run();
+        expect((await call(b.token)).statusCode).toBe(401);
+    });
+
+    it('makes a role change take effect through refresh', async () => {
+        const device = await joinComputer();
+        const headers = { [DEVICE_HEADER]: device.deviceToken };
+        await db.service.saveUser({ username: 'desk2', password: PASSWORD, role: 'receptionist', name: 'Desk' } as any, 1);
+        const a = (await post('/api/auth/login', { username: 'desk2', password: PASSWORD }, headers)).json();
+        db.raw.prepare(`UPDATE users SET role = 'nurse' WHERE username = 'desk2'`).run();
+        expect((await post('/api/ipc/getQueue', [], { authorization: `Bearer ${a.token}`, ...headers })).statusCode).toBe(401);
+        const refreshed = await post('/api/auth/refresh', { refreshToken: a.refreshToken }, headers);
+        expect(refreshed.statusCode).toBe(200);
+        expect(refreshed.json().user.role).toBe('nurse');
+    });
+
+    it('applies the admin address restriction at refresh too', async () => {
+        const device = await joinComputer();
+        const headers = { [DEVICE_HEADER]: device.deviceToken };
+        const a = (await signIn(device.deviceToken)).json();
+        process.env['STRICT_ADMIN_IP'] = 'true';
+        try {
+            const res = await server.inject({
+                method: 'POST', url: '/api/auth/refresh', payload: { refreshToken: a.refreshToken },
+                headers: { 'content-type': 'application/json', ...headers }, remoteAddress: '192.168.1.20'
+            } as any);
+            expect(res.statusCode).toBe(403);
+        } finally {
+            delete process.env['STRICT_ADMIN_IP'];
+        }
+    });
+
     it('signs out on logout and when an admin revokes the computer', async () => {
         const device = await joinComputer();
         const headers = { [DEVICE_HEADER]: device.deviceToken };

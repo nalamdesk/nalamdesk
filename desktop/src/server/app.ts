@@ -692,7 +692,8 @@ export class ApiServer {
             // presented from the computer it was issued to.
             const store = this.authStore;
             const session = store?.getActiveSession(String(decoded.sid)) ?? null;
-            if (!store || !session || session.userId !== decoded.id) {
+            // A role change since the token was minted needs a refresh.
+            if (!store || !session || session.userId !== decoded.id || session.role !== decoded.role) {
                 return reply.code(401).send({ error: 'Unauthorized' });
             }
             if (session.deviceId) {
@@ -817,9 +818,13 @@ export class ApiServer {
         }
         // Current role and status, so changes apply at the next refresh.
         const user = store.getUser(result.session.userId);
-        if (!user || user.active === 0) {
+        if (!user || user.active !== 1) {
             store.revokeSession(result.session.id, 'user_inactive');
             return reply.code(401).send({ error: 'SESSION_EXPIRED' });
+        }
+        if (user.role === 'admin' && process.env['STRICT_ADMIN_IP'] === 'true'
+            && request.ip !== '127.0.0.1' && request.ip !== '::1') {
+            return reply.code(403).send({ error: 'Admin login restricted to Master System' });
         }
         return {
             token: this.issueAccessToken(user, result.session),

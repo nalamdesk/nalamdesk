@@ -32,11 +32,39 @@ export interface TransitionRecoveryEnvelope extends RecoveryEnvelope {
     purpose: 'legacy-transition';
 }
 
+/**
+ * An extra unlock method for the same DEK (ADR 0001 key slots). `device` stays
+ * the primary slot so older app versions keep reading this config unchanged.
+ */
+export interface KeySlot {
+    id: string;
+    provider: string;
+    label?: string;
+    createdAt: string;
+    protectedPayload: string;
+}
+
+/** A slot as listed to operators: never the protected payload. */
+export interface KeySlotSummary {
+    id: string;
+    provider: string;
+    label?: string;
+    createdAt?: string;
+    kind: 'primary' | 'slot' | 'recovery';
+    removable: boolean;
+    unlockedWith: boolean;
+}
+
+export const PRIMARY_SLOT_ID = 'primary';
+export const RECOVERY_SLOT_ID = 'recovery';
+const SLOT_LABEL_MAX = 80;
+
 export interface SecurityConfigV3 {
     version: 3;
     vaultId: string;
     keyVersion: number;
-    device: { provider: string; protectedPayload: string };
+    device: { provider: string; protectedPayload: string; label?: string; createdAt?: string };
+    slots?: KeySlot[];
     recovery: RecoveryEnvelope;
     migratedFrom?: 1 | 2;
     pendingRecoveryAck?: PendingRecoveryAck;
@@ -106,6 +134,7 @@ export class SecurityService {
     private dbPath = '';
     private appUserDataPath = '';
     private dek: Buffer | null = null;
+    private unlockedSlotId: string | null = null;
 
     constructor(
         private readonly deviceKeyStore: DeviceKeyStore,
@@ -168,6 +197,7 @@ export class SecurityService {
             journal.phase = 'vault-created';
             this.saveSetupJournal(journal);
             this.dek = dek;
+            this.unlockedSlotId ??= PRIMARY_SLOT_ID;
             return recoveryCode;
         } catch (error) {
             this.closeDb();
@@ -211,10 +241,12 @@ export class SecurityService {
         this.assertDeviceStoreAvailable();
         const config = this.loadConfigV3();
         try {
-            const dek = this.unprotectDeviceDek(config);
+            const { dek, slotId } = this.unprotectAnySlot(config);
+            this.unlockedSlotId = slotId;
             this.initDb(dbPath, dek);
             this.bindVault(config.vaultId, config.keyVersion, false);
             this.dek = dek;
+            this.unlockedSlotId ??= PRIMARY_SLOT_ID;
             return { migrated: false };
         } catch (error: any) {
             this.closeDb();
@@ -299,6 +331,7 @@ export class SecurityService {
             }
             this.saveConfigAtomic(updated);
             this.dek = dek;
+            this.unlockedSlotId ??= PRIMARY_SLOT_ID;
             return { migrated: false };
         } catch (error) {
             this.failEnrollment(dek, previousConfigText);
@@ -325,7 +358,14 @@ export class SecurityService {
         if (!this.dek) throw new Error('VAULT_LOCKED');
         this.assertDeviceStoreAvailable();
         const config = this.loadConfigV3();
-        config.device = this.createDeviceEnvelope(this.dek, config.vaultId, config.keyVersion);
+        // Re-wrap only the slot this process opened, and only while it still exists.
+        if (this.unlockedSlotId === PRIMARY_SLOT_ID) {
+            config.device = { ...config.device, ...this.createDeviceEnvelope(this.dek, config.vaultId, config.keyVersion) };
+        } else {
+            const slot = config.slots?.find((entry) => entry.id === this.unlockedSlotId);
+            if (!slot) throw new Error('UNLOCKED_SLOT_REMOVED');
+            slot.protectedPayload = this.createDeviceEnvelope(this.dek, config.vaultId, config.keyVersion).protectedPayload;
+        }
         this.saveConfigAtomic(config);
     }
 
@@ -422,10 +462,119 @@ export class SecurityService {
             }
             this.saveConfigAtomic(config);
             this.dek = dek;
+            this.unlockedSlotId ??= PRIMARY_SLOT_ID;
         } catch (error) {
             this.failEnrollment(dek, previousConfigText);
             throw error;
         }
+    }
+
+    /** Every way this vault can be unlocked. Payloads are never returned. */
+    listKeySlots(): KeySlotSummary[] {
+        const config = this.loadConfigV3();
+        const extra = config.slots ?? [];
+        const unlockMethods = 1 + extra.length;
+        return [
+            {
+                id: PRIMARY_SLOT_ID,
+                provider: config.device.provider,
+                ...(config.device.label ? { label: config.device.label } : {}),
+                ...(config.device.createdAt ? { createdAt: config.device.createdAt } : {}),
+                kind: 'primary',
+                removable: unlockMethods > 1,
+                unlockedWith: this.unlockedSlotId === PRIMARY_SLOT_ID
+            },
+            ...extra.map((slot): KeySlotSummary => ({
+                id: slot.id,
+                provider: slot.provider,
+                ...(slot.label ? { label: slot.label } : {}),
+                createdAt: slot.createdAt,
+                kind: 'slot',
+                removable: true,
+                unlockedWith: this.unlockedSlotId === slot.id
+            })),
+            {
+                id: RECOVERY_SLOT_ID,
+                provider: 'recovery-code',
+                kind: 'recovery',
+                removable: false,
+                unlockedWith: false
+            }
+        ];
+    }
+
+    /** The slot this process unlocked with, or null while locked or after setup. */
+    getUnlockedSlotId(): string | null { return this.dek ? this.unlockedSlotId : null; }
+
+    /**
+     * Adds an unlock method for the open vault. The new slot is proven to
+     * open before it is saved, so a broken provider never lands in the config.
+     */
+    addKeySlot(store: DeviceKeyStore, label?: string): KeySlotSummary {
+        if (!this.dek) throw new Error('VAULT_LOCKED');
+        const status = store.status();
+        if (!status.available) throw new Error(status.message || status.reason || 'DEVICE_KEY_UNAVAILABLE');
+        const cleanLabel = this.cleanSlotLabel(label);
+        const config = this.loadConfigV3();
+        const envelope = this.createDeviceEnvelope(this.dek, config.vaultId, config.keyVersion, store);
+        let check: Buffer;
+        try {
+            check = this.dekFromPayload(
+                JSON.parse(store.unprotect(Buffer.from(envelope.protectedPayload, 'base64')).toString('utf8')), config);
+        } catch {
+            throw new Error('KEY_SLOT_VERIFY_FAILED');
+        }
+        const matches = crypto.timingSafeEqual(check, this.dek);
+        check.fill(0);
+        if (!matches) throw new Error('KEY_SLOT_VERIFY_FAILED');
+        const slot: KeySlot = {
+            id: crypto.randomBytes(8).toString('hex'),
+            provider: envelope.provider,
+            ...(cleanLabel ? { label: cleanLabel } : {}),
+            createdAt: new Date().toISOString(),
+            protectedPayload: envelope.protectedPayload
+        };
+        config.slots = [...(config.slots ?? []), slot];
+        this.saveConfigAtomic(config);
+        return this.listKeySlots().find((entry) => entry.id === slot.id)!;
+    }
+
+    /**
+     * Removes an unlock method. The recovery code can't be removed, and at
+     * least one other method must remain. Removing the primary promotes the
+     * oldest extra slot into its place.
+     */
+    removeKeySlot(slotId: string): void {
+        if (!this.dek) throw new Error('VAULT_LOCKED');
+        if (slotId === RECOVERY_SLOT_ID) throw new Error('RECOVERY_SLOT_REQUIRED');
+        const config = this.loadConfigV3();
+        const extra = config.slots ?? [];
+        if (slotId === PRIMARY_SLOT_ID) {
+            if (extra.length === 0) throw new Error('LAST_KEY_SLOT');
+            const [promoted, ...rest] = extra;
+            config.device = {
+                provider: promoted.provider,
+                protectedPayload: promoted.protectedPayload,
+                ...(promoted.label ? { label: promoted.label } : {}),
+                createdAt: promoted.createdAt
+            };
+            config.slots = rest;
+            if (this.unlockedSlotId === PRIMARY_SLOT_ID) this.unlockedSlotId = null;
+            else if (this.unlockedSlotId === promoted.id) this.unlockedSlotId = PRIMARY_SLOT_ID;
+        } else {
+            if (!extra.some((slot) => slot.id === slotId)) throw new Error('KEY_SLOT_NOT_FOUND');
+            config.slots = extra.filter((slot) => slot.id !== slotId);
+            if (this.unlockedSlotId === slotId) this.unlockedSlotId = null;
+        }
+        if (config.slots.length === 0) delete config.slots;
+        this.saveConfigAtomic(config);
+    }
+
+    private cleanSlotLabel(label?: string): string | undefined {
+        if (label === undefined || label === null) return undefined;
+        const clean = String(label).replace(/[\u0000-\u001f\u007f]/g, '').trim();
+        if (clean.length > SLOT_LABEL_MAX) throw new Error('KEY_SLOT_LABEL_TOO_LONG');
+        return clean || undefined;
     }
 
     generateRecoveryCodeString(): string {
@@ -451,6 +600,7 @@ export class SecurityService {
         this.db = null;
         if (this.dek) this.dek.fill(0);
         this.dek = null;
+        this.unlockedSlotId = null;
     }
 
     private async migrateV2(config: SecurityConfigV2, secret: string): Promise<VaultUnlockResult> {
@@ -542,11 +692,13 @@ export class SecurityService {
             journal.phase = 'config-written';
             this.saveJournal(journal);
             this.dek = dek;
+            this.unlockedSlotId ??= PRIMARY_SLOT_ID;
             this.cleanupCommittedMigration(journal, saltPath);
             return { migrated: true };
         } catch (error) {
             if (committed || this.hasV3Config()) {
                 this.dek = dek;
+            this.unlockedSlotId ??= PRIMARY_SLOT_ID;
                 this.cleanupCommittedMigration(journal, saltPath);
                 return { migrated: true };
             }
@@ -731,6 +883,14 @@ export class SecurityService {
             !config.device?.protectedPayload || !config.recovery?.wrappedKey || !config.recovery?.kdfParams) {
             throw new Error('SECURITY_CONFIG_CORRUPT');
         }
+        if (config.slots !== undefined) {
+            const ids = new Set<string>();
+            const valid = Array.isArray(config.slots) && config.slots.every((slot) =>
+                slot && typeof slot.id === 'string' && /^[a-f0-9]{16}$/.test(slot.id) && !ids.has(slot.id) &&
+                ids.add(slot.id) && typeof slot.provider === 'string' && typeof slot.protectedPayload === 'string' &&
+                slot.protectedPayload.length > 0 && typeof slot.createdAt === 'string');
+            if (!valid) throw new Error('SECURITY_CONFIG_CORRUPT');
+        }
         return config;
     }
 
@@ -812,16 +972,19 @@ export class SecurityService {
         this.saveJournal(journal);
     }
 
-    private createDeviceEnvelope(dek: Buffer, vaultId: string, keyVersion: number): SecurityConfigV3['device'] {
+    private createDeviceEnvelope(
+        dek: Buffer, vaultId: string, keyVersion: number, store: DeviceKeyStore = this.deviceKeyStore
+    ): SecurityConfigV3['device'] {
+        const payload = Buffer.from(JSON.stringify({
+            version: 1,
+            purpose: 'device-dek',
+            vaultId,
+            keyVersion,
+            dek: dek.toString('base64')
+        }), 'utf8');
         return {
-            provider: this.deviceKeyStore.status().provider,
-            protectedPayload: this.protectContextPayload({
-                version: 1,
-                purpose: 'device-dek',
-                vaultId,
-                keyVersion,
-                dek: dek.toString('base64')
-            })
+            provider: store.status().provider,
+            protectedPayload: store.protect(payload).toString('base64')
         };
     }
 
@@ -860,9 +1023,31 @@ export class SecurityService {
         };
     }
 
-    private unprotectDeviceDek(config: SecurityConfigV3): Buffer {
-        const payload = this.unprotectContextPayload(config.device.protectedPayload);
-        if (payload.version !== 1 || payload.purpose !== 'device-dek' ||
+    /**
+     * Opens the primary slot, then any extra slot, with this service's key
+     * store. A slot that decrypts but names another vault is tampering and
+     * stops the search; one that fails to decrypt belongs to another provider
+     * or machine, so the next slot is tried.
+     */
+    private unprotectAnySlot(config: SecurityConfigV3): { dek: Buffer; slotId: string } {
+        const candidates: { id: string; protectedPayload: string }[] = [
+            { id: PRIMARY_SLOT_ID, protectedPayload: config.device.protectedPayload },
+            ...(config.slots ?? []).map((slot) => ({ id: slot.id, protectedPayload: slot.protectedPayload }))
+        ];
+        for (const candidate of candidates) {
+            let payload: any;
+            try {
+                payload = this.unprotectContextPayload(candidate.protectedPayload);
+            } catch {
+                continue;
+            }
+            return { dek: this.dekFromPayload(payload, config), slotId: candidate.id };
+        }
+        throw new Error('INVALID_DEVICE_ENVELOPE');
+    }
+
+    private dekFromPayload(payload: any, config: SecurityConfigV3): Buffer {
+        if (payload?.version !== 1 || payload.purpose !== 'device-dek' ||
             payload.vaultId !== config.vaultId || payload.keyVersion !== config.keyVersion ||
             typeof payload.dek !== 'string') {
             throw new Error('VAULT_BINDING_MISMATCH');

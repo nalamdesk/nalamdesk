@@ -35,6 +35,26 @@ This will:
 - `ElectronSafeStorageDeviceKeyStore` still rejects `basic_text` (`INSECURE_LINUX_BACKEND`).
 - If encryption is still unavailable, setup/login surfaces `ENCRYPTION_UNAVAILABLE` naming gnome-libsecret / `libsecret-1-0` / gnome-keyring. There is no second crypto stack.
 
+## Headless key providers (#192)
+
+NalamDesk Server ([ADR 0001](../docs/architecture/0001-headless-server.md)) has no desktop keychain, so `HeadlessKeyStores.ts` adds two more `DeviceKeyStore` providers. `SecurityService` uses them unchanged:
+
+- `KeyFileStore` (`key-file`): a random 32-byte key in a file. `KeyFileStore.create` writes it with mode 0600 and never overwrites an existing file. On POSIX the store refuses a key file that group or other users can read.
+- `PassphraseKeyStore` (`passphrase`): scrypt (N=2^17, r=8) with a fresh salt for each protected value. The cost and salt are bound into the AES-GCM AAD. Passphrases are NFKC-normalised, at least 12 characters, and `clear()` wipes them from memory.
+
+Both providers seal values with AES-256-GCM behind a provider magic prefix, so neither one opens the other's payloads.
+
+### Key slots
+
+`security.json` can hold several unlock methods for the same DEK. `device` stays the primary slot, and extra slots live in an optional `slots` array, so the config is still version 3 and older app versions read it unchanged.
+
+- `initializeDevice` tries the primary slot, then each extra slot, with the service's key store. A slot that decrypts but names another vault stops the search with `VAULT_BINDING_MISMATCH`.
+- `addKeySlot(store, label?)` needs an open vault. It wraps the DEK with the new store and proves the result opens before saving it.
+- `removeKeySlot(id)` refuses the recovery code and the last unlock method. Removing `primary` promotes the oldest extra slot.
+- `listKeySlots()` never returns payloads.
+- `rotateDeviceEnvelope` re-wraps the slot the process unlocked with.
+- Portable backup metadata still carries only the recovery envelope, so slots never travel in backups.
+
 ## Application version
 - Settings reads a single IPC, `app:getVersion`, backed by packaged `app.getVersion()` plus `build-identity.json` (commit / CI run id when stamped).
 - Development builds append `(development)` to the displayed version.

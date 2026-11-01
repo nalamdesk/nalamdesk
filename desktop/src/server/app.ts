@@ -10,6 +10,7 @@ import * as http from 'node:http';
 import { loadDevelopmentEnv } from '../shared/load-env';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { DEFAULT_FACILITY_ID, runWithContext } from '../shared/request-context';
+import { chooseFacility } from '../main/services/FacilitySession';
 import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmRelayService, abdmConfigView } from '../main/services/AbdmRelayService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
@@ -480,6 +481,14 @@ export class ApiServer {
             instance.addHook('preValidation', this.authenticate.bind(this));
             instance.post('/api/ipc/:method', this.handleIpcCall.bind(this));
             instance.post('/api/auth/logout', this.handleLogout.bind(this));
+            instance.get('/api/auth/facilities', async (request) => {
+                const user = (request as any).user;
+                return {
+                    facilityId: Number(user.facility_id) || DEFAULT_FACILITY_ID,
+                    facilities: this.dbService.getUserFacilities(Number(user.id))
+                };
+            });
+            instance.post('/api/auth/facility', this.handleSwitchFacility.bind(this));
             instance.get('/api/events', (request, reply) => {
                 const auth = (request as any).auth as RequestAuth;
                 this.events.stream(request, reply, { sessionId: auth.session?.id ?? null, deviceId: auth.device?.id ?? null });
@@ -726,14 +735,16 @@ export class ApiServer {
     }
 
     /** Mints an access token for a user, from their server session when there is one. */
-    private issueAccessToken(user: { id: number; role: string; username: string }, session: ServerSession | null): string {
+    private issueAccessToken(user: { id: number; role: string; username: string }, session: ServerSession | null,
+        facilityId: number | null = null): string {
         const claims: Record<string, unknown> = { id: user.id, role: user.role, username: user.username };
         if (session) {
             claims['sid'] = session.id;
             if (session.deviceId) claims['dev'] = session.deviceId;
-            // Facility the session is working in (#195); absent means facility 1.
-            if (session.facilityId != null) claims['facility_id'] = session.facilityId;
         }
+        // Facility the session is working in (#195); absent means facility 1.
+        const facility = session?.facilityId ?? facilityId;
+        if (facility != null) claims['facility_id'] = facility;
         return jwt.sign(claims, this.signingKey(), { algorithm: 'HS256', expiresIn: this.accessTtlSec });
     }
 
@@ -823,6 +834,13 @@ export class ApiServer {
             store.revokeSession(result.session.id, 'user_inactive');
             return reply.code(401).send({ error: 'SESSION_EXPIRED' });
         }
+        // Access to the session's facility can be withdrawn too (#195).
+        const facilityId = result.session.facilityId ?? DEFAULT_FACILITY_ID;
+        const facilityRole = this.dbService.getFacilityRole(user.id, facilityId);
+        if (!facilityRole) {
+            store.revokeSession(result.session.id, 'facility_access_removed');
+            return reply.code(401).send({ error: 'SESSION_EXPIRED' });
+        }
         if (user.role === 'admin' && process.env['STRICT_ADMIN_IP'] === 'true'
             && request.ip !== '127.0.0.1' && request.ip !== '::1') {
             return reply.code(403).send({ error: 'Admin login restricted to Master System' });
@@ -831,7 +849,31 @@ export class ApiServer {
             token: this.issueAccessToken(user, result.session),
             refreshToken: result.refreshToken,
             expiresIn: this.accessTtlSec,
-            user: { id: user.id, username: user.username, role: user.role, name: user.name }
+            facilityId,
+            user: { id: user.id, username: user.username, role: facilityRole, name: user.name }
+        };
+    }
+
+    /** Moves the session to another facility the user holds a role at, and reissues the token. */
+    private async handleSwitchFacility(request: FastifyRequest, reply: FastifyReply) {
+        const auth = (request as any).auth as RequestAuth;
+        const user = (request as any).user;
+        const body = (request.body ?? {}) as { facilityId?: unknown };
+        if (body.facilityId === undefined || body.facilityId === null || body.facilityId === '') {
+            return reply.code(400).send({ error: 'facilityId is required' });
+        }
+        const facility = chooseFacility(this.dbService.getUserFacilities(Number(user.id)), body.facilityId);
+        if (!facility) return reply.code(403).send({ error: 'NO_FACILITY_ACCESS' });
+        if (auth.session && !this.requireStore().setSessionFacility(auth.session.id, facility.id)) {
+            return reply.code(401).send({ error: 'SESSION_EXPIRED' });
+        }
+        const session = auth.session ? { ...auth.session, facilityId: facility.id } : null;
+        this.audit('FACILITY_SWITCH', Number(user.id), `Switched to facility ${facility.code}`, auth.device?.id ?? null);
+        return {
+            token: this.issueAccessToken({ id: Number(user.id), role: user.role, username: user.username }, session, facility.id),
+            expiresIn: this.accessTtlSec,
+            facilityId: facility.id,
+            role: facility.role
         };
     }
 
@@ -913,17 +955,27 @@ export class ApiServer {
                 return reply.code(500).send({ error: 'Auth error' });
             }
             this.loginLimiter.recordSuccess(ip, username);
+            // Sign-in starts in one facility: the one asked for, or the
+            // user's default. No facility means no access (#195).
+            const facilities = this.dbService.getUserFacilities(user.id);
+            const facility = chooseFacility(facilities, body.facilityId);
+            if (!facility) {
+                this.audit('LOGIN_NO_FACILITY', user.id, 'Signed in without access to the requested facility', device?.id ?? null);
+                return reply.code(403).send({ error: 'NO_FACILITY_ACCESS' });
+            }
             const created = this.authStore
-                ? this.authStore.createSession({ userId: user.id, deviceId: device?.id ?? null, ip })
+                ? this.authStore.createSession({ userId: user.id, deviceId: device?.id ?? null, ip, facilityId: facility.id })
                 : null;
             if (created) {
                 this.audit('LOGIN', user.id, `Signed in${device ? ` on "${device.name}"` : ''} from ${ip}`, device?.id ?? null);
             }
             return {
-                token: this.issueAccessToken(user, created?.session ?? null),
+                token: this.issueAccessToken(user, created?.session ?? null, facility.id),
                 ...(created ? { refreshToken: created.refreshToken } : {}),
                 expiresIn: this.accessTtlSec,
-                user: { id: user.id, username: user.username, role: user.role, name: user.name }
+                facilityId: facility.id,
+                facilities,
+                user: { id: user.id, username: user.username, role: facility.role, name: user.name }
             };
         } finally {
             this.dbService.endWork();

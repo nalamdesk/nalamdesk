@@ -4,6 +4,8 @@ console.log('Preload script loaded!');
 contextBridge.exposeInMainWorld('electron', {
     login: (credentials: { username: string; password: string }) => ipcRenderer.invoke('auth:login', credentials),
     logout: () => ipcRenderer.invoke('auth:logout'),
+    getFacilities: () => ipcRenderer.invoke('auth:getFacilities'),
+    switchFacility: (facilityId: number) => ipcRenderer.invoke('auth:switchFacility', facilityId),
     getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
     checkSetup: () => ipcRenderer.invoke('auth:checkSetup'),
     getRecoveryStatus: () => ipcRenderer.invoke('auth:getRecoveryStatus'),

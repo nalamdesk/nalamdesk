@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
@@ -378,32 +379,54 @@ function processAlive(pid: number): boolean {
     }
 }
 
-/** The pid of a server running on this data directory, if any. */
-export function runningServerPid(config: ServerConfig): number | null {
-    let pid: number;
+/** The pid in a lock file, or null when it is missing or unreadable. */
+function readLockPid(lock: string): number | null {
     try {
-        pid = Number.parseInt(fs.readFileSync(path.join(config.dataDir, RUN_LOCK), 'utf8'), 10);
+        const pid = Number.parseInt(fs.readFileSync(lock, 'utf8'), 10);
+        return Number.isInteger(pid) && pid > 0 ? pid : null;
     } catch {
         return null;
     }
-    return Number.isInteger(pid) && pid > 0 && pid !== process.pid && processAlive(pid) ? pid : null;
 }
 
-/** Takes the data directory's run lock exclusively; a dead holder's lock is replaced. */
+/** The pid of a server running on this data directory, if any. */
+export function runningServerPid(config: ServerConfig): number | null {
+    const pid = readLockPid(path.join(config.dataDir, RUN_LOCK));
+    return pid !== null && pid !== process.pid && processAlive(pid) ? pid : null;
+}
+
+/**
+ * Takes the data directory's run lock. The pid is written to a private file
+ * first and published with link(), which fails if the lock exists, so the
+ * lock never exists without its pid. Only a lock whose holder is known dead
+ * is reclaimed, by renaming it aside.
+ */
 function acquireRunLock(config: ServerConfig): void {
     const lock = path.join(config.dataDir, RUN_LOCK);
-    for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-            fs.writeFileSync(lock, String(process.pid), { mode: 0o600, flag: 'wx' });
-            return;
-        } catch (error: any) {
-            if (error?.code !== 'EEXIST') throw error;
+    const draft = `${lock}.${process.pid}.${crypto.randomUUID()}`;
+    fs.writeFileSync(draft, String(process.pid), { mode: 0o600 });
+    try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                fs.linkSync(draft, lock);
+                return;
+            } catch (error: any) {
+                if (error?.code !== 'EEXIST') throw error;
+            }
+            const holder = readLockPid(lock);
+            if (holder === null || holder === process.pid || processAlive(holder)) {
+                throw new Error(`A server or restore${holder ? ` (pid ${holder})` : ''} is already running on ${config.dataDir}.`);
+            }
+            const aside = `${lock}.stale-${crypto.randomUUID()}`;
+            try {
+                fs.renameSync(lock, aside);
+                fs.rmSync(aside, { force: true });
+            } catch { /* reclaimed by another process */ }
         }
-        const other = runningServerPid(config);
-        if (other) throw new Error(`A server or restore (pid ${other}) is already running on ${config.dataDir}.`);
-        try { fs.unlinkSync(lock); } catch { /* removed by its holder meanwhile */ }
+        throw new Error(`Could not take the run lock in ${config.dataDir}. Try again.`);
+    } finally {
+        fs.rmSync(draft, { force: true });
     }
-    throw new Error(`Could not take the run lock in ${config.dataDir}. Try again.`);
 }
 
 function releaseRunLock(config: ServerConfig): void {

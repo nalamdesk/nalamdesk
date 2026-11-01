@@ -390,5 +390,12 @@ describe('nalamdesk-server CLI', () => {
 
         fs.writeFileSync(lock, '999999999');
         expect(await runCli(['start'], makeIo(env).io, deps)).toBe(0);
+        expect(fs.readdirSync(path.join(directory, 'data')).filter((name) => name.startsWith('server.pid'))).toEqual([]);
+
+        // A lock still being written (no pid yet) is never taken over.
+        fs.writeFileSync(lock, '');
+        const empty = makeIo(env);
+        expect(await runCli(['start'], empty.io, deps)).toBe(1);
+        expect(empty.err.join()).toMatch(/already running/);
     });
 });

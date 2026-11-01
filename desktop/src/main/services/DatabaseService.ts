@@ -1,4 +1,20 @@
-import { MIGRATIONS } from '../schema/migrations';
+import { MIGRATIONS, FACILITY_SETTING_COLUMNS } from '../schema/migrations';
+
+/** Facility every existing vault migrates into (#195). */
+export const DEFAULT_FACILITY_ID = 1;
+
+/**
+ * Settings readable by admins and writable through saveSettings; the
+ * allowlist also guards the dynamic SQL. Keychain-protected blobs (the HIU
+ * private key) are never in it.
+ */
+const SETTINGS_COLUMNS = ['clinic_name', 'doctor_name', 'logo_path', 'license_key',
+    'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
+    'drive_client_id', 'drive_client_secret', 'local_backup_path',
+    'backup_schedule', 'cloud_backup_schedule', 'mrn_prefix', 'consultation_fee',
+    'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
+    'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
+    'abdm_hiu_public_key', 'standards_mode', 'organisation_name'];
 import type { CloudDeviceRow } from '../cloud/DeviceIdentity';
 import type { AbdmInboxRow } from '../cloud/AbdmInbox';
 import * as catalog from '../catalog/catalogStore';
@@ -381,17 +397,23 @@ export class DatabaseService {
     }
 
     // ... existing methods ...
-    getSettings() {
+    /**
+     * One settings view over the organisation row (`settings`) and a
+     * facility's own columns (#195), keyed by the legacy settings names so
+     * callers are unchanged. Undefined until the organisation row exists.
+     */
+    private settingsView(columns: string[], facilityId: number = DEFAULT_FACILITY_ID) {
+        const select = columns.map(column => FACILITY_SETTING_COLUMNS[column]
+            ? `f.${FACILITY_SETTING_COLUMNS[column]} AS ${column}`
+            : `s.${column}`).join(', ');
+        return this.db.prepare(`SELECT ${select} FROM settings s
+            LEFT JOIN facilities f ON f.id = ? LIMIT 1`).get(Number(facilityId) || DEFAULT_FACILITY_ID);
+    }
+
+    getSettings(facilityId: number = DEFAULT_FACILITY_ID) {
         // Explicit column list: keychain-protected blobs (the HIU private
         // key) never ride along on generic settings reads.
-        return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, license_key,
-            drive_tokens, cloud_clinic_id, cloud_api_key, cloud_enabled,
-            drive_client_id, drive_client_secret, local_backup_path,
-            backup_schedule, cloud_backup_schedule, mrn_prefix, consultation_fee,
-            abdm_mock, abdm_hip_id, abdm_counter_id,
-            abdm_hfr_id, abdm_hpr_id, abdm_hip_endpoint, abdm_recipient_key,
-            abdm_hiu_public_key, standards_mode
-            FROM settings LIMIT 1`).get();
+        return this.settingsView(SETTINGS_COLUMNS, facilityId);
     }
 
     /**
@@ -399,11 +421,11 @@ export class DatabaseService {
      * secrets, file paths, and keys never leave this allowlist, so it is
      * safe to serve to any authenticated role.
      */
-    getSanitizedSettings() {
-        return this.db.prepare(`SELECT clinic_name, doctor_name, logo_path, cloud_enabled,
-            abdm_mock, abdm_hip_id, abdm_counter_id,
-            abdm_hfr_id, abdm_hip_endpoint, abdm_hiu_public_key, standards_mode
-            FROM settings LIMIT 1`).get();
+    getSanitizedSettings(facilityId: number = DEFAULT_FACILITY_ID) {
+        return this.settingsView(['clinic_name', 'doctor_name', 'logo_path', 'cloud_enabled',
+            'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
+            'abdm_hfr_id', 'abdm_hip_endpoint', 'abdm_hiu_public_key', 'standards_mode',
+            'organisation_name'], facilityId);
     }
 
     // Main-process-only accessor for the keychain-protected HIU private key.
@@ -420,8 +442,8 @@ export class DatabaseService {
 
     // ... (existing code)
 
-    getPublicSettings() {
-        return this.db.prepare('SELECT clinic_name, doctor_name, logo_path, cloud_enabled, standards_mode FROM settings LIMIT 1').get();
+    getPublicSettings(facilityId: number = DEFAULT_FACILITY_ID) {
+        return this.settingsView(['clinic_name', 'doctor_name', 'logo_path', 'cloud_enabled', 'standards_mode'], facilityId);
     }
 
     // RBAC
@@ -671,24 +693,9 @@ export class DatabaseService {
         return result;
     }
 
-    saveSettings(settings: any) {
-        // ... (existing code)
-        const existing = this.getSettings();
-
-        // Allowed columns whitelist to prevent SQL injection
-        const ALLOWED_COLUMNS = [
-            'clinic_name', 'doctor_name', 'logo_path', 'license_key',
-            'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
-            'drive_client_id', 'drive_client_secret', 'local_backup_path',
-            'backup_schedule', 'cloud_backup_schedule', 'mrn_prefix', 'consultation_fee',
-            'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
-            'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
-            'abdm_hiu_public_key',
-            'standards_mode'
-        ];
-
+    saveSettings(settings: any, facilityId: number = DEFAULT_FACILITY_ID) {
         // Filter incoming settings to only allowed columns
-        const validKeys = Object.keys(settings).filter(k => ALLOWED_COLUMNS.includes(k));
+        const validKeys = Object.keys(settings).filter(k => SETTINGS_COLUMNS.includes(k));
 
         if (validKeys.length === 0) return; // Nothing to update/insert
 
@@ -699,24 +706,32 @@ export class DatabaseService {
             throw new Error('Unknown standards mode.');
         }
 
-        if (existing) {
-            // Build dynamic update query using whitelisted keys
-            const setClause = validKeys.map(k => `${k} = @${k}`).join(', ');
-            // We must pass only the valid properties to .run() to match the placeholders
-            const params: any = {};
-            validKeys.forEach(k => params[k] = settings[k]);
+        // Organisation keys go to the settings row; clinic identity,
+        // letterhead and ABDM HIP keys go to the facility (#195).
+        const orgKeys = validKeys.filter(k => !FACILITY_SETTING_COLUMNS[k]);
+        const facilityKeys = validKeys.filter(k => FACILITY_SETTING_COLUMNS[k]);
+        const save = this.db.transaction(() => {
+            this.ensureSettingsRow();
+            if (orgKeys.length > 0) {
+                const params: any = {};
+                orgKeys.forEach(k => params[k] = settings[k]);
+                this.db.prepare(`UPDATE settings SET ${orgKeys.map(k => `${k} = @${k}`).join(', ')}`).run(params);
+            }
+            if (facilityKeys.length > 0) {
+                const params: any = { facility_id: Number(facilityId) || DEFAULT_FACILITY_ID };
+                facilityKeys.forEach(k => params[k] = k === 'clinic_name' ? (settings[k] ?? '') : settings[k]);
+                const result = this.db.prepare(`UPDATE facilities SET ${facilityKeys
+                    .map(k => `${FACILITY_SETTING_COLUMNS[k]} = @${k}`).join(', ')} WHERE id = @facility_id`).run(params);
+                if (Number(result?.changes ?? 1) === 0) throw new Error('Unknown facility.');
+            }
+        });
+        return (save as any).immediate ? (save as any).immediate() : (save as any)();
+    }
 
-            this.db.prepare(`UPDATE settings SET ${setClause}`).run(params);
-        } else {
-            // First insert
-            const placeholders = validKeys.map(k => `@${k}`).join(', ');
-            const cols = validKeys.join(', ');
-
-            const params: any = {};
-            validKeys.forEach(k => params[k] = settings[k]);
-
-            this.db.prepare(`INSERT INTO settings(${cols}) VALUES(${placeholders})`).run(params);
-        }
+    /** The organisation row is a singleton created on first save. */
+    private ensureSettingsRow() {
+        const row = this.db.prepare('SELECT COUNT(*) AS n FROM settings').get() as any;
+        if (!Number(row?.n)) this.db.prepare('INSERT INTO settings DEFAULT VALUES').run();
     }
 
     // Dedicated writer for the keychain-protected HIU private key: plaintext
@@ -1564,7 +1579,7 @@ export class DatabaseService {
         const user = userId != null
             ? this.db.prepare('SELECT name, username, abdm_hpr_id FROM users WHERE id = ?').get(Number(userId)) as any
             : null;
-        const settings = this.db.prepare('SELECT doctor_name, abdm_hpr_id FROM settings LIMIT 1').get() as any;
+        const settings = this.settingsView(['doctor_name', 'abdm_hpr_id']) as any;
         return {
             name: String(user?.name || settings?.doctor_name || user?.username || 'Clinic').trim(),
             hprId: String(user?.abdm_hpr_id || settings?.abdm_hpr_id || '').trim() || null
@@ -1739,7 +1754,7 @@ export class DatabaseService {
         const doctor = full.doctor_id != null
             ? this.db.prepare('SELECT id, name, license_number, specialty, abdm_hpr_id FROM users WHERE id = ?').get(Number(full.doctor_id)) as any
             : null;
-        const settings = (this.db.prepare('SELECT clinic_name, doctor_name, abdm_hfr_id FROM settings LIMIT 1').get() ?? {}) as any;
+        const settings = (this.settingsView(['clinic_name', 'doctor_name', 'abdm_hfr_id'], full.facility_id) ?? {}) as any;
         return {
             visit: full,
             patient,
@@ -3134,11 +3149,11 @@ export class DatabaseService {
         const record = this.db.transaction(() => {
             const order = this.activePrescription(visitId);
             if (!order) throw new Error('This visit has no active prescription to print.');
-            const visit = this.db.prepare('SELECT id, date, diagnosis FROM visits WHERE id = ?').get(visitId) as any;
+            const visit = this.db.prepare('SELECT id, date, diagnosis, facility_id FROM visits WHERE id = ?').get(visitId) as any;
             const patient = this.db.prepare('SELECT id, name, age, gender, mobile, mrn FROM patients WHERE id = ?')
                 .get(order.patient_id) as any;
             const requester = this.db.prepare('SELECT abdm_hpr_id FROM users WHERE id = ?').get(order.requester_id) as any;
-            const settings = this.db.prepare('SELECT clinic_name, abdm_hfr_id FROM settings LIMIT 1').get() as any;
+            const settings = this.settingsView(['clinic_name', 'abdm_hfr_id'], visit?.facility_id) as any;
             const replaces = order.replaces_id
                 ? (this.db.prepare('SELECT rx_number FROM prescriptions WHERE id = ?').get(order.replaces_id) as any)?.rx_number
                 : null;

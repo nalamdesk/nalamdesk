@@ -8,6 +8,7 @@ import * as argon2 from 'argon2';
 import Database from 'better-sqlite3-multiple-ciphers';
 import type { DeviceKeyStore } from './DeviceKeyStore';
 import { SecurityService } from './SecurityService';
+import { KeyFileStore, PassphraseKeyStore } from './HeadlessKeyStores';
 import { DatabaseService } from './DatabaseService';
 import { ProvisioningService } from './ProvisioningService';
 
@@ -94,6 +95,37 @@ describe.skipIf(!process.versions.electron)('SecurityService SQLCipher integrati
                 .resolves.toEqual({ migrated: false });
         }
     );
+
+    it('cold-starts a headless vault from a key file, and from a passphrase', async () => {
+        const keyStore = KeyFileStore.create(path.join(directory, 'vault.key'));
+        const first = new SecurityService(keyStore);
+        await first.setup('admin-login-only', dbPath, directory);
+        first.getDb().exec('CREATE TABLE clinical_data (value TEXT); INSERT INTO clinical_data VALUES (\'headless\')');
+        first.completeProvisioning();
+        first.closeDb();
+
+        const restart = new SecurityService(new KeyFileStore(path.join(directory, 'vault.key')));
+        await restart.initializeDevice(dbPath, directory);
+        expect(restart.getDb().prepare('SELECT value FROM clinical_data').get()).toEqual({ value: 'headless' });
+        restart.closeDb();
+
+        const passphraseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nalamdesk-vault-passphrase-'));
+        try {
+            const passphraseDb = path.join(passphraseDir, 'nalamdesk.db');
+            const owner = new SecurityService(new PassphraseKeyStore('correct horse battery', { logN: 14 }));
+            await owner.setup('admin-login-only', passphraseDb, passphraseDir);
+            owner.completeProvisioning();
+            owner.closeDb();
+
+            await expect(new SecurityService(new PassphraseKeyStore('wrong horse battery', { logN: 14 }))
+                .initializeDevice(passphraseDb, passphraseDir)).rejects.toThrow('DEVICE_UNLOCK_FAILED');
+            const unlocked = new SecurityService(new PassphraseKeyStore('correct horse battery', { logN: 14 }));
+            await unlocked.initializeDevice(passphraseDb, passphraseDir);
+            unlocked.closeDb();
+        } finally {
+            fs.rmSync(passphraseDir, { recursive: true, force: true });
+        }
+    });
 
     it('re-enrols a new device through the recovery envelope', async () => {
         const original = new SecurityService(new IntegrationDeviceStore(0x11));

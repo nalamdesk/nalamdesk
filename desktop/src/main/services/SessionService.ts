@@ -9,6 +9,8 @@ export interface UserSession {
     license_number?: string;
     password_reset_required?: number;
     sessionId?: string;
+    /** The facility this desktop session works in (#195); facility 1 when unset. */
+    facilityId?: number;
 }
 
 export class SessionService {
@@ -26,6 +28,7 @@ export class SessionService {
             ...(user.specialty ? { specialty: user.specialty } : {}),
             ...(user.license_number ? { license_number: user.license_number } : {}),
             ...(user.password_reset_required !== undefined ? { password_reset_required: user.password_reset_required } : {}),
+            ...(user.facilityId ? { facilityId: user.facilityId } : {}),
             sessionId: crypto.randomUUID()
         };
     }

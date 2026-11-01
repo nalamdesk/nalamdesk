@@ -56,6 +56,9 @@ const DESTRUCTIVE = [
     'seedDemoData', 'clearDemoData'
 ];
 
+const PROBE_USERS: Record<number, string> = { 101: 'admin', 102: 'doctor', 103: 'nurse', 104: 'receptionist' };
+const probeId = (role: string) => Number(Object.entries(PROBE_USERS).find(([, r]) => r === role)?.[0] ?? 199);
+
 describe('LAN access conformance', () => {
     let server: ApiServer;
 
@@ -64,6 +67,11 @@ describe('LAN access conformance', () => {
         const db = new DatabaseService();
         db.setDb(raw);
         await db.migrate();
+        // One user per role, so the gate sees each role at facility 1.
+        for (const [id, role] of Object.entries(PROBE_USERS)) {
+            raw.prepare('INSERT INTO users (id, username, role, name, active) VALUES (?, ?, ?, ?, 1)')
+                .run(Number(id), `${role}-probe`, role, role);
+        }
         (db as any).beginWork = () => undefined;
         (db as any).endWork = () => undefined;
         server = new ApiServer(db, os.tmpdir());
@@ -99,7 +107,7 @@ describe('LAN access conformance', () => {
         await server.close();
     });
 
-    function postIpc(method: string, role: string, id = 7) {
+    function postIpc(method: string, role: string, id = probeId(role)) {
         const token = jwt.sign({ id, role, username: `${role}-probe` }, JWT_SECRET, { expiresIn: '1h' });
         return server.inject({
             method: 'POST',

@@ -34,6 +34,7 @@ import { verifyPersistedActiveAdmin } from './services/AdminCredentialVerifier';
 import { acknowledgeRecoveryCodeForActiveAdmin } from './services/RecoveryCodeAcknowledgement';
 import { ApiServer } from '../server/app';
 import { invokeDbMethod } from '../shared/ipc-db-args';
+import { setFallbackFacility } from '../shared/request-context';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import {
     DEV_APP_NAME,
@@ -260,6 +261,8 @@ const apiServer = new ApiServer(
     { relay: abdmRelayService, abha: abdmAbhaService, hiu: hiuService, hip: hipService }
 );
 const sessionService = new SessionService();
+// Desktop IPC calls run in the signed-in session's facility (#195).
+setFallbackFacility(() => sessionService.getUser()?.facilityId);
 const backupService = new BackupService(databaseService, googleDriveService, securityService, userDataPath, {
     appVersion: app.getVersion(),
     // Restore validation must not reconfigure or close the live vault.

@@ -52,7 +52,33 @@ describe('loadServerConfig', () => {
         expect(() => readConfigFile('/d.json', readFile)).toThrow(/JSON object/);
         expect(() => readConfigFile('/e.json', readFile)).toThrow(/could not read/);
         expect(() => loadServerConfig({ env: { NALAMDESK_PORT: '70000' } })).toThrow(/port between/);
-        expect(() => loadServerConfig({ env: { NALAMDESK_KEY_PROVIDER: 'tpm' } })).toThrow(/not supported yet/);
+        expect(() => loadServerConfig({ env: { NALAMDESK_KEY_PROVIDER: 'hsm' } })).toThrow(/unknown key provider "hsm"/);
+        expect(() => loadServerConfig({ env: { NALAMDESK_KEY_PROVIDER: 'kms' } })).toThrow(/needs a key command/);
+    });
+});
+
+describe('external key providers', () => {
+    const load = (env: NodeJS.ProcessEnv, readFile?: (file: string) => string, configPath?: string) =>
+        loadServerConfig({ env: { NALAMDESK_DATA_DIR: '/srv/nd', ...env }, cwd: '/', defaultStaticPath: '/ui', readFile, configPath }).keyProvider;
+
+    it('configures systemd credentials and TPM with a default credential name and store', () => {
+        expect(load({ NALAMDESK_KEY_PROVIDER: 'systemd-creds' })).toEqual({
+            provider: 'systemd-creds', credentialName: 'nalamdesk-vault-key', credentialPath: '/etc/credstore.encrypted/nalamdesk-vault-key'
+        });
+        expect(load({ NALAMDESK_KEY_PROVIDER: 'tpm', NALAMDESK_CREDENTIAL_NAME: 'nd-key' })).toEqual({
+            provider: 'tpm', credentialName: 'nd-key', credentialPath: '/etc/credstore.encrypted/nd-key'
+        });
+    });
+
+    it('configures DPAPI and KMS from the config file', () => {
+        const readFile = files({
+            '/etc/nd/dpapi.json': JSON.stringify({ keyProvider: 'dpapi', dpapiBlob: 'keys/vault.dpapi' }),
+            '/etc/nd/kms.json': JSON.stringify({ keyProvider: 'kms', keyCommand: 'aws kms decrypt --query Plaintext' })
+        });
+        expect(load({}, readFile, '/etc/nd/dpapi.json')).toEqual({ provider: 'dpapi', blobPath: '/etc/nd/keys/vault.dpapi' });
+        expect(load({ NALAMDESK_KEY_PROVIDER: 'dpapi' })).toEqual({ provider: 'dpapi', blobPath: path.join('/srv/nd', 'vault.dpapi') });
+        expect(load({}, readFile, '/etc/nd/kms.json')).toEqual({ provider: 'kms', command: 'aws kms decrypt --query Plaintext' });
+        expect(load({ NALAMDESK_KEY_COMMAND: 'vault-key' }, readFile, '/etc/nd/kms.json')).toEqual({ provider: 'kms', command: 'vault-key' });
     });
 });
 

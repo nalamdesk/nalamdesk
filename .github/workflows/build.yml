@@ -170,9 +170,23 @@ jobs:
           NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
         run: npm run dist:mac -- --publish always
 
+  # NalamDesk Server: .deb, tarball and Windows zip into the same draft
+  # release, and the Docker image to GHCR (ADR 0001, one version for both).
+  server-packages:
+    needs: [bump-version]
+    if: ${{ needs.bump-version.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/server-package.yml
+    with:
+      tag: ${{ needs.bump-version.outputs.new_tag }}
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
   publish-release:
-    needs: [bump-version, build-and-release]
-    if: ${{ needs.build-and-release.result == 'success' }}
+    needs: [bump-version, build-and-release, server-packages]
+    if: ${{ needs.build-and-release.result == 'success' && needs.server-packages.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Setup Node.js

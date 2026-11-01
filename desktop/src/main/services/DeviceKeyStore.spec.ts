@@ -7,8 +7,6 @@ const safeStorage = {
     decryptString: vi.fn()
 };
 
-vi.mock('electron', () => ({ safeStorage }));
-
 describe('ElectronSafeStorageDeviceKeyStore', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -22,7 +20,7 @@ describe('ElectronSafeStorageDeviceKeyStore', () => {
         safeStorage.encryptString.mockReturnValue(Buffer.from('ciphertext'));
         safeStorage.decryptString.mockReturnValue(key.toString('base64'));
         const { ElectronSafeStorageDeviceKeyStore } = await import('./DeviceKeyStore');
-        const store = new ElectronSafeStorageDeviceKeyStore();
+        const store = new ElectronSafeStorageDeviceKeyStore(safeStorage as any);
         expect(store.protect(key)).toEqual(Buffer.from('ciphertext'));
         expect(safeStorage.encryptString).toHaveBeenCalledWith(key.toString('base64'));
         expect(store.unprotect(Buffer.from('ciphertext'))).toEqual(key);
@@ -31,7 +29,7 @@ describe('ElectronSafeStorageDeviceKeyStore', () => {
     it('fails when Electron reports encryption unavailable', async () => {
         safeStorage.isEncryptionAvailable.mockReturnValue(false);
         const { ElectronSafeStorageDeviceKeyStore } = await import('./DeviceKeyStore');
-        const store = new ElectronSafeStorageDeviceKeyStore();
+        const store = new ElectronSafeStorageDeviceKeyStore(safeStorage as any);
         expect(store.status()).toMatchObject({ available: false, reason: 'ENCRYPTION_UNAVAILABLE' });
         expect(() => store.protect(Buffer.alloc(32))).toThrow('ENCRYPTION_UNAVAILABLE');
     });
@@ -42,12 +40,12 @@ describe('ElectronSafeStorageDeviceKeyStore', () => {
         safeStorage.getSelectedStorageBackend.mockReturnValue('basic_text');
         try {
             const { ElectronSafeStorageDeviceKeyStore } = await import('./DeviceKeyStore');
-            expect(new ElectronSafeStorageDeviceKeyStore().status()).toMatchObject({
+            expect(new ElectronSafeStorageDeviceKeyStore(safeStorage as any).status()).toMatchObject({
                 available: false,
                 reason: 'INSECURE_LINUX_BACKEND',
                 backend: 'basic_text'
             });
-            expect(() => new ElectronSafeStorageDeviceKeyStore().protect(Buffer.alloc(32)))
+            expect(() => new ElectronSafeStorageDeviceKeyStore(safeStorage as any).protect(Buffer.alloc(32)))
                 .toThrow(/INSECURE_LINUX_BACKEND:.*gnome-libsecret/);
         } finally {
             Object.defineProperty(process, 'platform', { value: originalPlatform });
@@ -61,7 +59,7 @@ describe('ElectronSafeStorageDeviceKeyStore', () => {
         safeStorage.getSelectedStorageBackend.mockReturnValue('gnome_libsecret');
         try {
             const { ElectronSafeStorageDeviceKeyStore } = await import('./DeviceKeyStore');
-            expect(new ElectronSafeStorageDeviceKeyStore().status()).toMatchObject({
+            expect(new ElectronSafeStorageDeviceKeyStore(safeStorage as any).status()).toMatchObject({
                 available: true,
                 provider: 'electron-safe-storage',
                 backend: 'gnome_libsecret'
@@ -79,14 +77,14 @@ describe('ElectronSafeStorageDeviceKeyStore', () => {
         try {
             const { ElectronSafeStorageDeviceKeyStore, formatEncryptionUnavailableMessage, isDeviceCryptoFailure } =
                 await import('./DeviceKeyStore');
-            const status = new ElectronSafeStorageDeviceKeyStore().status();
+            const status = new ElectronSafeStorageDeviceKeyStore(safeStorage as any).status();
             expect(status.reason).toBe('ENCRYPTION_UNAVAILABLE');
             expect(status.message).toContain('gnome-libsecret');
             expect(status.message).toContain('libsecret-1-0');
             expect(status.message).toContain('gnome-keyring');
             expect(status.message).toContain('Do not launch with --password-store=basic');
             expect(formatEncryptionUnavailableMessage('linux')).toContain('gnome-libsecret');
-            expect(() => new ElectronSafeStorageDeviceKeyStore().protect(Buffer.alloc(32)))
+            expect(() => new ElectronSafeStorageDeviceKeyStore(safeStorage as any).protect(Buffer.alloc(32)))
                 .toThrow(/ENCRYPTION_UNAVAILABLE:.*gnome-libsecret/);
             expect(isDeviceCryptoFailure(status.message)).toBe(true);
             expect(isDeviceCryptoFailure('ENCRYPTION_UNAVAILABLE')).toBe(true);
@@ -105,6 +103,6 @@ describe('ElectronSafeStorageDeviceKeyStore', () => {
             throw new Error('backend unavailable');
         });
         const { ElectronSafeStorageDeviceKeyStore } = await import('./DeviceKeyStore');
-        expect(new ElectronSafeStorageDeviceKeyStore().status().backend).toBeUndefined();
+        expect(new ElectronSafeStorageDeviceKeyStore(safeStorage as any).status().backend).toBeUndefined();
     });
 });

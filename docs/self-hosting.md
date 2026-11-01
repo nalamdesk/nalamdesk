@@ -1,0 +1,338 @@
+# Self-hosting NalamDesk Server
+
+NalamDesk Server runs a clinic's encrypted database, the API and the browser
+UI on a machine you control. The clinic's computers connect to it with the
+NalamDesk app or a browser. Patient records stay on your server. They never go
+to NalamDesk Cloud. The design is in
+[ADR 0001](architecture/0001-headless-server.md).
+
+This guide covers installing, first run, HTTPS, unlocking the vault, backups,
+upgrades and monitoring.
+
+## Where to put the server
+
+Clinic computers stop working when they cannot reach the server. They do not
+work offline. So:
+
+- **Where the internet is unreliable, put the server on the clinic network**:
+  a small always-on PC or mini server in the clinic, wired to the router.
+  Clinic computers then keep working during an internet outage.
+- A server in a data centre or the cloud suits a chain of branches with
+  reliable internet. An outage at one branch stops that branch.
+- A clinic with one computer does not need a server. The desktop app keeps
+  its own database.
+
+**Hardware:** 2 CPU cores, 2 GB RAM and 10 GB of disk are enough for a clinic.
+Use an SSD, a UPS, and full-disk encryption (LUKS or BitLocker).
+
+## Install
+
+Each release publishes the same version of the server in four forms. The
+`.deb`, tarball and Windows zip are on the
+[releases page](https://github.com/nalamdesk/releases/releases). The Docker
+image is `ghcr.io/nalamdesk/nalamdesk-server`. Each form bundles its own Node
+runtime, so you do not install Node.
+
+### Docker
+
+```sh
+docker volume create nalamdesk-data
+printf '%s\n' 'choose-a-strong-admin-password' > admin-password   # 12 characters or more
+docker run --rm -v nalamdesk-data:/var/lib/nalamdesk \
+  -v "$PWD/admin-password:/run/secrets/admin-password:ro" \
+  -e NALAMDESK_ADMIN_PASSWORD_FILE=/run/secrets/admin-password \
+  ghcr.io/nalamdesk/nalamdesk-server:latest init --clinic-name "Asha Clinic"
+shred -u admin-password
+```
+
+`init` prints the **recovery code** once. Store it offline (see
+[The recovery code](#the-recovery-code)). Then start the server:
+
+```sh
+docker run -d --name nalamdesk --restart unless-stopped \
+  -p 3000:3000 -v nalamdesk-data:/var/lib/nalamdesk \
+  ghcr.io/nalamdesk/nalamdesk-server:latest
+```
+
+With Docker Compose:
+
+```yaml
+services:
+  nalamdesk:
+    image: ghcr.io/nalamdesk/nalamdesk-server:v0.0.14   # pin a version
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    volumes: ["nalamdesk-data:/var/lib/nalamdesk"]
+    stop_grace_period: 30s
+volumes:
+  nalamdesk-data:
+```
+
+The image runs as user `nalamdesk` (uid 10001). Everything it keeps is in the
+`/var/lib/nalamdesk` volume: the encrypted database, the key file, TLS files
+and backups. To run `init` in a terminal instead of passing a password file,
+add `-it` and leave out the `-e` and secret mount.
+
+### Debian and Ubuntu (.deb)
+
+```sh
+sudo apt install ./nalamdesk-server_0.0.14_amd64.deb
+sudo nalamdesk-server init --clinic-name "Asha Clinic"
+sudo systemctl start nalamdesk-server
+```
+
+The package:
+
+- installs to `/opt/nalamdesk-server` and links `/usr/bin/nalamdesk-server`;
+- creates the `nalamdesk` system user and `/var/lib/nalamdesk` (mode 0700);
+- reads `/etc/nalamdesk/server.json` and, for environment overrides,
+  `/etc/default/nalamdesk-server`;
+- installs a hardened `nalamdesk-server.service` (no new privileges,
+  read-only system, private `/tmp`, write access to its state directory only)
+  and enables it. It starts the service once a vault exists.
+
+Run CLI commands with `sudo`. The launcher switches to the `nalamdesk` user,
+so the files it creates stay readable by the service.
+
+### Other Linux (tarball)
+
+Extract `nalamdesk-server-<version>-linux-x64.tar.gz` to
+`/opt/nalamdesk-server`, create a `nalamdesk` system user, and install
+`packaging/server/linux/nalamdesk-server.service` from the source tree. Or
+run `/opt/nalamdesk-server/bin/nalamdesk-server start` under the supervisor
+you already use. The tarball needs glibc 2.28 or later.
+
+### Windows
+
+1. Extract `nalamdesk-server-<version>-windows-x64.zip`.
+2. In PowerShell as administrator, from the extracted folder:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\nalamdesk-server\service\install-service.ps1
+   ```
+
+   This copies the server to `C:\Program Files\NalamDesk Server`, creates
+   `C:\ProgramData\NalamDesk\server` (readable by SYSTEM and Administrators
+   only), opens port 3000 on private and domain networks, adds
+   `nalamdesk-server` to the PATH and registers the **NalamDesk Server**
+   service, which starts automatically.
+3. In a new administrator PowerShell:
+
+   ```powershell
+   nalamdesk-server init --clinic-name "Asha Clinic"
+   Start-Service NalamDeskServer
+   ```
+
+Logs are in `C:\ProgramData\NalamDesk\server\logs`. To remove the service,
+run `service\uninstall-service.ps1` from the install folder. Both scripts
+leave the clinic's data in place.
+
+## Join the clinic's computers
+
+Each computer joins the server once with a one-time join code, then staff
+sign in with their own accounts. With the server running, issue a code for
+each computer:
+
+```sh
+sudo nalamdesk-server join-code --name "Reception"            # .deb
+docker exec nalamdesk nalamdesk-server join-code --name "Reception"   # Docker
+nalamdesk-server join-code --name "Reception"                 # Windows, as administrator
+```
+
+Enter the code in NalamDesk on that computer within 15 minutes
+(`--minutes N` for longer, up to a day). The code also carries part of the
+server's certificate fingerprint, so the computer knows it reached the right
+server. `join-code` works only after the server has started once, because it
+pins exactly what the running server serves.
+
+`nalamdesk-server devices list` shows the joined computers.
+`nalamdesk-server devices revoke <id>` removes a lost or retired computer
+and signs out its sessions.
+
+## Move a desktop clinic onto the server
+
+A clinic that has used the desktop app on one computer can move its records
+onto the server.
+
+1. In the desktop app, sign in as admin and open **Settings → Data &
+   Backup**. Check that **Last backup** is recent, then copy the newest
+   `.ndbackup` file from the **Location** shown there to the server. Make the
+   move at the end of a day, so the backup holds the latest records.
+2. Have the clinic's **recovery code** ready. It is the code the app showed at
+   setup.
+3. On a server with no vault yet, run:
+
+   ```sh
+   sudo nalamdesk-server import /path/to/nalamdesk-backup.ndbackup
+   ```
+
+   The file can be anywhere root can read, such as your home folder. For
+   Docker, mount the file and pass the code as a file with
+   `NALAMDESK_RECOVERY_CODE_FILE`, or add `-it` and type it in.
+4. Start the server. Staff sign in with their existing accounts and
+   passwords.
+5. **Stop using the desktop copy for that clinic.** Otherwise records split
+   between the two.
+
+Import checks the backup's checksums and opens it with the recovery code
+before it writes anything. A wrong code or a damaged file changes nothing.
+The server then unlocks the vault with its own key provider, a key file by
+default. The desktop keychain is not needed. The recovery code stays the
+same, unless the backup is from an old version that needs a new one. In that
+case import prints the new code and asks you to confirm it.
+
+## Configuration
+
+Settings come from an optional JSON file, `--config <file>` or
+`NALAMDESK_CONFIG`. Environment variables override the file.
+
+| Setting | Variable | Default |
+|---|---|---|
+| `dataDir` | `NALAMDESK_DATA_DIR` | `/var/lib/nalamdesk`; on Windows `C:\ProgramData\NalamDesk\server` |
+| `host` | `NALAMDESK_HOST` | `0.0.0.0` |
+| `port` | `NALAMDESK_PORT` | `3000` |
+| `keyProvider` | `NALAMDESK_KEY_PROVIDER` | `key-file` |
+| `keyFile` | `NALAMDESK_KEY_FILE` | `<dataDir>/vault.key` |
+
+The server refuses secrets in the JSON file. Pass passphrases, the admin
+password and the recovery code as `NAME_FILE` (a path, which suits Docker
+secrets and systemd credentials) or as `NAME`:
+
+- `NALAMDESK_PASSPHRASE_FILE`: vault passphrase, for the passphrase provider.
+- `NALAMDESK_ADMIN_PASSWORD_FILE`: admin password, for `init` only.
+- `NALAMDESK_RECOVERY_CODE_FILE`: recovery code, for `import` only.
+
+The server creates its files owner-only (umask 077).
+
+## HTTPS
+
+Clinic computers talk to the server over HTTPS. Choose one of these:
+
+- **Your own certificate** for a domain:
+  `NALAMDESK_TLS_CERT=/path/fullchain.pem` and
+  `NALAMDESK_TLS_KEY=/path/privkey.pem` (set both, or neither). The service
+  account must be able to read both files.
+- **A reverse proxy** (Caddy, nginx, Traefik) that handles TLS:
+  `NALAMDESK_TLS=proxy`. The server then serves plain HTTP and trusts the
+  proxy's `X-Forwarded-*` headers. Bind it to localhost
+  (`NALAMDESK_HOST=127.0.0.1`), or keep it on a private Docker network, so
+  only the proxy can reach it.
+- **Neither:** the server makes a self-signed certificate once, in
+  `<dataDir>/tls/`. Clinic computers trust it through the join code, which
+  carries part of the certificate fingerprint. List any extra names or IPs
+  that clients use in `NALAMDESK_PUBLIC_HOSTNAMES`, for example
+  `nalamdesk.clinic.lan,192.168.1.20`.
+
+Details: [server network and auth](architecture/server-network.md).
+
+## Unlocking the vault: key providers
+
+The database is encrypted with a random data key. Each way of unlocking it
+holds its own wrapped copy of that key in a *key slot*. Any one slot opens
+the vault.
+
+| Provider | Restarts unattended | Protects against | Use when |
+|---|---|---|---|
+| `key-file` (default) | Yes | Copied database or backups without the key file | Docker, Windows, and any server with full-disk encryption |
+| `systemd-creds` | Yes | Copied files, and a disk moved to another machine | Linux with systemd 250 or later (recommended for the .deb) |
+| `tpm` | Yes | As above, bound to this machine's TPM chip | Linux servers with a TPM 2.0 |
+| `dpapi` | Yes | Copied files, and a disk moved to another machine | Windows, with the vault created as the service account |
+| `kms` | Yes | All of the above, with audited key use | A cloud KMS or Vault you already run |
+| `passphrase` | No: someone types it, or supplies `NALAMDESK_PASSPHRASE_FILE` | A stolen disk or machine | Someone is on site to start the server |
+| Recovery code (always present) | n/a | A lost or dead server | Disaster recovery only |
+
+Manage slots without re-encrypting:
+
+```sh
+sudo nalamdesk-server key list
+sudo nalamdesk-server key add --provider passphrase --label "Owner"
+sudo nalamdesk-server key add --provider key-file --key-file /secure/usb/vault.key
+sudo nalamdesk-server key remove <slot-id>
+```
+
+Every change is written to the audit log. The recovery code slot cannot be
+removed. A good pattern is to add a machine-bound slot, check that the
+service starts with it, and then remove the key file slot.
+
+The machine-bound providers and their options (`--credential-name`,
+`--dpapi-blob`, `--key-command`) are described in the
+[developer guide](../desktop/DEVELOPER_GUIDE.md). On the .deb, a
+`systemd-creds` slot also needs `Environment=NALAMDESK_KEY_PROVIDER=systemd-creds`
+and `LoadCredentialEncrypted=nalamdesk-vault-key` in a drop-in
+(`sudo systemctl edit nalamdesk-server`).
+
+**Keep the key file separate from your backups.** A backup and its key file
+together open the clinic's records.
+
+## The recovery code
+
+`init` shows the recovery code once. It opens the vault when every other
+slot is lost, and you need it to restore a backup on a new machine. There is
+no password reset and no other way in.
+
+- Write it down, and keep it offline in two safe places, such as a safe and
+  the owner's home.
+- Confirm it after `init` when asked, or later with
+  `nalamdesk-server recovery confirm`. The server warns at every start until
+  you confirm.
+
+## Backups
+
+Back up the data directory (`/var/lib/nalamdesk`, the Docker volume, or
+`C:\ProgramData\NalamDesk\server`). It holds the database (`nalamdesk.db`),
+`security.json` (key slots) and `tls/`.
+
+- Stop the server first, or copy from a filesystem snapshot, so the database
+  copy is consistent.
+- Keep backups **off the server**, with at least one copy offline or
+  offsite.
+- Store the key file (`vault.key`) apart from the backups. A backup restores
+  with the recovery code alone.
+- Before each upgrade's migrations, the server keeps a copy of the database
+  as `nalamdesk.db.bak`.
+
+Scheduled backups in the clinic's portable backup format move into the
+server with Cloud and backups (#196). Until then, schedule the copy above
+with your usual tools (a systemd timer, cron, Windows Task Scheduler, or
+volume snapshots).
+
+**Test a restore.** Copy a backup to a spare machine, start the server
+against it, and sign in.
+
+## Upgrades
+
+The server never updates itself. To upgrade:
+
+- **Docker:** `docker pull` the new tag, then recreate the container with
+  the same volume.
+- **.deb:** `sudo apt install ./nalamdesk-server_<new>_amd64.deb`. The
+  package restarts the service.
+- **Windows:** extract the new zip and run its `install-service.ps1`. It
+  stops the service, replaces the program files and starts it again.
+
+Database migrations run on start, after the automatic pre-migration copy.
+Server and app share one version number. The server accepts clients on its
+own version and the one before, so upgrade the server first, then the clinic
+computers.
+
+## Monitoring
+
+- **Running:** `systemctl status nalamdesk-server`,
+  `docker ps` (the image has a health check on the port), or
+  `Get-Service NalamDeskServer`.
+- **Logs:** `journalctl -u nalamdesk-server`, `docker logs nalamdesk`, or
+  `C:\ProgramData\NalamDesk\server\logs`.
+- **Vault:** `nalamdesk-server status` shows the data directory, whether the
+  vault is set up, the key provider and the listen address.
+- Watch free disk space on the data directory, and check that your backup
+  job ran.
+- Look for the recovery-code warning in the logs after a fresh install.
+
+## Uninstall
+
+- **.deb:** `sudo apt remove nalamdesk-server`. Even `purge` keeps
+  `/var/lib/nalamdesk`. Delete it yourself once you are sure you have a
+  backup.
+- **Docker:** remove the container. The volume keeps the data.
+- **Windows:** run `uninstall-service.ps1`, then delete
+  `C:\Program Files\NalamDesk Server`. The data folder is kept.

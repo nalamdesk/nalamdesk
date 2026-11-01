@@ -1,0 +1,13 @@
+# Environment for nalamdesk-server.service. Settings here override
+# /etc/nalamdesk/server.json. Never put passwords or passphrases here:
+# use NALAMDESK_PASSPHRASE_FILE pointing at a root-only file instead.
+#
+# HTTPS with your own certificate (both or neither):
+#NALAMDESK_TLS_CERT=/etc/nalamdesk/tls/fullchain.pem
+#NALAMDESK_TLS_KEY=/etc/nalamdesk/tls/privkey.pem
+#
+# TLS ends at a reverse proxy on this machine:
+#NALAMDESK_TLS=proxy
+#
+# Extra names or IPs for the self-signed certificate:
+#NALAMDESK_PUBLIC_HOSTNAMES=nalamdesk.clinic.lan,192.168.1.20

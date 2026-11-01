@@ -35,6 +35,8 @@ import { acknowledgeRecoveryCodeForActiveAdmin } from './services/RecoveryCodeAc
 import { ApiServer } from '../server/app';
 import type { EventTopic } from '../server/events';
 import { invokeDbMethod } from '../shared/ipc-db-args';
+import { registerJoinIpc } from './client/join-ipc';
+import { safeStorageCipher } from './client/electron-env';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import {
     DEV_APP_NAME,
@@ -554,6 +556,17 @@ ipcMain.handle('auth:acknowledgeRecoveryCode', async (_event, { recoveryCode }) 
     const user = sessionService.getUser();
     acknowledgeRecoveryCodeForActiveAdmin(user, databaseService, securityService, recoveryCode);
     return { success: true };
+});
+
+// First run: join a NalamDesk Server instead of creating a vault (#194).
+registerJoinIpc(ipcMain, {
+    userDataPath,
+    cipher: safeStorageCipher,
+    canJoin: () => !securityService.isSetup(userDataPath).isSetup,
+    restart: () => {
+        app.relaunch();
+        app.exit(0);
+    }
 });
 
 ipcMain.handle('clipboard:writeText', (event, text) => {

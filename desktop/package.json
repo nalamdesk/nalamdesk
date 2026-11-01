@@ -6,7 +6,7 @@
   "license": "AGPL-3.0-only",
   "homepage": "https://nalamdesk.com",
   "productName": "NalamDesk",
-  "main": "dist/main/main.js",
+  "main": "dist/main/entry.js",
   "engines": {
     "node": ">=22.5.0"
   },

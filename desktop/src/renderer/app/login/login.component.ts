@@ -4,6 +4,25 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../services/auth.service';
 import { RuntimeService } from '../services/runtime.service';
+import { ServerConnectionService } from '../services/server-connection.service';
+import { DialogService } from '../shared/services/dialog.service';
+
+const JOIN_ERRORS: Record<string, string> = {
+  INVALID_CODE: 'That join code is not valid or has expired. Ask an admin for a new one.',
+  WRONG_SERVER: 'That join code is for a different NalamDesk Server.',
+  TOO_MANY_ATTEMPTS: 'Too many wrong codes. Wait a few minutes and try again.',
+  UNREACHABLE: 'Cannot reach the NalamDesk Server.'
+};
+
+export function joinErrorMessage(error: string): string {
+  return JOIN_ERRORS[error] ?? 'Could not join this browser. Try again or ask an admin for a new code.';
+}
+
+function defaultBrowserName(): string {
+  const ua = globalThis.navigator?.userAgent ?? '';
+  const browser = ['Edg', 'Firefox', 'Chrome', 'Safari'].find((name) => ua.includes(name)) ?? 'Browser';
+  return `${browser === 'Edg' ? 'Edge' : browser} browser`;
+}
 
 @Component({
   selector: 'app-login',
@@ -30,7 +49,30 @@ import { RuntimeService } from '../services/runtime.service';
           </button>
         </div>
 
-        <form (ngSubmit)="onLogin()" *ngIf="!pendingRecoveryCode">
+        <form *ngIf="needsJoin" (ngSubmit)="onJoin()" data-testid="join-browser-form">
+          <p class="text-sm text-gray-300 mb-4">
+            Join this browser to the NalamDesk Server. Ask an admin for a join code
+            (Settings, or <code>nalamdesk-server join-code</code>).
+          </p>
+          <div class="mb-4">
+            <label class="block text-gray-400 text-sm font-bold mb-2" for="joinCode">Join code</label>
+            <input id="joinCode" name="joinCode" [(ngModel)]="joinCode" autocomplete="off" spellcheck="false"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white font-mono uppercase tracking-wider focus:outline-none focus:border-blue-500"
+              placeholder="XXXXX-XXXXX-XXXXX-XXXXX" [disabled]="isLoading">
+          </div>
+          <div class="mb-4">
+            <label class="block text-gray-400 text-sm font-bold mb-2" for="deviceName">Name for this computer</label>
+            <input id="deviceName" name="deviceName" [(ngModel)]="deviceName" maxlength="100"
+              class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500"
+              placeholder="Front desk" [disabled]="isLoading">
+          </div>
+          <button type="submit" [disabled]="isLoading || !joinCode"
+            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ isLoading ? 'Joining...' : 'Join' }}
+          </button>
+        </form>
+
+        <form (ngSubmit)="onLogin()" *ngIf="!pendingRecoveryCode && !needsJoin">
           <div class="mb-4">
             <label class="block text-gray-400 text-sm font-bold mb-2" for="username">
               Username
@@ -72,9 +114,16 @@ import { RuntimeService } from '../services/runtime.service';
         </form>
         
         <div class="mt-4 text-center flex justify-between text-xs text-gray-400">
-            <a routerLink="/recover" class="hover:text-blue-400">Recover Device</a>
+            <a *ngIf="isElectron" routerLink="/recover" class="hover:text-blue-400">Recover Device</a>
+            <div *ngIf="!isElectron" class="flex flex-col items-start gap-1" data-testid="server-connection-info">
+                <span *ngIf="serverLabel">{{ serverLabel }}</span>
+                <span *ngIf="deviceLabel" class="text-gray-500">{{ deviceLabel }}</span>
+                <button *ngIf="server.isAppClient" type="button" (click)="disconnectComputer()" class="hover:text-red-400 underline">
+                  Disconnect this computer
+                </button>
+            </div>
             <div class="flex flex-col items-end">
-                <span>Secure Local-First Access</span>
+                <span>{{ isElectron ? 'Secure Local-First Access' : 'Secure server access' }}</span>
                 <div *ngIf="runtime.lanAccessUrl" class="mt-1 flex items-center gap-1.5 bg-gray-700/50 px-2 py-0.5 rounded-md border border-gray-600/30">
                     <span class="relative flex h-1.5 w-1.5">
                       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -98,12 +147,20 @@ export class LoginComponent implements OnInit {
   vaultNotice = '';
   private pendingRoute = '/dashboard';
   isElectron = !!(globalThis as any).electron;
+  /** Browser client on a server that only accepts joined computers. */
+  needsJoin = false;
+  joinCode = '';
+  deviceName = '';
+  serverLabel = '';
+  deviceLabel = '';
 
   constructor(
     private router: Router,
     private ngZone: NgZone,
     private authService: AuthService,
-    public runtime: RuntimeService
+    public runtime: RuntimeService,
+    public server: ServerConnectionService,
+    private dialog: DialogService
   ) { }
 
   async ngOnInit() {
@@ -117,7 +174,61 @@ export class LoginComponent implements OnInit {
 
     if (this.isElectron) {
       this.runtime.init();
+    } else {
+      await this.loadServerInfo();
     }
+  }
+
+  /** Browser and client-mode app: who the server is and whether this computer joined. */
+  private async loadServerInfo() {
+    if (this.server.isAppClient) {
+      const info = await this.server.bridge!.info();
+      this.serverLabel = info?.serverUrl ? `Server: ${new URL(info.serverUrl).host}` : '';
+      this.deviceLabel = info?.deviceName ? `This computer: ${info.deviceName}` : '';
+      if (info?.error) this.error = 'This computer can no longer read its server credential. Disconnect it and join again.';
+    }
+    try {
+      const hello = await this.server.hello();
+      const device = this.server.browserDevice();
+      this.ngZone.run(() => {
+        if (!this.server.isAppClient) {
+          this.needsJoin = hello.requireDevice && !device;
+          this.deviceLabel = device ? `This browser: ${device.deviceName}` : '';
+        }
+        if (hello.serverVersion && !this.serverLabel) this.serverLabel = `NalamDesk Server ${hello.serverVersion}`;
+      });
+    } catch {
+      // The connection banner explains an unreachable or outdated server.
+    }
+  }
+
+  async onJoin() {
+    if (!this.joinCode) return;
+    this.isLoading = true;
+    this.error = '';
+    const name = this.deviceName.trim() || defaultBrowserName();
+    const result = await this.server.joinBrowser(this.joinCode, name);
+    this.ngZone.run(() => {
+      this.isLoading = false;
+      if (result.ok) {
+        this.needsJoin = false;
+        this.joinCode = '';
+        this.deviceLabel = `This browser: ${result.device.deviceName}`;
+      } else {
+        this.error = joinErrorMessage(result.error);
+      }
+    });
+  }
+
+  async disconnectComputer() {
+    const confirmed = await this.dialog.open({
+      title: 'Disconnect this computer?',
+      message: 'NalamDesk will forget this server and restart. You will need a new join code from an admin to connect again.',
+      type: 'confirm',
+      confirmText: 'Disconnect',
+      cancelText: 'Cancel'
+    });
+    if (confirmed) await this.server.bridge?.disconnect();
   }
 
   async onLogin() {
@@ -144,7 +255,7 @@ export class LoginComponent implements OnInit {
           }
         } else {
           this.password = ''; // Clear sensitive data on failure too
-          this.error = 'Sign-in failed. Check your credentials or use Recover Device if access is unavailable.';
+          this.error = this.loginErrorMessage(result.error);
         }
       });
     } catch (e) {
@@ -154,6 +265,24 @@ export class LoginComponent implements OnInit {
         console.error(e);
       });
     }
+  }
+
+  private loginErrorMessage(error?: string): string {
+    if (this.isElectron) {
+      return 'Sign-in failed. Check your credentials or use Recover Device if access is unavailable.';
+    }
+    if (error === 'TOO_MANY_ATTEMPTS') return 'Too many sign-in attempts. Wait a few minutes and try again.';
+    if (error === 'DEVICE_NOT_JOINED') {
+      if (!this.server.isAppClient) {
+        this.server.forgetBrowserDevice();
+        this.needsJoin = true;
+        this.deviceLabel = '';
+        return 'This browser is not joined to the server. Enter a join code from an admin.';
+      }
+      return 'The server no longer recognises this computer. Disconnect it and join again with a new code.';
+    }
+    if (error === 'Network Error') return 'Cannot reach the NalamDesk Server.';
+    return 'Sign-in failed. Check your username and password.';
   }
 
   async acknowledgeMigration() {

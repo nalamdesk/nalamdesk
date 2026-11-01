@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { Injectable, Optional } from '@angular/core';
+import { ServerConnectionService } from './server-connection.service';
 import { logoutLandingHref } from '../../../shared/hash-app-path';
 
 @Injectable({
@@ -8,7 +9,7 @@ export class AuthService {
     private tokenKey = 'nalamdesk_token';
     private userKey = 'nalamdesk_user';
 
-    constructor() { }
+    constructor(@Optional() private server?: ServerConnectionService) { }
 
     async login(username: string, password: string): Promise<{ success: boolean; error?: string; pendingRecoveryCode?: string }> {
         if (window.electron) {
@@ -23,24 +24,15 @@ export class AuthService {
             } catch (e: any) {
                 return { success: false, error: e.message };
             }
-        } else {
-            try {
-                const response = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-                const data = await response.json();
-                if (response.ok) {
-                    this.setToken(data.token);
-                    this.setUser(data.user);
-                    return { success: true };
-                } else {
-                    return { success: false, error: data.error };
-                }
-            } catch (e: any) {
-                return { success: false, error: 'Network Error' };
-            }
+        }
+        if (!this.server) return { success: false, error: 'Network Error' };
+        try {
+            const result = await this.server.login(username, password);
+            if (!result.ok) return { success: false, error: result.error };
+            this.setUser(result.user);
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e?.message === 'SERVER_UNREACHABLE' ? 'Network Error' : e?.message };
         }
     }
 
@@ -102,19 +94,23 @@ export class AuthService {
     async logout(navigate: (url: string) => void = (url) => { window.location.replace(url); }): Promise<void> {
         if (window.electron?.logout) {
             await window.electron.logout();
+        } else {
+            await this.server?.logout();
         }
         localStorage.removeItem(this.tokenKey);
         localStorage.removeItem(this.userKey);
         navigate(logoutLandingHref(window.location.href));
     }
 
+    /** The server ended this session: forget the signed-in user here too. */
+    forgetSession(): void {
+        localStorage.removeItem(this.tokenKey);
+        localStorage.removeItem(this.userKey);
+    }
+
     getUser() {
         const u = localStorage.getItem(this.userKey);
         return u ? JSON.parse(u) : null;
-    }
-
-    getToken() {
-        return localStorage.getItem(this.tokenKey);
     }
 
     private setUser(user: any) {
@@ -130,10 +126,6 @@ export class AuthService {
                 : {})
         };
         localStorage.setItem(this.userKey, JSON.stringify(safeUser));
-    }
-
-    private setToken(token: string) {
-        localStorage.setItem(this.tokenKey, token);
     }
 
     isLoggedIn() {

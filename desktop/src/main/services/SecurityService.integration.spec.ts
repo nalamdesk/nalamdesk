@@ -127,6 +127,27 @@ describe.skipIf(!process.versions.electron)('SecurityService SQLCipher integrati
         }
     });
 
+    it('opens one real vault through a desktop slot, a key file slot, and a passphrase slot', async () => {
+        const owner = new SecurityService(new IntegrationDeviceStore(0x46));
+        await owner.setup('admin-login-only', dbPath, directory);
+        owner.getDb().exec('CREATE TABLE clinical_data (value TEXT); INSERT INTO clinical_data VALUES (\'slotted\')');
+        owner.completeProvisioning();
+        owner.addKeySlot(KeyFileStore.create(path.join(directory, 'vault.key')), 'Key file');
+        owner.addKeySlot(new PassphraseKeyStore('correct horse battery', { logN: 14 }), 'Passphrase');
+        owner.closeDb();
+
+        for (const store of [
+            new IntegrationDeviceStore(0x46),
+            new KeyFileStore(path.join(directory, 'vault.key')),
+            new PassphraseKeyStore('correct horse battery', { logN: 14 })
+        ]) {
+            const service = new SecurityService(store);
+            await service.initializeDevice(dbPath, directory);
+            expect(service.getDb().prepare('SELECT value FROM clinical_data').get()).toEqual({ value: 'slotted' });
+            service.closeDb();
+        }
+    });
+
     it('re-enrols a new device through the recovery envelope', async () => {
         const original = new SecurityService(new IntegrationDeviceStore(0x11));
         const code = await original.setup('admin-login-only', dbPath, directory);

@@ -195,40 +195,6 @@ jobs:
       # packaged version without banking anything against the
       # Actions storage quota.
 
-  # ===========================================================================
-  # SonarCloud Analysis (runs once on ubuntu, after build-check passes)
-  # ===========================================================================
-  sonar-analysis:
-    needs: [build-check]
-    if: ${{ needs.build-check.result == 'success' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./desktop
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history for accurate blame/coverage
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
-
-      - name: Install Dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: Run Tests with Coverage
-        run: npm run test:coverage
-
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
-        with:
-          projectBaseDir: .
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  # SonarCloud runs as Automatic Analysis on the SonarCloud side. A CI scan
+  # job conflicts with it ("CI analysis while Automatic Analysis is enabled"),
+  # so there is none here; the "SonarCloud Code Analysis" check reports the gate.

@@ -131,6 +131,16 @@ describe('AuthService', () => {
             expect(service.getUser()).toBeNull();
         });
 
+        it('treats a tab without a server session as signed out', () => {
+            localStorage.setItem('nalamdesk_user', JSON.stringify({ id: 1 }));
+            service = new AuthService({ signedIn: false } as any);
+            expect(service.isLoggedIn()).toBe(false);
+            expect(localStorage.getItem('nalamdesk_user')).toBeNull();
+            localStorage.setItem('nalamdesk_user', JSON.stringify({ id: 1 }));
+            service = new AuthService({ signedIn: true } as any);
+            expect(service.isLoggedIn()).toBe(true);
+        });
+
         it('reports an unreachable server as a network error', async () => {
             const server = { login: vi.fn().mockRejectedValue(new Error('SERVER_UNREACHABLE')) };
             service = new AuthService(server as any);

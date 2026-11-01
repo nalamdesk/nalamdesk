@@ -129,6 +129,12 @@ export class AuthService {
     }
 
     isLoggedIn() {
+        // Server clients keep their session per tab (sessionStorage); the
+        // user record alone (localStorage) does not mean this tab is signed in.
+        if (!window.electron && this.server && !this.server.signedIn) {
+            this.forgetSession();
+            return false;
+        }
         return !!this.getUser();
     }
 }

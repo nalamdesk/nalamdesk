@@ -9,6 +9,15 @@ export class AuthService {
     private tokenKey = 'nalamdesk_token';
     private userKey = 'nalamdesk_user';
 
+    /**
+     * The single-PC app keeps the signed-in user across reloads. Server
+     * clients keep it per tab, next to that tab's session tokens, so one
+     * tab signing in or out never changes another.
+     */
+    private get userStore(): Storage {
+        return window.electron ? localStorage : sessionStorage;
+    }
+
     constructor(@Optional() private server?: ServerConnectionService) { }
 
     async login(username: string, password: string): Promise<{ success: boolean; error?: string; pendingRecoveryCode?: string }> {
@@ -98,18 +107,18 @@ export class AuthService {
             await this.server?.logout();
         }
         localStorage.removeItem(this.tokenKey);
-        localStorage.removeItem(this.userKey);
+        this.userStore.removeItem(this.userKey);
         navigate(logoutLandingHref(window.location.href));
     }
 
     /** The server ended this session: forget the signed-in user here too. */
     forgetSession(): void {
         localStorage.removeItem(this.tokenKey);
-        localStorage.removeItem(this.userKey);
+        this.userStore.removeItem(this.userKey);
     }
 
     getUser() {
-        const u = localStorage.getItem(this.userKey);
+        const u = this.userStore.getItem(this.userKey);
         return u ? JSON.parse(u) : null;
     }
 
@@ -125,12 +134,11 @@ export class AuthService {
                 ? { password_reset_required: user.password_reset_required }
                 : {})
         };
-        localStorage.setItem(this.userKey, JSON.stringify(safeUser));
+        this.userStore.setItem(this.userKey, JSON.stringify(safeUser));
     }
 
     isLoggedIn() {
-        // Server clients keep their session per tab (sessionStorage); the
-        // user record alone (localStorage) does not mean this tab is signed in.
+        // A server client is signed in only while this tab holds a session.
         if (!window.electron && this.server && !this.server.signedIn) {
             this.forgetSession();
             return false;

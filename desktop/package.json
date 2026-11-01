@@ -41,7 +41,9 @@
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:mac": "npm run build && electron-builder --mac",
     "build:server": "tsc -p tsconfig.server.json",
-    "start:server": "npm run build:server && node dist/server/server/bootstrap.js"
+    "start:server": "npm run build:server && node dist/server/server/bootstrap.js",
+    "build:web": "npm run stamp:build-identity && npm run build:css && ng build --base-href ./",
+    "package:server": "node scripts/package-server.js"
   },
   "private": true,
   "build": {

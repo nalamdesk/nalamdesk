@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
 import {
     KEY_FILE_PROVIDER,
@@ -56,6 +57,9 @@ export interface CliDeps {
     createDatabase(): CliDatabase;
     provision(vault: CliVault, database: CliDatabase, adminPassword: string, clinic: Record<string, unknown>,
         config: ServerConfig): Promise<string>;
+    /** Restores a desktop backup bundle into an empty data directory and unlocks it. */
+    importBackup(vault: CliVault, database: CliDatabase, backupPath: string, recoveryCode: string,
+        store: DeviceKeyStore, config: ServerConfig): Promise<void>;
     startServer(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig, io: CliIO): Promise<RunningServer>;
     /** Resolves when the process is asked to stop. */
     waitForShutdown(): Promise<void>;
@@ -99,6 +103,7 @@ Commands:
   init [--clinic-name <name>]    Create the encrypted vault and the admin account.
   start                          Unlock the vault and serve clients (default).
   status                         Show whether the vault is set up.
+  import <backup.ndbackup>       Move a single-PC clinic onto this server from its backup.
   key list                       List the ways this vault can be unlocked.
   key add --provider key-file [--key-file <path>] [--label <text>]
   key add --provider passphrase [--label <text>]
@@ -112,7 +117,8 @@ Environment:
   NALAMDESK_DATA_DIR, NALAMDESK_HOST, NALAMDESK_PORT, NALAMDESK_STATIC_PATH,
   NALAMDESK_KEY_PROVIDER (key-file | passphrase), NALAMDESK_KEY_FILE,
   NALAMDESK_PASSPHRASE_FILE or NALAMDESK_PASSPHRASE,
-  NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only).`;
+  NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only),
+  NALAMDESK_RECOVERY_CODE_FILE or NALAMDESK_RECOVERY_CODE (import only).`;
 
 async function askTwice(io: CliIO, label: string): Promise<string> {
     const first = await io.prompt(`${label}: `, { secret: true });
@@ -195,10 +201,10 @@ async function confirmRecovery(vault: CliVault, io: CliIO): Promise<boolean> {
 
 async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
-    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
-    probe.reconcileProvisioning(config.dbPath, config.dataDir);
-    if (probe.isSetup(config.dataDir).isSetup) {
-        io.err(`A vault already exists in ${config.dataDir}. Nothing was changed.`);
+    try {
+        assertNoVault(config, deps);
+    } catch (error: any) {
+        io.err(error.message);
         return 1;
     }
 
@@ -230,6 +236,73 @@ async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: 
         io.out('Run `nalamdesk-server recovery confirm` once the code is stored.');
     }
     vault.closeDb();
+    return 0;
+}
+
+function assertNoVault(config: ServerConfig, deps: CliDeps): void {
+    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
+    probe.reconcileProvisioning(config.dbPath, config.dataDir);
+    if (probe.isSetup(config.dataDir).isSetup) {
+        throw new Error(`A vault already exists in ${config.dataDir}. Nothing was changed.`);
+    }
+}
+
+async function cmdImport(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const backupPath = args.positional[1];
+    if (!backupPath) {
+        io.err('Usage: nalamdesk-server import <backup.ndbackup>');
+        return 2;
+    }
+    const resolvedBackup = path.resolve(backupPath);
+    if (!fs.existsSync(resolvedBackup)) throw new Error(`${resolvedBackup} does not exist.`);
+    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+    assertNoVault(config, deps);
+
+    let recoveryCode = readSecretFromEnv('NALAMDESK_RECOVERY_CODE', io.env);
+    if (recoveryCode === undefined) {
+        if (!io.interactive) throw new Error('Set NALAMDESK_RECOVERY_CODE_FILE, or run import in a terminal.');
+        recoveryCode = await io.prompt('Recovery code of the clinic that made this backup: ', { secret: true });
+    }
+    recoveryCode = recoveryCode.trim().toUpperCase();
+    if (!recoveryCode) throw new Error('The recovery code is required to open the backup.');
+
+    const store = await openKeyStore(config, io, { create: true });
+    const vault = deps.createVault(store);
+    const database = deps.createDatabase();
+    try {
+        await deps.importBackup(vault, database, resolvedBackup, recoveryCode, store, config);
+    } catch (error: any) {
+        if (error?.message === 'INVALID_RECOVERY_CODE') {
+            throw new Error('INVALID_RECOVERY_CODE: that recovery code does not open this backup. Nothing was changed.');
+        }
+        if (error?.message === 'LEGACY_DATABASE_ONLY_BACKUP') {
+            throw new Error('LEGACY_DATABASE_ONLY_BACKUP: this is an old database-only backup. Make a new backup from the desktop app (Settings, Backups) and import that.');
+        }
+        throw error;
+    }
+    try {
+        database.setDb(vault.getDb());
+        await database.migrate();
+        database.logAudit('VAULT_IMPORT', 'vault', null, null,
+            `Imported desktop backup ${path.basename(resolvedBackup)}; unlocks with ${store.status().provider}`);
+        io.out(`Imported ${path.basename(resolvedBackup)} into ${config.dataDir}.`);
+        io.out('Staff sign in with their existing accounts.');
+        const freshCode = vault.getPendingRecoveryCode();
+        if (freshCode) {
+            // An old transition backup: the vault now has a new recovery code.
+            io.out('');
+            io.out(`  New recovery code:  ${freshCode}`);
+            io.out('');
+            io.out('This replaces the code you typed. Store it somewhere safe and offline. It will not be shown again.');
+            const confirmed = await confirmRecovery(vault, io);
+            if (!confirmed) io.out('Run `nalamdesk-server recovery confirm` once the new code is stored.');
+        } else {
+            io.out('The recovery code is the same one the clinic already has.');
+        }
+        io.out('Stop using the desktop copy for this clinic now, so records do not split between the two.');
+    } finally {
+        vault.closeDb();
+    }
     return 0;
 }
 
@@ -343,6 +416,7 @@ export async function runCli(argv: string[], io: CliIO, deps: CliDeps): Promise<
             case 'init': return await cmdInit(args, config, io, deps);
             case 'start': return await cmdStart(config, io, deps);
             case 'status': return await cmdStatus(config, io, deps);
+            case 'import': return await cmdImport(args, config, io, deps);
             case 'key': return await cmdKey(args, config, io, deps);
             case 'recovery': return await cmdRecovery(args, config, io, deps);
             default:

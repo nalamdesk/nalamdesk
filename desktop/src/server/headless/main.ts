@@ -1,4 +1,5 @@
 import * as readline from 'readline';
+import { BackupService } from '../../main/services/BackupService';
 import { DatabaseService } from '../../main/services/DatabaseService';
 import { ProvisioningService } from '../../main/services/ProvisioningService';
 import { SecurityService } from '../../main/services/SecurityService';
@@ -39,6 +40,20 @@ const deps: CliDeps = {
     createDatabase: () => new DatabaseService() as any,
     provision: (vault, database, adminPassword, clinic, config) =>
         new ProvisioningService(vault as any, database as any).provision(adminPassword, clinic, config.dbPath, config.dataDir),
+    async importBackup(vault, database, backupPath, recoveryCode, store, config) {
+        const backups = new BackupService(
+            database as unknown as DatabaseService,
+            undefined as any, // Drive upload is not used by a restore.
+            vault as unknown as SecurityService,
+            config.dataDir,
+            {
+                createIsolatedSecurityService: () => new SecurityService(store),
+                // Nothing is signed in yet, so there are no sessions to end.
+                onRestoreCommitted: () => undefined
+            }
+        );
+        await backups.restoreLocalBackup(backupPath, recoveryCode);
+    },
     async startServer(_vault, database, store, config) {
         const api = new ApiServer(
             database as unknown as DatabaseService,

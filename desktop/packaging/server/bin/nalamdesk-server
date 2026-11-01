@@ -1,0 +1,19 @@
+#!/bin/sh
+# NalamDesk Server launcher. Uses the bundled Node runtime when present.
+set -e
+ROOT="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"
+NODE="$ROOT/runtime/node"
+[ -x "$NODE" ] || NODE="$(command -v node)"
+if [ -z "$NODE" ]; then
+    echo "nalamdesk-server: Node.js 22.5 or later is required." >&2
+    exit 1
+fi
+# A packaged install keeps its config in /etc/nalamdesk. Run as the service
+# account, so files the CLI creates stay readable by the service.
+if [ -z "$NALAMDESK_CONFIG" ] && [ -f /etc/nalamdesk/server.json ]; then
+    export NALAMDESK_CONFIG=/etc/nalamdesk/server.json
+fi
+if [ "$(id -u)" = "0" ] && [ -z "$NALAMDESK_ALLOW_ROOT" ] && id nalamdesk >/dev/null 2>&1; then
+    exec runuser -u nalamdesk -- "$NODE" "$ROOT/app/dist/server/server/headless/main.js" "$@"
+fi
+exec "$NODE" "$ROOT/app/dist/server/server/headless/main.js" "$@"

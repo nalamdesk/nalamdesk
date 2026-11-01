@@ -1,0 +1,278 @@
+name: Server Packages
+
+# NalamDesk Server packages (ADR 0001, #197): the Linux .deb and tarball,
+# the Docker image and the Windows service zip, each smoke-tested by moving a
+# desktop backup onto it and signing in.
+#
+# - PRs: Linux packages and the Docker image (ubuntu only, nothing published).
+# - master pushes: also the Windows zip, with a real service install.
+# - Releases: build.yml calls this with a tag; packages are uploaded to the
+#   nalamdesk/releases draft and the image is pushed to GHCR.
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/server-package.yml'
+      - '!**.md'
+  push:
+    branches:
+      - master
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/server-package.yml'
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to check out and publish (vX.Y.Z).
+        type: string
+        required: true
+    secrets:
+      RELEASE_APP_PRIVATE_KEY:
+        required: true
+
+concurrency:
+  group: server-package-${{ inputs.tag || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/nalamdesk/nalamdesk-server
+  # WinSW 2.12.0 (https://github.com/winsw/winsw), pinned by checksum.
+  WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe
+  WINSW_SHA256: 05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || '' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      # Electron's install hooks are not needed for the server.
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+          npm rebuild better-sqlite3-multiple-ciphers argon2
+
+      - name: Build server and web UI
+        env:
+          NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          npm run build:server
+          npm run build:web
+
+      - name: Package .deb and tarball
+        run: |
+          node scripts/package-server.js deb --out release/server
+          node scripts/package-server.js tar --out release/server
+          ls -la release/server
+
+      - name: Smoke test the .deb in a clean Debian
+        run: |
+          node packaging/server/smoke/make-desktop-backup.js dist/server "$RUNNER_TEMP/work"
+          chmod 0644 "$RUNNER_TEMP"/work/*
+          docker run --rm \
+            -v "$PWD/release/server:/pkg:ro" -v "$RUNNER_TEMP/work:/work:ro" \
+            -v "$PWD/packaging/server/smoke:/smoke:ro" \
+            debian:bookworm-slim sh /smoke/deb-smoke.sh
+
+      - name: Release bot token
+        if: inputs.tag != ''
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: nalamdesk
+          repositories: releases
+
+      - name: Upload to the release
+        if: inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          gh release upload "${{ inputs.tag }}" --repo nalamdesk/releases --clobber \
+            release/server/nalamdesk-server_*.deb release/server/nalamdesk-server-*-linux-*.tar.gz
+
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: ./desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || '' }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: desktop
+          file: desktop/packaging/server/Dockerfile
+          load: true
+          tags: nalamdesk-server:test
+          build-args: |
+            VERSION=${{ inputs.tag || github.sha }}
+            NALAMDESK_BUILD_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Smoke test the image (init, then import into a second volume)
+        run: |
+          npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+          npm rebuild better-sqlite3-multiple-ciphers argon2
+          npm run build:server
+          work="$RUNNER_TEMP/work"
+          node packaging/server/smoke/make-desktop-backup.js dist/server "$work"
+          printf 'a-strong-admin-password\n' > "$work/admin-password"
+          chmod 0644 "$work"/*
+
+          docker run --rm -v nd-init:/var/lib/nalamdesk -v "$work:/run/secrets:ro" \
+            -e NALAMDESK_ADMIN_PASSWORD_FILE=/run/secrets/admin-password \
+            nalamdesk-server:test init --clinic-name "CI Clinic"
+          docker run -d --name nd-init -p 3101:3000 -v nd-init:/var/lib/nalamdesk nalamdesk-server:test
+          node packaging/server/smoke/login.js http://127.0.0.1:3101 admin "$work/admin-password" \
+            || { docker logs nd-init; exit 1; }
+
+          docker run --rm -v nd-import:/var/lib/nalamdesk -v "$work:/run/secrets:ro" \
+            -e NALAMDESK_RECOVERY_CODE_FILE=/run/secrets/code \
+            nalamdesk-server:test import /run/secrets/clinic.ndbackup
+          docker run -d --name nd-import -p 3102:3000 -v nd-import:/var/lib/nalamdesk nalamdesk-server:test
+          node packaging/server/smoke/login.js http://127.0.0.1:3102 admin "$work/desktop-password" \
+            || { docker logs nd-import; exit 1; }
+
+          # A clean stop closes the database within the grace period.
+          docker stop -t 30 nd-init nd-import
+          test "$(docker inspect -f '{{.State.ExitCode}}' nd-init)" = "0"
+
+      - name: Log in to GHCR
+        if: inputs.tag != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        if: inputs.tag != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: desktop
+          file: desktop/packaging/server/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ inputs.tag }}
+            ${{ env.IMAGE }}:latest
+          build-args: |
+            VERSION=${{ inputs.tag }}
+            NALAMDESK_BUILD_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+
+  windows:
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ./desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || '' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+          npm rebuild better-sqlite3-multiple-ciphers argon2
+
+      - name: Build server and web UI
+        env:
+          NALAMDESK_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          npm run build:server
+          npm run build:web
+
+      - name: Fetch WinSW
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'WinSW-x64.exe'
+          Invoke-WebRequest -Uri $env:WINSW_URL -OutFile $exe
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+          if ($hash -ne $env:WINSW_SHA256) { throw "WinSW checksum mismatch: $hash" }
+          "WINSW_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Package the Windows zip
+        run: node scripts/package-server.js win-zip --out release/server
+
+      - name: Smoke test the service install
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'work'
+          node packaging/server/smoke/make-desktop-backup.js dist/server $work
+          $zip = Get-ChildItem release/server/nalamdesk-server-*-windows-*.zip | Select-Object -First 1
+          $extract = Join-Path $env:RUNNER_TEMP 'extract'
+          Expand-Archive -Path $zip.FullName -DestinationPath $extract
+          & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $extract 'nalamdesk-server\service\install-service.ps1') -NoFirewall
+          if ($LASTEXITCODE -ne 0) { throw 'install-service.ps1 failed' }
+
+          $cli = Join-Path $env:ProgramFiles 'NalamDesk Server\bin\nalamdesk-server.cmd'
+          $env:NALAMDESK_RECOVERY_CODE_FILE = Join-Path $work 'code'
+          & $cli import (Join-Path $work 'clinic.ndbackup')
+          if ($LASTEXITCODE -ne 0) { throw 'import failed' }
+          Remove-Item Env:NALAMDESK_RECOVERY_CODE_FILE
+
+          Start-Service NalamDeskServer
+          node packaging/server/smoke/login.js http://127.0.0.1:3000 admin (Join-Path $work 'desktop-password')
+          $ok = $LASTEXITCODE -eq 0
+          if (-not $ok) { Get-Content "$env:ProgramData\NalamDesk\server\logs\*" -ErrorAction SilentlyContinue }
+          & powershell -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramFiles\NalamDesk Server\service\uninstall-service.ps1"
+          if (-not $ok) { throw 'The service did not serve the imported clinic.' }
+
+      - name: Release bot token
+        if: inputs.tag != ''
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: nalamdesk
+          repositories: releases
+
+      - name: Upload to the release
+        if: inputs.tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          $zip = Get-ChildItem release/server/nalamdesk-server-*-windows-*.zip | Select-Object -First 1
+          gh release upload "${{ inputs.tag }}" --repo nalamdesk/releases --clobber $zip.FullName

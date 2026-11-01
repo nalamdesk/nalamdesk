@@ -66,8 +66,21 @@ Both providers seal values with AES-256-GCM behind a provider magic prefix, so n
 | `status` | Shows the data directory, whether the vault is set up, the key provider, and the listen address |
 | `key list`, `key add --provider key-file --key-file P`, `key add --provider passphrase`, `key remove <id>` | Manages key slots. Each change is written to `audit_logs` |
 | `recovery confirm` | Confirms the recovery code in a terminal |
+| `import <backup.ndbackup>` | Restores a desktop backup into an empty data directory through `BackupService.restoreLocalBackup`, using `NALAMDESK_RECOVERY_CODE(_FILE)` or a prompt, and adds the server's key provider as the unlock slot |
 
 Configuration comes from an optional JSON file (`--config` or `NALAMDESK_CONFIG`), overridden by `NALAMDESK_DATA_DIR`, `NALAMDESK_HOST`, `NALAMDESK_PORT`, `NALAMDESK_STATIC_PATH`, `NALAMDESK_KEY_PROVIDER` and `NALAMDESK_KEY_FILE`. Secrets are refused in the JSON file. Pass them as `NAME_FILE` (preferred) or `NAME`: `NALAMDESK_PASSPHRASE`, `NALAMDESK_NEW_PASSPHRASE` and `NALAMDESK_ADMIN_PASSWORD`, which needs at least 12 characters. The process runs with umask 077. Until Cloud pairing moves into the server (#196), ABDM runs against the mock gateway, with HIU keys protected by the server's key store.
+
+### Packaging (#197)
+
+`scripts/package-server.js` packages an existing build (`npm run build:server && npm run build:web`):
+
+- `stage [--bundle-node]`: a self-contained install in `release/server/nalamdesk-server` with only the server's dependencies (`SERVER_DEPENDENCIES`). The build fails if the compiled server requires a package that is in neither that list nor `DESKTOP_ONLY`, so add new server dependencies there.
+- `tar`, `deb`, `win-zip`: the Linux tarball, the `.deb` (systemd unit and maintainer scripts in `packaging/server/linux/`) and the Windows zip (WinSW service files in `packaging/server/windows/`; set `WINSW_EXE`). Native modules are built for the Node running the script, which is the Node that gets bundled, so package each OS on that OS.
+- `packaging/server/Dockerfile` builds the image from `desktop/`.
+
+`.github/workflows/server-package.yml` builds and smoke-tests all of them: it makes a desktop backup (`packaging/server/smoke/make-desktop-backup.js`), imports it into the installed package, starts the server and signs in. Releases call it from `build.yml` to upload the packages and push `ghcr.io/nalamdesk/nalamdesk-server`. The operator guide is [docs/self-hosting.md](../docs/self-hosting.md).
+
+`ElectronSafeStorageDeviceKeyStore` loads Electron on first use, so the server can import `DeviceKeyStore` without Electron installed.
 
 ## Application version
 - Settings reads a single IPC, `app:getVersion`, backed by packaged `app.getVersion()` plus `build-identity.json` (commit / CI run id when stamped).

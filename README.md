@@ -61,6 +61,7 @@ The cloud runs on AWS CDK in ap-south-1. Deploy the shared Core stacks first
 ## Documentation
 See `cloud/documentation` for full architectural details.
 See **[Testing Strategy](./cloud/documentation/docs/developer-guide/testing-strategy.md)** for detailed Testing Architecture.
+See **[ADR 0001: NalamDesk Server](./docs/architecture/0001-headless-server.md)** for the planned headless server and client model.
 
 ## License
 

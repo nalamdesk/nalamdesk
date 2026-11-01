@@ -68,10 +68,12 @@ Every provider seals values with AES-256-GCM behind its own magic prefix, so no 
 | Command | What it does |
 |---|---|
 | `init [--clinic-name X]` | Creates the vault (`ProvisioningService`) and the admin account, and prints the recovery code once |
-| `start` (default) | Unlocks the vault, migrates, and serves `ApiServer` until SIGINT or SIGTERM |
+| `start` (default) | Unlocks the vault, migrates, and serves `ApiServer` with `buildNetworkOptions` until SIGINT or SIGTERM: HTTPS (a self-signed certificate in the data directory unless `NALAMDESK_TLS_CERT` and `NALAMDESK_TLS_KEY` are set, or plain HTTP behind a proxy with `NALAMDESK_TLS=proxy`), and only joined computers can sign in |
 | `status` | Shows the data directory, whether the vault is set up, the key provider, and the listen address |
 | `key list`, `key add --provider <provider> ...`, `key remove <id>` | Manages key slots. `key add` takes `--key-file P`, `--credential-name N [--credential-path P]`, `--dpapi-blob P` or `--key-command C` for its provider. Each change is written to `audit_logs` |
 | `recovery confirm` | Confirms the recovery code in a terminal |
+| `join-code [--name X] [--minutes N]` | Issues a one-time join code for a computer (15 minutes by default, at most 1440). `start` records what it serves in `<dataDir>/serving.json`, and the code pins exactly that (the self-signed fingerprint, or no pin for an operator certificate or proxy), whatever the admin shell's TLS environment. Refuses until the server has started once. Audited as `JOIN_CODE_ISSUE` |
+| `devices list`, `devices revoke <id>` | Lists joined computers, or revokes one and signs out its sessions. Audited as `DEVICE_REVOKE` |
 
 Configuration comes from an optional JSON file (`--config` or `NALAMDESK_CONFIG`), overridden by `NALAMDESK_DATA_DIR`, `NALAMDESK_HOST`, `NALAMDESK_PORT`, `NALAMDESK_STATIC_PATH`, `NALAMDESK_KEY_PROVIDER` (`key-file`, `passphrase`, `systemd-creds`, `tpm`, `dpapi` or `kms`), `NALAMDESK_KEY_FILE`, `NALAMDESK_CREDENTIAL_NAME`, `NALAMDESK_CREDENTIAL_PATH`, `NALAMDESK_DPAPI_BLOB` and `NALAMDESK_KEY_COMMAND`. With `systemd-creds`, `tpm` or `dpapi`, `init` creates the credential or blob when it does not exist yet. Secrets are refused in the JSON file. Pass them as `NAME_FILE` (preferred) or `NAME`: `NALAMDESK_PASSPHRASE`, `NALAMDESK_NEW_PASSPHRASE` and `NALAMDESK_ADMIN_PASSWORD`, which needs at least 12 characters. The process runs with umask 077. Until Cloud pairing moves into the server (#196), ABDM runs against the mock gateway, with HIU keys protected by the server's key store.
 

@@ -64,6 +64,27 @@ export interface RunningServer {
     close(): Promise<void>;
 }
 
+/** A computer joined to this server, as `devices list` shows it. */
+export interface CliJoinedDevice {
+    id: string;
+    name: string;
+    joinedAt: number;
+    lastSeenAt: number | null;
+    lastIp: string | null;
+    revokedAt: number | null;
+}
+
+/** Join codes and joined computers, against the open vault. */
+export interface CliDeviceAdmin {
+    /** `pin` says which certificate the code pins, as the running server serves it. */
+    issueJoinCode(input: { deviceName?: string | null; ttlMs: number }): { code: string; expiresAt: number; deviceName: string | null; pin: string };
+    listDevices(): CliJoinedDevice[];
+    revokeDevice(id: string): boolean;
+}
+
+export const JOIN_CODE_DEFAULT_MINUTES = 15;
+export const JOIN_CODE_MAX_MINUTES = 24 * 60;
+
 export interface CliDeps {
     createVault(store: DeviceKeyStore): CliVault;
     createDatabase(): CliDatabase;
@@ -72,6 +93,7 @@ export interface CliDeps {
     startServer(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig, io: CliIO): Promise<RunningServer>;
     /** Resolves when the process is asked to stop. */
     waitForShutdown(): Promise<void>;
+    createDeviceAdmin(database: CliDatabase, config: ServerConfig, env: NodeJS.ProcessEnv): CliDeviceAdmin;
     /** Runs systemd-creds, PowerShell (DPAPI) and key commands. Tests replace it. */
     keyExec?: KeyExec;
 }
@@ -122,6 +144,10 @@ Commands:
   key add --provider kms --key-command <command>
   key remove <slot-id>           Remove an unlock method.
   recovery confirm               Confirm you saved the recovery code.
+  join-code [--name <computer>] [--minutes <n>]
+                                 Issue a one-time code that joins a computer (default 15 minutes).
+  devices list                   List joined computers.
+  devices revoke <id>            Revoke a computer and sign out its sessions.
 
 Options:
   --config <file>                JSON config file (or NALAMDESK_CONFIG).
@@ -132,6 +158,8 @@ Environment:
   NALAMDESK_KEY_FILE, NALAMDESK_PASSPHRASE_FILE or NALAMDESK_PASSPHRASE,
   NALAMDESK_CREDENTIAL_NAME, NALAMDESK_CREDENTIAL_PATH, NALAMDESK_DPAPI_BLOB,
   NALAMDESK_KEY_COMMAND,
+  NALAMDESK_TLS_CERT and NALAMDESK_TLS_KEY (default: a self-signed certificate),
+  NALAMDESK_TLS=proxy (TLS ends at a reverse proxy), NALAMDESK_PUBLIC_HOSTNAMES,
   NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only).`;
 
 async function askTwice(io: CliIO, label: string): Promise<string> {
@@ -395,6 +423,72 @@ async function cmdKey(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: C
     }
 }
 
+function parseMinutes(args: ParsedArgs): number {
+    const raw = flagString(args, 'minutes');
+    if (raw === undefined) return JOIN_CODE_DEFAULT_MINUTES;
+    const minutes = Number(raw);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > JOIN_CODE_MAX_MINUTES) {
+        throw new Error(`--minutes must be a whole number from 1 to ${JOIN_CODE_MAX_MINUTES}.`);
+    }
+    return minutes;
+}
+
+async function cmdJoinCode(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const minutes = parseMinutes(args);
+    const name = flagString(args, 'name');
+    const { vault, database } = await unlock(config, io, deps);
+    try {
+        const admin = deps.createDeviceAdmin(database, config, io.env);
+        const issued = admin.issueJoinCode({ deviceName: name ?? null, ttlMs: minutes * 60_000 });
+        const forWhom = issued.deviceName ? ` for "${issued.deviceName}"` : '';
+        database.logAudit('JOIN_CODE_ISSUE', 'join_codes', null, null, `Issued a join code${forWhom} from the server console`);
+        io.out(`Join code${forWhom}:`);
+        io.out('');
+        io.out(`  ${issued.code}`);
+        io.out('');
+        io.out(`It works once, until ${new Date(issued.expiresAt).toISOString()}. Enter it in NalamDesk on the computer to join.`);
+        io.out(issued.pin);
+        return 0;
+    } finally {
+        vault.closeDb();
+    }
+}
+
+const formatTime = (ms: number | null) => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) : '-');
+
+async function cmdDevices(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const action = args.positional[1];
+    if (action !== 'list' && action !== 'revoke') {
+        io.err('Usage: nalamdesk-server devices list | devices revoke <id>');
+        return 2;
+    }
+    const id = args.positional[2];
+    if (action === 'revoke' && !id) throw new Error('Name the computer to revoke. See `nalamdesk-server devices list`.');
+    const { vault, database } = await unlock(config, io, deps);
+    try {
+        const admin = deps.createDeviceAdmin(database, config, io.env);
+        if (action === 'list') {
+            const devices = admin.listDevices();
+            if (!devices.length) io.out('No computers have joined yet. Run `nalamdesk-server join-code` to add one.');
+            for (const device of devices) {
+                const state = device.revokedAt ? `revoked ${formatTime(device.revokedAt)}` : `last seen ${formatTime(device.lastSeenAt)}`;
+                io.out([device.id, `"${device.name}"`, `joined ${formatTime(device.joinedAt)}`, state, device.lastIp ?? ''].filter(Boolean).join('  '));
+            }
+            return 0;
+        }
+        const device = admin.listDevices().find((d) => d.id === id);
+        if (!admin.revokeDevice(id!)) {
+            io.err(device ? `Computer ${id} is already revoked.` : `No joined computer has the id ${id}.`);
+            return 1;
+        }
+        database.logAudit('DEVICE_REVOKE', 'joined_devices', null, null, `Revoked computer ${id} from the server console`);
+        io.out(`Revoked ${device ? `"${device.name}" ` : ''}${id}. Its sessions are signed out.`);
+        return 0;
+    } finally {
+        vault.closeDb();
+    }
+}
+
 async function cmdRecovery(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     if (args.positional[1] !== 'confirm') {
         io.err('Usage: nalamdesk-server recovery confirm');
@@ -434,6 +528,8 @@ export async function runCli(argv: string[], io: CliIO, deps: CliDeps): Promise<
             case 'status': return await cmdStatus(config, io, deps);
             case 'key': return await cmdKey(args, config, io, deps);
             case 'recovery': return await cmdRecovery(args, config, io, deps);
+            case 'join-code': return await cmdJoinCode(args, config, io, deps);
+            case 'devices': return await cmdDevices(args, config, io, deps);
             default:
                 io.err(`Unknown command "${command}".`);
                 io.err(USAGE);

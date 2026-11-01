@@ -4,4 +4,4 @@ import { loadDevelopmentEnv } from '../shared/load-env';
 loadDevelopmentEnv();
 dotenv.config();
 
-void import('./index.js');
+void import('./headless/main.js');

@@ -56,6 +56,9 @@ const DESTRUCTIVE = [
     'seedDemoData', 'clearDemoData'
 ];
 
+const PROBE_USERS: Record<number, string> = { 101: 'admin', 102: 'doctor', 103: 'nurse', 104: 'receptionist' };
+const probeId = (role: string) => Number(Object.entries(PROBE_USERS).find(([, r]) => r === role)?.[0] ?? 199);
+
 describe('LAN access conformance', () => {
     let server: ApiServer;
 
@@ -64,6 +67,11 @@ describe('LAN access conformance', () => {
         const db = new DatabaseService();
         db.setDb(raw);
         await db.migrate();
+        // One user per role, so the gate sees each role at facility 1.
+        for (const [id, role] of Object.entries(PROBE_USERS)) {
+            raw.prepare('INSERT INTO users (id, username, role, name, active) VALUES (?, ?, ?, ?, 1)')
+                .run(Number(id), `${role}-probe`, role, role);
+        }
         (db as any).beginWork = () => undefined;
         (db as any).endWork = () => undefined;
         server = new ApiServer(db, os.tmpdir());
@@ -99,7 +107,7 @@ describe('LAN access conformance', () => {
         await server.close();
     });
 
-    function postIpc(method: string, role: string, id = 7) {
+    function postIpc(method: string, role: string, id = probeId(role)) {
         const token = jwt.sign({ id, role, username: `${role}-probe` }, JWT_SECRET, { expiresIn: '1h' });
         return server.inject({
             method: 'POST',
@@ -133,6 +141,20 @@ describe('LAN access conformance', () => {
         expect(entry.details).toContain('deletePatient');
         expect(entry.details).toContain('lan');
         expect(JSON.stringify(entry)).not.toContain('intruder-probe');
+    }, 120000);
+
+    it('refuses a facility the user has no role at and audits it there', async () => {
+        const db = (server as any).dbService;
+        db.rawDb().prepare("INSERT INTO facilities (id, code, name) VALUES (2, 'ANN', 'Anna Nagar')").run();
+        const token = jwt.sign({ id: probeId('nurse'), role: 'nurse', facility_id: 2 }, JWT_SECRET, { expiresIn: '1h' });
+        const denied = await server.inject({
+            method: 'POST', url: '/api/ipc/getQueue',
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, payload: []
+        });
+        expect(denied.statusCode).toBe(403);
+        const entry = (db.getAuditLogs(5) as any[]).find((r) => r.action === 'AUTH_DENIED');
+        expect(entry).toMatchObject({ facility_id: 2 });
+        expect(entry.details).toContain('no-access');
     }, 120000);
 
     it('denies destructive and secret methods off-admin', async () => {

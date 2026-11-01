@@ -14,7 +14,13 @@ import { AbdmRelayService } from '../main/services/AbdmRelayService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
 import { HiuService } from '../main/services/HiuService';
 
+// The server checks the role a user holds at the request's facility; these
+// stub databases answer with the role the test signed into the token.
+const signedRoles = new Map<number, string>();
+const facilityRole = (userId: number) => signedRoles.get(Number(userId)) ?? null;
+
 function authHeader(user: { id: number; role: string; username?: string }) {
+    signedRoles.set(user.id, user.role);
     const token = jwt.sign(
         { id: user.id, role: user.role, username: user.username || 'admin' },
         JWT_SECRET,
@@ -29,6 +35,7 @@ describe('HTTP /api/ipc queue wrapper', () => {
 
     beforeEach(() => {
         db = {
+            getFacilityRole: facilityRole,
             beginWork: vi.fn(),
             endWork: vi.fn(),
             getPermissions: vi.fn().mockReturnValue(['addToQueue', 'updateQueueStatus', 'removeFromQueue', 'beginConsultation']),
@@ -122,6 +129,7 @@ describe('HTTP /api/ipc catalog methods', () => {
 
     beforeEach(() => {
         db = {
+            getFacilityRole: facilityRole,
             beginWork: vi.fn(),
             endWork: vi.fn(),
             getPermissions: vi.fn().mockReturnValue(['searchConditions', 'createCondition', 'createMedicine']),
@@ -211,6 +219,7 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
             doctor: ['abdmAbhaLookup', 'abdmLinkAbha', 'abdmGetConfig', 'abdmTransferBundle']
         };
         db = {
+            getFacilityRole: facilityRole,
             beginWork: vi.fn(),
             endWork: vi.fn(),
             getPermissions: vi.fn().mockImplementation((role: string) => rolePerms[role] || []),
@@ -419,6 +428,7 @@ describe('HTTP /api/ipc override admin over LAN', () => {
 
     beforeEach(() => {
         db = {
+            getFacilityRole: facilityRole,
             beginWork: vi.fn(),
             endWork: vi.fn(),
             getAllRoles: vi.fn().mockReturnValue([]),
@@ -466,6 +476,7 @@ describe('HTTP /api/ipc billing ledger over LAN', () => {
 
     beforeEach(() => {
         db = {
+            getFacilityRole: facilityRole,
             beginWork: vi.fn(),
             endWork: vi.fn(),
             getAllRoles: vi.fn().mockReturnValue([

@@ -1,7 +1,7 @@
 import { MIGRATIONS, FACILITY_SETTING_COLUMNS } from '../schema/migrations';
+import { currentFacilityId, DEFAULT_FACILITY_ID } from '../../shared/request-context';
 
-/** Facility every existing vault migrates into (#195). */
-export const DEFAULT_FACILITY_ID = 1;
+export { DEFAULT_FACILITY_ID };
 
 /**
  * Settings readable by admins and writable through saveSettings; the
@@ -33,6 +33,47 @@ export class DatabaseService {
 
     setDb(db: any) {
         this.db = db;
+    }
+
+    /** The facility the current request runs in (#195). */
+    private facilityId(): number {
+        return currentFacilityId();
+    }
+
+    /**
+     * The user's role at a facility: their grant there, or `admin` for an
+     * organisation admin. Null when they have no access (inactive user,
+     * inactive facility, or no grant).
+     */
+    getFacilityRole(userId: number, facilityId: number): string | null {
+        const row = this.db.prepare(`SELECT u.org_admin, u.active, r.role
+            FROM users u
+            JOIN facilities f ON f.id = ? AND f.active = 1
+            LEFT JOIN user_facility_roles r ON r.user_id = u.id AND r.facility_id = f.id
+            WHERE u.id = ?`).get(Number(facilityId), Number(userId)) as any;
+        if (!row || row.active === 0) return null;
+        if (Number(row.org_admin) === 1) return 'admin';
+        return row.role || null;
+    }
+
+    /** Facilities the user can work in, with their role at each. */
+    getUserFacilities(userId: number): Array<{ id: number; code: string; name: string; kind: string; role: string }> {
+        const user = this.db.prepare('SELECT org_admin, active FROM users WHERE id = ?').get(Number(userId)) as any;
+        if (!user || user.active === 0) return [];
+        if (Number(user.org_admin) === 1) {
+            return this.db.prepare(`SELECT id, code, name, kind, 'admin' AS role FROM facilities
+                WHERE active = 1 ORDER BY id`).all();
+        }
+        return this.db.prepare(`SELECT f.id, f.code, f.name, f.kind, r.role FROM user_facility_roles r
+            JOIN facilities f ON f.id = r.facility_id AND f.active = 1
+            WHERE r.user_id = ? ORDER BY f.id`).all(Number(userId));
+    }
+
+    /** Refuses a write to a row another facility owns, even for a valid id. */
+    private assertSameFacility(row: any, what: string): void {
+        if (row && Number(row.facility_id ?? DEFAULT_FACILITY_ID) !== this.facilityId()) {
+            throw new Error(`${what} belongs to another facility.`);
+        }
     }
 
     /** The open database handle, or undefined before the vault unlocks. */
@@ -408,7 +449,7 @@ export class DatabaseService {
      * facility's own columns (#195), keyed by the legacy settings names so
      * callers are unchanged. Undefined until the organisation row exists.
      */
-    private settingsView(columns: string[], facilityId: number = DEFAULT_FACILITY_ID) {
+    private settingsView(columns: string[], facilityId: number = currentFacilityId()) {
         const select = columns.map(column => FACILITY_SETTING_COLUMNS[column]
             ? `f.${FACILITY_SETTING_COLUMNS[column]} AS ${column}`
             : `s.${column}`).join(', ');
@@ -416,7 +457,7 @@ export class DatabaseService {
             LEFT JOIN facilities f ON f.id = ? LIMIT 1`).get(Number(facilityId) || DEFAULT_FACILITY_ID);
     }
 
-    getSettings(facilityId: number = DEFAULT_FACILITY_ID) {
+    getSettings(facilityId: number = currentFacilityId()) {
         // Explicit column list: keychain-protected blobs (the HIU private
         // key) never ride along on generic settings reads.
         return this.settingsView(SETTINGS_COLUMNS, facilityId);
@@ -427,7 +468,7 @@ export class DatabaseService {
      * secrets, file paths, and keys never leave this allowlist, so it is
      * safe to serve to any authenticated role.
      */
-    getSanitizedSettings(facilityId: number = DEFAULT_FACILITY_ID) {
+    getSanitizedSettings(facilityId: number = currentFacilityId()) {
         return this.settingsView(['clinic_name', 'doctor_name', 'logo_path', 'cloud_enabled',
             'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
             'abdm_hfr_id', 'abdm_hip_endpoint', 'abdm_hiu_public_key', 'standards_mode',
@@ -448,7 +489,7 @@ export class DatabaseService {
 
     // ... (existing code)
 
-    getPublicSettings(facilityId: number = DEFAULT_FACILITY_ID) {
+    getPublicSettings(facilityId: number = currentFacilityId()) {
         return this.settingsView(['clinic_name', 'doctor_name', 'logo_path', 'cloud_enabled', 'standards_mode'], facilityId);
     }
 
@@ -699,7 +740,7 @@ export class DatabaseService {
         return result;
     }
 
-    saveSettings(settings: any, facilityId: number = DEFAULT_FACILITY_ID) {
+    saveSettings(settings: any, facilityId: number = currentFacilityId()) {
         // Filter incoming settings to only allowed columns
         const validKeys = Object.keys(settings).filter(k => SETTINGS_COLUMNS.includes(k));
 
@@ -824,13 +865,17 @@ export class DatabaseService {
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL AND active != 0').get().count;
         // Today's visits: date >= start of day
         const today = new Date().toISOString().split('T')[0];
-        const todayVisits = this.db.prepare("SELECT count(*) as count FROM visits WHERE date(date) = ? AND status = 'finished'").get(today).count;
+        const todayVisits = this.db.prepare("SELECT count(*) as count FROM visits WHERE date(date) = ? AND status = 'finished' AND facility_id = ?")
+            .get(today, this.facilityId()).count;
         return { totalPatients, todayVisits };
     }
 
     // Doctors
     getDoctors() {
-        return this.db.prepare(`SELECT * FROM users WHERE role = 'doctor' AND active = 1`).all();
+        // Doctors are the users holding the doctor role at this facility.
+        return this.db.prepare(`SELECT u.* FROM users u
+            JOIN user_facility_roles r ON r.user_id = u.id AND r.facility_id = ?
+            WHERE r.role = 'doctor' AND u.active = 1`).all(this.facilityId());
     }
 
     // Patients
@@ -2128,19 +2173,20 @@ export class DatabaseService {
             throw new Error('Date must be a real calendar day.');
         }
         const day = raw;
+        const facilityId = this.facilityId();
         const byMethod = this.db.prepare(`SELECT method, kind,
                 COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-            FROM payments WHERE date(created_at, 'localtime') = ?
-            GROUP BY method, kind`).all(day) as any[];
+            FROM payments WHERE date(created_at, 'localtime') = ? AND facility_id = ?
+            GROUP BY method, kind`).all(day, facilityId) as any[];
         const invoices = this.db.prepare(`SELECT status, COUNT(*) as count,
                 COALESCE(SUM(total), 0) as total
-            FROM invoices WHERE date(created_at, 'localtime') = ? GROUP BY status`).all(day) as any[];
+            FROM invoices WHERE date(created_at, 'localtime') = ? AND facility_id = ? GROUP BY status`).all(day, facilityId) as any[];
         const review = this.db.prepare(`SELECT p.id, p.receipt_no, p.kind, p.amount, p.method,
                 p.reference, p.reason, p.invoice_id, i.number as invoice_number
             FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id
-            WHERE date(p.created_at, 'localtime') = ?
+            WHERE date(p.created_at, 'localtime') = ? AND p.facility_id = ?
               AND (p.kind = 'reversal' OR (p.method != 'cash' AND (p.reference IS NULL OR p.reference = '')))
-            ORDER BY p.id ASC`).all(day) as any[];
+            ORDER BY p.id ASC`).all(day, facilityId) as any[];
         const nets: Record<string, number> = {};
         for (const row of byMethod) {
             const signed = Number(row.total || 0) * (row.kind === 'reversal' ? -1 : 1);
@@ -2161,9 +2207,10 @@ export class DatabaseService {
     }, actingUserId?: number) {
         const visitId = Number(input?.visitId);
         if (!Number.isInteger(visitId) || visitId <= 0) throw new Error('visitId is required.');
-        const visit = this.db.prepare('SELECT id, patient_id, status FROM visits WHERE id = ?')
+        const visit = this.db.prepare('SELECT id, patient_id, status, facility_id FROM visits WHERE id = ?')
             .get(visitId) as any;
         if (!visit) throw new Error(`Visit #${visitId} not found.`);
+        this.assertSameFacility(visit, 'Visit');
         if (visit.status === 'in-progress') throw new Error('Finish the encounter before billing it.');
         const lines = [...(input?.items || [])];
         const fee = Number((this.getSettings() as any)?.consultation_fee || 0);
@@ -2185,9 +2232,10 @@ export class DatabaseService {
         if (total < 0) throw new Error('Invoice total cannot be negative.');
         const create = this.db.transaction(() => {
             const header = this.db.prepare(`INSERT INTO invoices
-                (visit_id, patient_id, status, subtotal, discount, tax, total, created_by)
-                VALUES (?, ?, 'unpaid', ?, ?, ?, ?, ?)`)
-                .run(visitId, visit.patient_id, subtotal, discount, tax, total, actingUserId ?? null) as any;
+                (visit_id, patient_id, status, subtotal, discount, tax, total, created_by, facility_id)
+                VALUES (?, ?, 'unpaid', ?, ?, ?, ?, ?, ?)`)
+                .run(visitId, visit.patient_id, subtotal, discount, tax, total, actingUserId ?? null,
+                    visit.facility_id ?? DEFAULT_FACILITY_ID) as any;
             const invoiceId = Number(header.lastInsertRowid);
             const addItem = this.db.prepare(`INSERT INTO invoice_items
                 (invoice_id, description, quantity, rate, amount) VALUES (?, ?, ?, ?, ?)`);
@@ -2211,9 +2259,10 @@ export class DatabaseService {
         invoiceId: number; amount: number; method?: string; reference?: string; clientKey?: string;
     }, actingUserId?: number) {
         const invoiceId = Number(input?.invoiceId);
-        const invoice = this.db.prepare('SELECT id, status, number FROM invoices WHERE id = ?')
+        const invoice = this.db.prepare('SELECT id, status, number, facility_id FROM invoices WHERE id = ?')
             .get(invoiceId) as any;
         if (!invoice) throw new Error(`Invoice #${invoiceId} not found.`);
+        this.assertSameFacility(invoice, 'Invoice');
         if (invoice.status === 'voided') throw new Error('Voided invoices cannot take payments.');
         const amount = Math.round(Number(input?.amount || 0) * 100) / 100;
         if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be positive.');
@@ -2242,11 +2291,11 @@ export class DatabaseService {
                 throw new Error(`Payment exceeds the amount due (${balance.due}).`);
             }
             const row = this.db.prepare(`INSERT INTO payments
-                (invoice_id, kind, amount, method, reference, client_key, received_by)
-                VALUES (?, 'payment', ?, ?, ?, ?, ?)`)
+                (invoice_id, kind, amount, method, reference, client_key, received_by, facility_id)
+                VALUES (?, 'payment', ?, ?, ?, ?, ?, ?)`)
                 .run(invoiceId, amount, method,
                     input?.reference != null ? String(input.reference).trim() || null : null,
-                    clientKey || null, actingUserId ?? null) as any;
+                    clientKey || null, actingUserId ?? null, invoice.facility_id ?? DEFAULT_FACILITY_ID) as any;
             const paymentId = Number(row.lastInsertRowid);
             this.db.prepare('UPDATE payments SET receipt_no = ? WHERE id = ?')
                 .run(this.receiptNumber(paymentId), paymentId);
@@ -2279,9 +2328,10 @@ export class DatabaseService {
             const original = this.db.prepare('SELECT * FROM payments WHERE id = ?').get(paymentId) as any;
             if (!original) throw new Error(`Payment #${paymentId} not found.`);
             if (original.kind !== 'payment') throw new Error('Only payments can be refunded, not reversals.');
-            const invoice = this.db.prepare('SELECT id, status FROM invoices WHERE id = ?')
+            const invoice = this.db.prepare('SELECT id, status, facility_id FROM invoices WHERE id = ?')
                 .get(original.invoice_id) as any;
             if (!invoice) throw new Error(`Invoice #${original.invoice_id} not found.`);
+            this.assertSameFacility(invoice, 'Invoice');
             if (invoice.status === 'voided') throw new Error('Voided invoices cannot be refunded.');
             const already = Number((this.db.prepare(`SELECT COALESCE(SUM(amount), 0) as refunded
                 FROM payments WHERE reversal_of = ?`).get(paymentId) as any)?.refunded || 0);
@@ -2294,10 +2344,10 @@ export class DatabaseService {
                 throw new Error(`Refund exceeds the refundable amount (${maxRefundable}).`);
             }
             const row = this.db.prepare(`INSERT INTO payments
-                (invoice_id, kind, amount, method, reference, reason, reversal_of, received_by)
-                VALUES (?, 'reversal', ?, ?, ?, ?, ?, ?)`)
+                (invoice_id, kind, amount, method, reference, reason, reversal_of, received_by, facility_id)
+                VALUES (?, 'reversal', ?, ?, ?, ?, ?, ?, ?)`)
                 .run(original.invoice_id, amount, original.method, original.reference,
-                    reason, paymentId, actingUserId ?? null) as any;
+                    reason, paymentId, actingUserId ?? null, invoice.facility_id ?? DEFAULT_FACILITY_ID) as any;
             const reversalId = Number(row.lastInsertRowid);
             this.db.prepare('UPDATE payments SET receipt_no = ? WHERE id = ?')
                 .run(this.receiptNumber(reversalId), reversalId);
@@ -2326,9 +2376,10 @@ export class DatabaseService {
         // Check and state change atomically: a payment racing the void is
         // either inside (blocked) or outside (guarded by the ledger math).
         const apply = this.db.transaction(() => {
-            const invoice = this.db.prepare('SELECT id, status, number FROM invoices WHERE id = ?')
+            const invoice = this.db.prepare('SELECT id, status, number, facility_id FROM invoices WHERE id = ?')
                 .get(id) as any;
             if (!invoice) throw new Error(`Invoice #${id} not found.`);
+            this.assertSameFacility(invoice, 'Invoice');
             if (invoice.status === 'voided') throw new Error('Invoice is already voided.');
             const outstanding = Number((this.db.prepare(`SELECT COALESCE(SUM(
                 CASE WHEN kind = 'payment' THEN amount WHEN kind = 'reversal' THEN -amount ELSE 0 END), 0) as paid
@@ -2422,10 +2473,10 @@ export class DatabaseService {
             FROM visits v 
             JOIN patients p ON v.patient_id = p.id
             LEFT JOIN users d ON v.doctor_id = d.id 
-            WHERE v.status = 'finished'
+            WHERE v.status = 'finished' AND v.facility_id = ?
             ORDER BY v.date DESC
             LIMIT ?
-        `).all(limit);
+        `).all(this.facilityId(), limit);
         return visits.map((v: any) => ({
             ...v,
             prescription: v.prescription_json ? JSON.parse(v.prescription_json) : []
@@ -2433,7 +2484,8 @@ export class DatabaseService {
     }
 
     deleteVisit(id: number) {
-        const existing = this.db.prepare('SELECT status FROM visits WHERE id = ?').get(id);
+        const existing = this.db.prepare('SELECT status, facility_id FROM visits WHERE id = ?').get(id);
+        this.assertSameFacility(existing, 'Visit');
         if (existing?.status === 'in-progress') throw new Error('Active encounters cannot be deleted');
         const remove = this.db.transaction(() => {
             this.deletePrescriptionRows('SELECT ?', id);
@@ -2489,8 +2541,9 @@ export class DatabaseService {
     markVisitEnteredInError(visitId: number, reason: string, actingUserId?: number) {
         const clean = String(reason || '').trim();
         if (!clean) throw new Error('A reason is required for entered-in-error.');
-        const visit = this.db.prepare('SELECT id, status FROM visits WHERE id = ?').get(Number(visitId)) as any;
+        const visit = this.db.prepare('SELECT id, status, facility_id FROM visits WHERE id = ?').get(Number(visitId)) as any;
         if (!visit) throw new Error('Visit not found.');
+        this.assertSameFacility(visit, 'Visit');
         if (visit.status === 'in-progress') throw new Error('Active encounters cannot be marked entered-in-error.');
         const mark = this.db.transaction(() => {
             this.db.prepare(`UPDATE visits SET status = 'entered-in-error', correction_reason = ? WHERE id = ?`)
@@ -2514,6 +2567,7 @@ export class DatabaseService {
             }
         }
         const existing = this.db.prepare('SELECT * FROM visits WHERE id = ?').get(visit.id);
+        this.assertSameFacility(existing, 'Visit');
         if (existing?.status === 'in-progress') throw new Error('Use consultation progress commands for active encounters');
         if (existing && visit.prescription) {
             this.assertPrescriptionAllergySafety(existing.patient_id, visit.prescription, visit.allergy_override_reason);
@@ -2575,6 +2629,7 @@ export class DatabaseService {
             }
 
             const queue = this.db.prepare('SELECT * FROM patient_queue WHERE id = ?').get(queueEntryId);
+            this.assertSameFacility(queue, 'Queue entry');
 
             if (!queue || queue.patient_id !== patientId || !['waiting', 'in-consult'].includes(queue.status)) {
                 throw new Error('Patient does not have an active queue entry');
@@ -2604,10 +2659,10 @@ export class DatabaseService {
                     diagnosis, prescription_json, amount_paid,
                     symptoms, examination_notes, diagnosis_type, status,
                     started_at, updated_at, queue_entry_id, start_request_id,
-                    start_operation, start_actor_id, care_context_ref
-                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'begin', ?, ?)
+                    start_operation, start_actor_id, care_context_ref, facility_id, department_id
+                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'begin', ?, ?, ?, ?)
             `).run(patientId, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId,
-                this.nextCareContextRef());
+                this.nextCareContextRef(), queue.facility_id ?? DEFAULT_FACILITY_ID, queue.department_id ?? null);
             this.recordStartRequest(startRequestId, 'begin', Number(result.lastInsertRowid), patientId, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
             const attributed = attributionReason
@@ -2780,14 +2835,14 @@ export class DatabaseService {
             const queue = this.db.prepare(`
                 SELECT q.*
                 FROM patient_queue q
-                WHERE q.status = 'waiting'
+                WHERE q.status = 'waiting' AND q.facility_id = ?
                   AND NOT EXISTS (
                     SELECT 1 FROM visits v2
                     WHERE v2.patient_id = q.patient_id AND v2.status = 'in-progress'
                   )
                 ORDER BY q.priority DESC, q.check_in_time ASC, q.id ASC
                 LIMIT 1
-            `).get();
+            `).get(this.facilityId());
             if (!queue) return null;
 
             const claimed = this.db.prepare(`
@@ -2802,10 +2857,10 @@ export class DatabaseService {
                     diagnosis, prescription_json, amount_paid,
                     symptoms, examination_notes, diagnosis_type, status,
                     started_at, updated_at, queue_entry_id, start_request_id,
-                    start_operation, start_actor_id, care_context_ref
-                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'next', ?, ?)
+                    start_operation, start_actor_id, care_context_ref, facility_id, department_id
+                ) VALUES (?, ?, ?, ?, '', '[]', 0, '', '', '', 'in-progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, 'next', ?, ?, ?, ?)
             `).run(queue.patient_id, practitioner.id, actingUserId, licenseSnapshot, queue.id, startRequestId, actingUserId,
-                this.nextCareContextRef());
+                this.nextCareContextRef(), queue.facility_id ?? DEFAULT_FACILITY_ID, queue.department_id ?? null);
             this.recordStartRequest(startRequestId, 'next', Number(result.lastInsertRowid), queue.patient_id, queue.id, actingUserId);
             this.linkPreConsultationVitals(queue.id, Number(result.lastInsertRowid));
             const attributedNext = attributionReason
@@ -2896,6 +2951,7 @@ export class DatabaseService {
     }
 
     private assertResponsiblePractitioner(encounter: any, actingUserId: number) {
+        this.assertSameFacility(encounter, 'Encounter');
         const docId = Number(encounter.doctor_id);
         const authorId = Number(encounter.author_id);
         const actor = Number(actingUserId);
@@ -3498,9 +3554,9 @@ export class DatabaseService {
             JOIN patients p ON q.patient_id = p.id
             LEFT JOIN users u ON q.triage_assessor_id = u.id
             LEFT JOIN visits active ON active.queue_entry_id = q.id AND active.status = 'in-progress'
-            WHERE q.status NOT IN ('completed', 'removed')
+            WHERE q.status NOT IN ('completed', 'removed') AND q.facility_id = ?
             ORDER BY q.priority DESC, q.check_in_time ASC, q.id ASC
-        `).all() as any[];
+        `).all(this.facilityId()) as any[];
 
         return rows.map(q => {
             // Prefer the observation linked to this exact queue episode; fall
@@ -3530,6 +3586,17 @@ export class DatabaseService {
                 vitals_alerts: evaluated.alerts
             };
         });
+    }
+
+    /** A department of the current facility, or null for its General OPD. */
+    private departmentFor(value: unknown): number | null {
+        if (value === null || value === undefined || value === '') return null;
+        const id = Number(value);
+        const row = Number.isInteger(id) && id > 0
+            ? this.db.prepare('SELECT id FROM departments WHERE id = ? AND facility_id = ? AND active = 1').get(id, this.facilityId())
+            : null;
+        if (!row) throw new Error('Unknown department for this facility.');
+        return id;
     }
 
     private normalizeUrgency(value: unknown): string {
@@ -3563,8 +3630,12 @@ export class DatabaseService {
 
     addToQueue(patientId: number, priorityOrOptions: any = 1, actingUserId?: number, urgencyInput?: string, triageNotesInput?: string) {
         // Check if already in queue
-        const existing = this.db.prepare('SELECT id FROM patient_queue WHERE patient_id = ? AND status != ?').get(patientId, 'completed');
+        const facilityId = this.facilityId();
+        const existing = this.db.prepare('SELECT id FROM patient_queue WHERE patient_id = ? AND status != ? AND facility_id = ?')
+            .get(patientId, 'completed', facilityId);
         if (existing) throw new Error('Patient already in queue');
+        const departmentId = this.departmentFor(
+            typeof priorityOrOptions === 'object' && priorityOrOptions !== null ? priorityOrOptions.department_id : null);
 
         let priority: number;
         let urgency: string;
@@ -3582,7 +3653,8 @@ export class DatabaseService {
         urgency = this.normalizeUrgency(urgency);
 
         const assessorId = actingUserId ? Number(actingUserId) : null;
-        const result = this.db.prepare('INSERT INTO patient_queue (patient_id, priority) VALUES (?, ?)').run(patientId, priority);
+        const result = this.db.prepare('INSERT INTO patient_queue (patient_id, priority, facility_id, department_id) VALUES (?, ?, ?, ?)')
+            .run(patientId, priority, facilityId, departmentId);
         const queueId = Number(result.lastInsertRowid);
 
         try {
@@ -3612,6 +3684,7 @@ export class DatabaseService {
 
         const queue = this.db.prepare('SELECT * FROM patient_queue WHERE id = ?').get(queueId) as any;
         if (!queue) throw new Error('Queue entry not found');
+        this.assertSameFacility(queue, 'Queue entry');
         if (queue.status === 'completed') throw new Error('Cannot reassess triage for completed queue entry');
 
         const normalizedUrgency = this.normalizeUrgency(newUrgency);
@@ -3907,8 +3980,9 @@ export class DatabaseService {
         if (status === 'in-consult' || status === 'completed') {
             throw new Error('Consultation queue transitions require an encounter command');
         }
-        const current = this.db.prepare('SELECT status FROM patient_queue WHERE id = ?').get(id) as any;
+        const current = this.db.prepare('SELECT status, facility_id FROM patient_queue WHERE id = ?').get(id) as any;
         if (!current) throw new Error('Queue entry not found.');
+        this.assertSameFacility(current, 'Queue entry');
         // Removed and completed rows are terminal: only the encounter
         // commands move completed rows, and nothing revives removed ones.
         if (current.status === 'removed' || current.status === 'completed') {
@@ -3925,7 +3999,7 @@ export class DatabaseService {
         }
         // Update the most recent non-completed queue entry for this patient
         // Fetch ID first for audit
-        const existing = this.db.prepare(`SELECT id FROM patient_queue WHERE patient_id = ? AND status NOT IN ('completed', 'removed') ORDER BY check_in_time DESC LIMIT 1`).get(patientId);
+        const existing = this.db.prepare(`SELECT id FROM patient_queue WHERE patient_id = ? AND status NOT IN ('completed', 'removed') AND facility_id = ? ORDER BY check_in_time DESC LIMIT 1`).get(patientId, this.facilityId());
 
         if (!existing) return { changes: 0 };
 
@@ -3942,6 +4016,7 @@ export class DatabaseService {
     }
 
     removeFromQueue(id: number, actingUserId: number, reason = '') {
+        this.assertSameFacility(this.db.prepare('SELECT facility_id FROM patient_queue WHERE id = ?').get(id), 'Queue entry');
         const active = this.db.prepare("SELECT id FROM visits WHERE queue_entry_id = ? AND status = 'in-progress'").get(id);
         if (active) throw new Error('Cannot remove a queue entry with an active encounter');
         // Removal preserves the row (and its triage history): terminal
@@ -3956,20 +4031,15 @@ export class DatabaseService {
     // Audit Logging
     logAudit(action: string, tableName: string, recordId: number | bigint | null, userId: number | null | undefined, details: string) {
         try {
-            const params = { action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details };
-            const deviceId = currentAuditDeviceId();
-            if (deviceId) {
-                // Calls through NalamDesk Server name the joined computer (#193).
-                this.db.prepare(`
-                    INSERT INTO audit_logs(action, table_name, record_id, user_id, details, device_id)
-                    VALUES(@action, @tableName, @recordId, @userId, @details, @deviceId)
-                `).run({ ...params, deviceId });
-                return;
-            }
+            // Calls through NalamDesk Server also name the joined computer (#193);
+            // every row records the facility it happened in (#195).
             this.db.prepare(`
-                INSERT INTO audit_logs(action, table_name, record_id, user_id, details)
-        VALUES(@action, @tableName, @recordId, @userId, @details)
-            `).run(params);
+                INSERT INTO audit_logs(action, table_name, record_id, user_id, details, device_id, facility_id)
+                VALUES(@action, @tableName, @recordId, @userId, @details, @deviceId, @facilityId)
+            `).run({
+                action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details,
+                deviceId: currentAuditDeviceId(), facilityId: this.facilityId()
+            });
         } catch (e) {
             console.error('Failed to log audit:', e);
         }
@@ -4013,19 +4083,21 @@ export class DatabaseService {
 
     // Appointment Requests
     getAppointmentRequests() {
-        const reqs = this.db.prepare("SELECT * FROM appointment_requests ORDER BY created_at DESC").all();
+        const reqs = this.db.prepare('SELECT * FROM appointment_requests WHERE facility_id = ? ORDER BY created_at DESC')
+            .all(this.facilityId());
         // Removed debug logs to prevent leak
         return reqs;
     }
 
     saveAppointmentRequest(req: any) {
         return this.db.prepare(`
-            INSERT OR IGNORE INTO appointment_requests (id, patient_name, phone, date, time, reason)
-            VALUES (@id, @patient_name, @phone, @date, @time, @reason)
-        `).run(req);
+            INSERT OR IGNORE INTO appointment_requests (id, patient_name, phone, date, time, reason, facility_id)
+            VALUES (@id, @patient_name, @phone, @date, @time, @reason, @facility_id)
+        `).run({ ...req, facility_id: this.facilityId() });
     }
 
     updateAppointmentRequestStatus(id: string, status: string) {
+        this.assertSameFacility(this.db.prepare('SELECT facility_id FROM appointment_requests WHERE id = ?').get(id), 'Booking request');
         return this.db.prepare('UPDATE appointment_requests SET status = ? WHERE id = ?').run(status, id);
     }
 
@@ -4040,6 +4112,7 @@ export class DatabaseService {
         return this.db.transaction(() => {
             const req = this.db.prepare('SELECT * FROM appointment_requests WHERE id = ?').get(id) as any;
             if (!req) throw new Error('Booking request not found.');
+            this.assertSameFacility(req, 'Booking request');
             if (req.status === 'accepted') return { created: false };
             const phone = String(req.phone || '');
             const existing = phone
@@ -4064,9 +4137,9 @@ export class DatabaseService {
             SELECT a.*, p.name as patient_name, p.mobile as patient_mobile, p.age as patient_age, p.gender as patient_gender, p.address
             FROM appointments a
             LEFT JOIN patients p ON a.patient_id = p.id
-            WHERE a.date = ?
+            WHERE a.date = ? AND a.facility_id = ?
             ORDER BY a.time ASC
-        `).all(date);
+        `).all(date, this.facilityId());
     }
 
     getAppointmentsByPatient(patientId: number) {
@@ -4093,9 +4166,10 @@ export class DatabaseService {
         } else {
             // Registration always books; status arrives via transitions.
             return this.db.prepare(`
-                INSERT INTO appointments (patient_id, date, time, reason, doctor_id, status)
-                VALUES (?, ?, ?, ?, ?, 'booked')
-            `).run(appt.patient_id, appt.date, appt.time, appt.reason, appt.doctor_id ?? null);
+                INSERT INTO appointments (patient_id, date, time, reason, doctor_id, status, facility_id, department_id)
+                VALUES (?, ?, ?, ?, ?, 'booked', ?, ?)
+            `).run(appt.patient_id, appt.date, appt.time, appt.reason, appt.doctor_id ?? null,
+                this.facilityId(), this.departmentFor(appt.department_id));
         }
     }
 
@@ -4114,6 +4188,7 @@ export class DatabaseService {
             const before = this.db.prepare('SELECT * FROM appointments WHERE id = ?')
                 .get(Number(appt.id)) as any;
             if (!before) throw new Error('Appointment not found.');
+            this.assertSameFacility(before, 'Appointment');
             this.assertReassignSafe(before, appt.patient_id);
             // Field edits land first in every branch, so check-in and the
             // transition core both observe the final row (patient, slot).
@@ -4152,6 +4227,7 @@ export class DatabaseService {
             const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?')
                 .get(Number(appt.id)) as any;
             if (!row) throw new Error('Appointment not found.');
+            this.assertSameFacility(row, 'Appointment');
             // Terminals never edit: rebook instead. History must stay final.
             const state = String(row.status || '').toLowerCase();
             if (['fulfilled', 'cancelled', 'no-show'].includes(state)) {
@@ -4279,6 +4355,7 @@ export class DatabaseService {
         }
         const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
         if (!row) throw new Error('Appointment not found.');
+        this.assertSameFacility(row, 'Appointment');
         const from = String(row.status || '').toLowerCase();
         const allowed = DatabaseService.APPOINTMENT_TRANSITIONS[from] || [];
         const privileged =
@@ -4398,6 +4475,7 @@ export class DatabaseService {
     private checkInCore(id: number, actingUserId?: number) {
         const row = this.db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(id)) as any;
         if (!row) throw new Error('Appointment not found.');
+        this.assertSameFacility(row, 'Appointment');
         // Status first: terminals and non-queueable states never reach the
         // reuse check, so a cancelled row with a stale live queue entry
         // cannot check itself back in through the reuse shortcut.
@@ -4414,7 +4492,7 @@ export class DatabaseService {
         if (state !== 'arrived') {
             this._transitionAppointment(Number(id), 'arrived', undefined, actingUserId ?? undefined, { allowArrive: true });
         }
-        const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
+        const queued: any = this.addToQueue(row.patient_id, { priority: 2, department_id: row.department_id ?? null }, actingUserId);
         const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
         this.db.prepare('UPDATE appointments SET queue_entry_id = ? WHERE id = ?').run(queueEntryId, Number(id));
         return { appointmentId: Number(id), queueEntryId, reused: false };
@@ -4427,8 +4505,9 @@ export class DatabaseService {
      */
     fulfillAppointment(id: number, visitId: number, actingUserId?: number) {
         const fulfill = this.db.transaction(() => {
-            const row = this.db.prepare('SELECT id, patient_id, status, doctor_id FROM appointments WHERE id = ?').get(Number(id)) as any;
+            const row = this.db.prepare('SELECT id, patient_id, status, doctor_id, facility_id FROM appointments WHERE id = ?').get(Number(id)) as any;
             if (!row) throw new Error('Appointment not found.');
+            this.assertSameFacility(row, 'Appointment');
             this.assertFulfillDoctor(row, actingUserId);
             const visit = this.db.prepare('SELECT id, patient_id, status FROM visits WHERE id = ?').get(Number(visitId)) as any;
             if (!visit) throw new Error('Visit not found.');

@@ -6,6 +6,7 @@
  * commands pass a single object (or an id); DatabaseService expects unpacked
  * scalars plus the authenticated user id.
  */
+import { runWithContext, type RequestContext } from './request-context';
 
 function payloadObject(value: unknown): Record<string, unknown> {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -198,15 +199,22 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
     }
 }
 
+/**
+ * Calls a DatabaseService method for an acting user. Given a request
+ * context, the call runs in that facility; given only a user id, it runs
+ * in the fallback facility (the desktop session's, or facility 1).
+ */
 export function invokeDbMethod(
     db: object,
     method: string,
     args: unknown[],
-    actingUserId: number
+    actor: number | RequestContext
 ): unknown {
     const fn = (db as Record<string, unknown>)[method];
     if (typeof fn !== 'function') {
         throw new Error(`Method not implemented: ${method}`);
     }
-    return (fn as (...fnArgs: unknown[]) => unknown).apply(db, resolveDbMethodArgs(method, args, actingUserId));
+    const actingUserId = typeof actor === 'number' ? actor : actor.userId;
+    const call = () => (fn as (...fnArgs: unknown[]) => unknown).apply(db, resolveDbMethodArgs(method, args, actingUserId));
+    return typeof actor === 'number' ? call() : runWithContext(actor, call);
 }

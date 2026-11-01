@@ -33,6 +33,7 @@ import { CredentialRotationService } from './services/CredentialRotationService'
 import { verifyPersistedActiveAdmin } from './services/AdminCredentialVerifier';
 import { acknowledgeRecoveryCodeForActiveAdmin } from './services/RecoveryCodeAcknowledgement';
 import { ApiServer } from '../server/app';
+import type { EventTopic } from '../server/events';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import {
@@ -203,8 +204,17 @@ const provisioningService = new ProvisioningService(securityService, databaseSer
 const googleDriveService = new GoogleDriveService();
 // NalamDesk Cloud (#154, #155): pairing, signed requests, the mailbox and its doorbell.
 const stampedIdentity = readBuildIdentityFile(buildIdentityPath(app.getAppPath()));
+// Renderer pushes that clients of the API server also need (#193).
+const LIVE_EVENT_TOPICS: Record<string, EventTopic> = {
+    'cloud:newRequests': 'bookings',
+    'abdm:shareReceived': 'abdm.inbox'
+};
 const notifyRenderer = (channel: string, payload: unknown) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+    const topic = LIVE_EVENT_TOPICS[channel];
+    if (topic) {
+        try { apiServer.events.publish(topic); } catch { /* server not up yet */ }
+    }
 };
 const cloudLink: CloudLink = new CloudLink({
     store: databaseService,

@@ -5,9 +5,11 @@
 set -eu
 dpkg -i /pkg/nalamdesk-server_*.deb
 test "$(stat -c %U:%a /var/lib/nalamdesk)" = "nalamdesk:700"
-cp /work/clinic.ndbackup /work/code /tmp/
-chmod 0644 /tmp/clinic.ndbackup /tmp/code
-NALAMDESK_RECOVERY_CODE_FILE=/tmp/code nalamdesk-server import /tmp/clinic.ndbackup
+# Like a backup copied into an admin's home folder: unreadable by the service user.
+install -d -m 0700 /root/backups
+install -m 0600 /work/clinic.ndbackup /work/code /root/backups/
+NALAMDESK_RECOVERY_CODE_FILE=/root/backups/code nalamdesk-server import /root/backups/clinic.ndbackup
+test -z "$(ls /tmp | grep nalamdesk-import || true)"
 test "$(stat -c %U /var/lib/nalamdesk/security.json)" = "nalamdesk"
 nalamdesk-server status | grep -q 'Vault: set up'
 nalamdesk-server start > /tmp/server.log 2>&1 &

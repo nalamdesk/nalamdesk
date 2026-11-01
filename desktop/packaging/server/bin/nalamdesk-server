@@ -10,10 +10,29 @@ if [ -z "$NODE" ]; then
 fi
 # A packaged install keeps its config in /etc/nalamdesk. Run as the service
 # account, so files the CLI creates stay readable by the service.
-if [ -z "$NALAMDESK_CONFIG" ] && [ -f /etc/nalamdesk/server.json ]; then
+if [ -z "${NALAMDESK_CONFIG:-}" ] && [ -f /etc/nalamdesk/server.json ]; then
     export NALAMDESK_CONFIG=/etc/nalamdesk/server.json
 fi
-if [ "$(id -u)" = "0" ] && [ -z "$NALAMDESK_ALLOW_ROOT" ] && id nalamdesk >/dev/null 2>&1; then
+if [ "$(id -u)" = "0" ] && [ -z "${NALAMDESK_ALLOW_ROOT:-}" ] && id nalamdesk >/dev/null 2>&1; then
+    if [ "${1:-}" = "import" ] && [ -n "${2:-}" ] && [ -f "$2" ]; then
+        # The backup is often in a home folder the service user cannot read,
+        # so hand it (and the recovery code file) over through a private copy.
+        STAGE="$(mktemp -d /tmp/nalamdesk-import.XXXXXX)"
+        trap 'rm -rf "$STAGE"' EXIT
+        BACKUP="$STAGE/$(basename -- "$2")"
+        cp -- "$2" "$BACKUP"
+        if [ -n "${NALAMDESK_RECOVERY_CODE_FILE:-}" ]; then
+            cp -- "$NALAMDESK_RECOVERY_CODE_FILE" "$STAGE/recovery-code"
+            NALAMDESK_RECOVERY_CODE_FILE="$STAGE/recovery-code"
+            export NALAMDESK_RECOVERY_CODE_FILE
+        fi
+        chown -R nalamdesk:nalamdesk "$STAGE"
+        chmod 0700 "$STAGE"
+        shift 2
+        STATUS=0
+        runuser -u nalamdesk -- "$NODE" "$ROOT/app/dist/server/server/headless/main.js" import "$BACKUP" "$@" || STATUS=$?
+        exit "$STATUS"
+    fi
     exec runuser -u nalamdesk -- "$NODE" "$ROOT/app/dist/server/server/headless/main.js" "$@"
 fi
 exec "$NODE" "$ROOT/app/dist/server/server/headless/main.js" "$@"

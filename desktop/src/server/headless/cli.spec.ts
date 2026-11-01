@@ -266,8 +266,65 @@ describe('nalamdesk-server CLI', () => {
         const short = makeIo({ ...env, NALAMDESK_NEW_PASSPHRASE: 'short' });
         expect(await runCli(['key', 'add', '--provider', 'passphrase'], short.io, deps)).toBe(1);
         const unknown = makeIo(env);
-        expect(await runCli(['key', 'add', '--provider', 'tpm'], unknown.io, deps)).toBe(1);
-        expect(unknown.err.join()).toMatch(/key-file or passphrase/);
+        expect(await runCli(['key', 'add', '--provider', 'hsm'], unknown.io, deps)).toBe(1);
+        expect(unknown.err.join()).toMatch(/one of: key-file, passphrase, systemd-creds, tpm, dpapi, kms/);
+        expect(FakeVault.state.slots).toHaveLength(1);
+    });
+
+    it('init and start with a KMS key command, and add a systemd credential slot', async () => {
+        const kek = Buffer.alloc(32, 7).toString('hex');
+        deps.keyExec = vi.fn((file: string, args: string[], input?: Buffer) => {
+            if (file === 'kms-decrypt') return Buffer.from(`${kek}\n`);
+            // systemd-creds: "encrypt" and "decrypt" are both the identity here.
+            expect(file).toBe('systemd-creds');
+            return Buffer.from(input!);
+        });
+        const kmsEnv = { ...env, NALAMDESK_KEY_PROVIDER: 'kms', NALAMDESK_KEY_COMMAND: 'kms-decrypt --key "alias/nalamdesk"' };
+        expect(await runCli(['init'], makeIo({ ...kmsEnv, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' }).io, deps)).toBe(0);
+        expect(audits).toEqual(['VAULT_INIT: Server vault created with kms']);
+        expect(await runCli(['start'], makeIo(kmsEnv).io, deps)).toBe(0);
+        expect(started).toEqual({ port: 3999, closed: true });
+
+        const credentialPath = path.join(directory, 'credstore', 'nd-key');
+        const add = makeIo(kmsEnv);
+        expect(await runCli(['key', 'add', '--provider', 'systemd-creds', '--credential-name', 'nd-key', '--credential-path', credentialPath], add.io, deps)).toBe(0);
+        expect(add.out.join('\n')).toContain(`LoadCredentialEncrypted=nd-key:${credentialPath}`);
+        expect(fs.statSync(credentialPath).size).toBe(32);
+
+        // After a restart under systemd, the credential alone opens the vault.
+        const credDir = path.join(directory, 'run');
+        fs.mkdirSync(credDir);
+        fs.copyFileSync(credentialPath, path.join(credDir, 'nd-key'));
+        const viaCreds = makeIo({ ...env, NALAMDESK_KEY_PROVIDER: 'systemd-creds', NALAMDESK_CREDENTIAL_NAME: 'nd-key', CREDENTIALS_DIRECTORY: credDir });
+        expect(await runCli(['key', 'list'], viaCreds.io, deps)).toBe(0);
+        expect(viaCreds.out.join('\n')).toMatch(/systemd-creds\s+\(unlocked with this\)/);
+
+        // key add never reuses the loaded credential: a TPM slot under the same name gets its own key.
+        const tpmPath = path.join(directory, 'credstore', 'nd-key-tpm');
+        const tpmAdd = makeIo({ ...env, NALAMDESK_KEY_PROVIDER: 'systemd-creds', NALAMDESK_CREDENTIAL_NAME: 'nd-key', CREDENTIALS_DIRECTORY: credDir });
+        expect(await runCli(['key', 'add', '--provider', 'tpm', '--credential-name', 'nd-key', '--credential-path', tpmPath], tpmAdd.io, deps)).toBe(0);
+        expect(tpmAdd.out.join('\n')).toContain('(sealed to this TPM)');
+        expect(fs.readFileSync(tpmPath).equals(fs.readFileSync(credentialPath))).toBe(false);
+    });
+
+    it('init with systemd credentials writes the credential and names the unit line', async () => {
+        deps.keyExec = (_file, _args, input) => Buffer.from(input!);
+        const credentialPath = path.join(directory, 'credstore', 'nalamdesk-vault-key');
+        const { io, out } = makeIo({ ...env, NALAMDESK_KEY_PROVIDER: 'tpm', NALAMDESK_CREDENTIAL_PATH: credentialPath, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' });
+        expect(await runCli(['init'], io, deps)).toBe(0);
+        expect(out.join('\n')).toContain('(sealed to this TPM)');
+        expect(out.join('\n')).toContain(`LoadCredentialEncrypted=nalamdesk-vault-key:${credentialPath}`);
+        expect(FakeVault.state.slots[0].provider).toBe('tpm');
+    });
+
+    it('key add refuses DPAPI off Windows and a KMS slot without a command', async () => {
+        await runCli(['init'], makeIo({ ...env, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' }).io, deps);
+        const dpapi = makeIo(env);
+        expect(await runCli(['key', 'add', '--provider', 'dpapi', '--dpapi-blob', path.join(directory, 'k.dpapi')], dpapi.io, deps)).toBe(1);
+        expect(dpapi.err.join()).toMatch(process.platform === 'win32' ? /DPAPI/ : /only available on Windows/);
+        const kms = makeIo(env);
+        expect(await runCli(['key', 'add', '--provider', 'kms'], kms.io, deps)).toBe(1);
+        expect(kms.err.join()).toMatch(/--key-command/);
         expect(FakeVault.state.slots).toHaveLength(1);
     });
 

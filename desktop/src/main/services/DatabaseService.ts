@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } from '../../shared/vitals-validator';
 import { validateAbhaNumber, validateIdentifier } from '../../shared/patient-identifiers';
 import { durationEndDate } from '../../shared/clinical-timing';
+import { currentAuditDeviceId } from './AuditContext';
 import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder, type FinalRxLine } from '../../shared/prescription-order';
 
 export class DatabaseService {
@@ -32,6 +33,11 @@ export class DatabaseService {
 
     setDb(db: any) {
         this.db = db;
+    }
+
+    /** The open database handle, or undefined before the vault unlocks. */
+    rawDb(): any {
+        return this.db;
     }
 
     beginWork(): void {
@@ -3950,10 +3956,20 @@ export class DatabaseService {
     // Audit Logging
     logAudit(action: string, tableName: string, recordId: number | bigint | null, userId: number | null | undefined, details: string) {
         try {
+            const params = { action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details };
+            const deviceId = currentAuditDeviceId();
+            if (deviceId) {
+                // Calls through NalamDesk Server name the joined computer (#193).
+                this.db.prepare(`
+                    INSERT INTO audit_logs(action, table_name, record_id, user_id, details, device_id)
+                    VALUES(@action, @tableName, @recordId, @userId, @details, @deviceId)
+                `).run({ ...params, deviceId });
+                return;
+            }
             this.db.prepare(`
                 INSERT INTO audit_logs(action, table_name, record_id, user_id, details)
         VALUES(@action, @tableName, @recordId, @userId, @details)
-            `).run({ action, tableName, recordId: recordId == null ? null : Number(recordId), userId: userId ?? null, details });
+            `).run(params);
         } catch (e) {
             console.error('Failed to log audit:', e);
         }
@@ -3961,9 +3977,10 @@ export class DatabaseService {
 
     getAuditLogs(limit: number = 100) {
         return this.db.prepare(`
-            SELECT al.*, u.name as actor_name 
+            SELECT al.*, u.name as actor_name, d.name as device_name
             FROM audit_logs al 
             LEFT JOIN users u ON al.user_id = u.id 
+            LEFT JOIN joined_devices d ON al.device_id = d.id
             ORDER BY al.timestamp DESC LIMIT ?
         `).all(limit);
     }

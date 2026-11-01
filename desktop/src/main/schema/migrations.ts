@@ -1904,6 +1904,72 @@ export const MIGRATIONS = [
     {
         version: 51,
         up: (db: any) => migrateOrganisationsAndFacilities(db)
+    },
+    {
+        version: 52,
+        up: (db: any) => {
+            console.log('Running Migration v52 (server network and auth)...');
+            // NalamDesk Server (#193). Secrets kept in the vault (the
+            // session signing key), one-time join codes, joined computers
+            // with revocable credentials, and refreshable user sessions
+            // bound to a computer. Only hashes of codes and tokens are kept.
+            // Times are epoch milliseconds.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS server_secrets (
+                    name TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS join_codes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code_hash TEXT NOT NULL UNIQUE,
+                    device_name TEXT,
+                    created_by INTEGER,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    used_at INTEGER,
+                    used_by_device TEXT,
+                    revoked_at INTEGER
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS joined_devices (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    credential_hash TEXT NOT NULL,
+                    joined_at INTEGER NOT NULL,
+                    join_code_id INTEGER REFERENCES join_codes(id),
+                    join_ip TEXT,
+                    last_seen_at INTEGER,
+                    last_ip TEXT,
+                    revoked_at INTEGER,
+                    revoked_by INTEGER
+                );
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS server_sessions (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    device_id TEXT REFERENCES joined_devices(id),
+                    facility_id INTEGER,
+                    refresh_hash TEXT NOT NULL,
+                    credential_stamp TEXT,
+                    ip TEXT,
+                    created_at INTEGER NOT NULL,
+                    last_used_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    absolute_expires_at INTEGER NOT NULL,
+                    revoked_at INTEGER,
+                    revoked_reason TEXT
+                );
+            `);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_server_sessions_device ON server_sessions(device_id);`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_server_sessions_user ON server_sessions(user_id);`);
+            // The audit trail names the computer as well as the user.
+            try { db.exec(`ALTER TABLE audit_logs ADD COLUMN device_id TEXT`); } catch (e) { }
+        }
     }
 ];
 

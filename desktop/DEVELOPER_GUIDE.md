@@ -42,7 +42,13 @@ NalamDesk Server ([ADR 0001](../docs/architecture/0001-headless-server.md)) has 
 - `KeyFileStore` (`key-file`): a random 32-byte key in a file. `KeyFileStore.create` writes it with mode 0600 and never overwrites an existing file. On POSIX the store refuses a key file that group or other users can read.
 - `PassphraseKeyStore` (`passphrase`): scrypt (N=2^17, r=8) with a fresh salt for each protected value. The cost and salt are bound into the AES-GCM AAD. Passphrases are NFKC-normalised, at least 12 characters, and `clear()` wipes them from memory.
 
-Both providers seal values with AES-256-GCM behind a provider magic prefix, so neither one opens the other's payloads.
+`ExternalKeyStores.ts` adds providers whose key-encryption key (KEK) comes from outside NalamDesk. Each fetches a 32-byte KEK once, caches it in memory (`clear()` wipes it), and never writes it to disk in the clear:
+
+- `SystemdCredsStore` (`systemd-creds`, or `tpm` with `tpm: true`): reads the KEK that systemd decrypted into `$CREDENTIALS_DIRECTORY` from `LoadCredentialEncrypted=`. `create()` runs `systemd-creds encrypt --with-key=auto` (or `tpm2`), decrypts again to prove the round trip, and writes the credential (default `/etc/credstore.encrypted/nalamdesk-vault-key`).
+- `DpapiStore` (`dpapi`): a KEK wrapped by Windows DPAPI for the service account (CurrentUser scope, fixed entropy) in a blob file. It calls `ProtectedData` through PowerShell, so there is no native module.
+- `KeyCommandStore` (`kms`): runs an admin-supplied command without a shell and reads the KEK from its stdout as 32 raw bytes, 64 hex characters or base64. Point it at a KMS decrypt of a wrapped data key, for example `aws kms decrypt --ciphertext-blob fileb:///etc/nalamdesk/kek.enc --query Plaintext --output text`, `gcloud kms decrypt ... --plaintext-file -`, or `vault write -field=plaintext transit/decrypt/nalamdesk ciphertext=...`.
+
+Every provider seals values with AES-256-GCM behind its own magic prefix, so no provider opens another's payloads.
 
 ### Key slots
 
@@ -64,11 +70,11 @@ Both providers seal values with AES-256-GCM behind a provider magic prefix, so n
 | `init [--clinic-name X]` | Creates the vault (`ProvisioningService`) and the admin account, and prints the recovery code once |
 | `start` (default) | Unlocks the vault, migrates, and serves `ApiServer` until SIGINT or SIGTERM |
 | `status` | Shows the data directory, whether the vault is set up, the key provider, and the listen address |
-| `key list`, `key add --provider key-file --key-file P`, `key add --provider passphrase`, `key remove <id>` | Manages key slots. Each change is written to `audit_logs` |
+| `key list`, `key add --provider <provider> ...`, `key remove <id>` | Manages key slots. `key add` takes `--key-file P`, `--credential-name N [--credential-path P]`, `--dpapi-blob P` or `--key-command C` for its provider. Each change is written to `audit_logs` |
 | `recovery confirm` | Confirms the recovery code in a terminal |
 | `import <backup.ndbackup>` | Restores a desktop backup into an empty data directory through `BackupService.restoreLocalBackup`, using `NALAMDESK_RECOVERY_CODE(_FILE)` or a prompt, and adds the server's key provider as the unlock slot |
 
-Configuration comes from an optional JSON file (`--config` or `NALAMDESK_CONFIG`), overridden by `NALAMDESK_DATA_DIR`, `NALAMDESK_HOST`, `NALAMDESK_PORT`, `NALAMDESK_STATIC_PATH`, `NALAMDESK_KEY_PROVIDER` and `NALAMDESK_KEY_FILE`. Secrets are refused in the JSON file. Pass them as `NAME_FILE` (preferred) or `NAME`: `NALAMDESK_PASSPHRASE`, `NALAMDESK_NEW_PASSPHRASE` and `NALAMDESK_ADMIN_PASSWORD`, which needs at least 12 characters. The process runs with umask 077. Until Cloud pairing moves into the server (#196), ABDM runs against the mock gateway, with HIU keys protected by the server's key store.
+Configuration comes from an optional JSON file (`--config` or `NALAMDESK_CONFIG`), overridden by `NALAMDESK_DATA_DIR`, `NALAMDESK_HOST`, `NALAMDESK_PORT`, `NALAMDESK_STATIC_PATH`, `NALAMDESK_KEY_PROVIDER` (`key-file`, `passphrase`, `systemd-creds`, `tpm`, `dpapi` or `kms`), `NALAMDESK_KEY_FILE`, `NALAMDESK_CREDENTIAL_NAME`, `NALAMDESK_CREDENTIAL_PATH`, `NALAMDESK_DPAPI_BLOB` and `NALAMDESK_KEY_COMMAND`. With `systemd-creds`, `tpm` or `dpapi`, `init` creates the credential or blob when it does not exist yet. Secrets are refused in the JSON file. Pass them as `NAME_FILE` (preferred) or `NAME`: `NALAMDESK_PASSPHRASE`, `NALAMDESK_NEW_PASSPHRASE` and `NALAMDESK_ADMIN_PASSWORD`, which needs at least 12 characters. The process runs with umask 077. Until Cloud pairing moves into the server (#196), ABDM runs against the mock gateway, with HIU keys protected by the server's key store.
 
 ### Packaging (#197)
 

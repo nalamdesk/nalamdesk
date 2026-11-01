@@ -3,6 +3,8 @@ import { DatabaseService } from '../../main/services/DatabaseService';
 import { ProvisioningService } from '../../main/services/ProvisioningService';
 import { SecurityService } from '../../main/services/SecurityService';
 import { ApiServer } from '../app';
+import { ServerAuthStore } from '../auth-store';
+import { buildNetworkOptions, issueJoinCode } from '../network';
 import { createServerAbdmServices } from './abdm';
 import { runCli, type CliDeps, type CliIO } from './cli';
 
@@ -39,15 +41,33 @@ const deps: CliDeps = {
     createDatabase: () => new DatabaseService() as any,
     provision: (vault, database, adminPassword, clinic, config) =>
         new ProvisioningService(vault as any, database as any).provision(adminPassword, clinic, config.dbPath, config.dataDir),
-    async startServer(_vault, database, store, config) {
+    async startServer(_vault, database, store, config, io) {
+        const network = buildNetworkOptions({ dataDir: config.dataDir, env: process.env });
         const api = new ApiServer(
             database as unknown as DatabaseService,
             config.staticPath,
             undefined,
-            createServerAbdmServices(database as unknown as DatabaseService, store)
+            createServerAbdmServices(database as unknown as DatabaseService, store),
+            network
         );
         await api.start(config.port, config.host);
+        if (network.behindProxy) {
+            io.out('Serving plain HTTP for a TLS reverse proxy (NALAMDESK_TLS=proxy).');
+        } else if (network.tls?.selfSigned) {
+            io.out(`Serving HTTPS with a self-signed certificate (SHA-256 ${network.tls.fingerprint256}). Join codes pin it.`);
+        } else {
+            io.out('Serving HTTPS with the configured certificate.');
+        }
         return { close: () => api.close() };
+    },
+    createDeviceAdmin(database, config, env) {
+        const store = new ServerAuthStore(() => (database as any).rawDb());
+        return {
+            // Load TLS the same way `start` does, so the code pins the certificate clients will see.
+            issueJoinCode: (input) => issueJoinCode(store, buildNetworkOptions({ dataDir: config.dataDir, env }), { createdBy: null, ...input }),
+            listDevices: () => store.listDevices(),
+            revokeDevice: (id) => store.revokeDevice(id, null)
+        };
     },
     waitForShutdown: () => new Promise<void>((resolve) => {
         process.once('SIGINT', () => resolve());

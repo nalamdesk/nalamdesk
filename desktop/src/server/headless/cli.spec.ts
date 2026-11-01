@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
 import type { KeySlotSummary } from '../../main/services/SecurityService';
-import { parseArgs, runCli, type CliDatabase, type CliDeps, type CliIO, type CliVault } from './cli';
+import { parseArgs, runCli, type CliDatabase, type CliDeps, type CliIO, type CliJoinedDevice, type CliVault } from './cli';
 
 /** A vault that records what the CLI asked of it; slots carry their store. */
 class FakeVault implements CliVault {
@@ -75,6 +75,8 @@ describe('nalamdesk-server CLI', () => {
     let audits: string[];
     let started: { port: number; closed: boolean } | null;
     let deps: CliDeps;
+    let devices: CliJoinedDevice[];
+    let joinCodes: { deviceName?: string | null; ttlMs: number }[];
 
     beforeEach(() => {
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nalamdesk-cli-'));
@@ -82,6 +84,8 @@ describe('nalamdesk-server CLI', () => {
         FakeVault.state = { setup: false, slots: [], pending: null };
         audits = [];
         started = null;
+        devices = [];
+        joinCodes = [];
         const database = (): CliDatabase => ({
             setDb: () => { },
             migrate: async () => { },
@@ -100,7 +104,19 @@ describe('nalamdesk-server CLI', () => {
                 started = { port: config.port, closed: false };
                 return { close: async () => { started!.closed = true; } };
             },
-            waitForShutdown: async () => { }
+            waitForShutdown: async () => { },
+            createDeviceAdmin: () => ({
+                issueJoinCode: (input) => {
+                    joinCodes.push(input);
+                    return { code: 'ND1-ABCD-EFGH', expiresAt: Date.UTC(2026, 10, 1, 12, 0), deviceName: input.deviceName ?? null };
+                },
+                listDevices: () => devices,
+                revokeDevice: (id) => {
+                    const device = devices.find((d) => d.id === id && !d.revokedAt);
+                    if (device) device.revokedAt = Date.UTC(2026, 10, 1, 13, 0);
+                    return !!device;
+                }
+            })
         };
     });
     afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -264,6 +280,46 @@ describe('nalamdesk-server CLI', () => {
         expect(await runCli(['key', 'add', '--provider', 'kms'], kms.io, deps)).toBe(1);
         expect(kms.err.join()).toMatch(/--key-command/);
         expect(FakeVault.state.slots).toHaveLength(1);
+    });
+
+    it('join-code issues a one-time code for a named computer and audits it', async () => {
+        await runCli(['init'], makeIo({ ...env, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' }).io, deps);
+        const { io, out } = makeIo(env);
+        expect(await runCli(['join-code', '--name', 'Reception PC', '--minutes', '30'], io, deps)).toBe(0);
+        expect(joinCodes).toEqual([{ deviceName: 'Reception PC', ttlMs: 30 * 60_000 }]);
+        expect(out.join('\n')).toContain('  ND1-ABCD-EFGH');
+        expect(out.join('\n')).toContain('until 2026-11-01T12:00:00.000Z');
+        expect(audits.at(-1)).toBe('JOIN_CODE_ISSUE: Issued a join code for "Reception PC" from the server console');
+
+        const bad = makeIo(env);
+        expect(await runCli(['join-code', '--minutes', '0'], bad.io, deps)).toBe(1);
+        expect(bad.err.join()).toMatch(/--minutes must be a whole number from 1 to 1440/);
+        expect(joinCodes).toHaveLength(1);
+    });
+
+    it('devices list and revoke manage joined computers', async () => {
+        await runCli(['init'], makeIo({ ...env, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' }).io, deps);
+        const empty = makeIo(env);
+        expect(await runCli(['devices', 'list'], empty.io, deps)).toBe(0);
+        expect(empty.out.join()).toMatch(/No computers have joined yet/);
+
+        devices = [{ id: 'dev_1', name: 'Reception PC', joinedAt: Date.UTC(2026, 10, 1, 9, 0), lastSeenAt: Date.UTC(2026, 10, 1, 10, 30), lastIp: '192.168.1.20', revokedAt: null }];
+        const list = makeIo(env);
+        expect(await runCli(['devices', 'list'], list.io, deps)).toBe(0);
+        expect(list.out).toEqual(['dev_1  "Reception PC"  joined 2026-11-01 09:00  last seen 2026-11-01 10:30  192.168.1.20']);
+
+        const revoke = makeIo(env);
+        expect(await runCli(['devices', 'revoke', 'dev_1'], revoke.io, deps)).toBe(0);
+        expect(revoke.out.join()).toContain('Revoked "Reception PC" dev_1');
+        expect(audits.at(-1)).toBe('DEVICE_REVOKE: Revoked computer dev_1 from the server console');
+
+        const again = makeIo(env);
+        expect(await runCli(['devices', 'revoke', 'dev_1'], again.io, deps)).toBe(1);
+        expect(again.err.join()).toMatch(/already revoked/);
+        const unknown = makeIo(env);
+        expect(await runCli(['devices', 'revoke', 'dev_9'], unknown.io, deps)).toBe(1);
+        expect(unknown.err.join()).toMatch(/No joined computer/);
+        expect(await runCli(['devices'], makeIo(env).io, deps)).toBe(2);
     });
 
     it('status reconciles an interrupted init before reporting', async () => {

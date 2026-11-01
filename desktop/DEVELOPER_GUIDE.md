@@ -55,6 +55,20 @@ Both providers seal values with AES-256-GCM behind a provider magic prefix, so n
 - `rotateDeviceEnvelope` re-wraps the slot the process unlocked with.
 - Portable backup metadata still carries only the recovery envelope, so slots never travel in backups.
 
+## NalamDesk Server CLI (#192)
+
+`src/server/headless/` is the headless server entry point ([ADR 0001](../docs/architecture/0001-headless-server.md)). Build it with `npm run build:server`, then run `node dist/server/server/headless/main.js <command>`. `npm run start:server` builds and starts it with the development `.env` files.
+
+| Command | What it does |
+|---|---|
+| `init [--clinic-name X]` | Creates the vault (`ProvisioningService`) and the admin account, and prints the recovery code once |
+| `start` (default) | Unlocks the vault, migrates, and serves `ApiServer` until SIGINT or SIGTERM |
+| `status` | Shows the data directory, whether the vault is set up, the key provider, and the listen address |
+| `key list`, `key add --provider key-file --key-file P`, `key add --provider passphrase`, `key remove <id>` | Manages key slots. Each change is written to `audit_logs` |
+| `recovery confirm` | Confirms the recovery code in a terminal |
+
+Configuration comes from an optional JSON file (`--config` or `NALAMDESK_CONFIG`), overridden by `NALAMDESK_DATA_DIR`, `NALAMDESK_HOST`, `NALAMDESK_PORT`, `NALAMDESK_STATIC_PATH`, `NALAMDESK_KEY_PROVIDER` and `NALAMDESK_KEY_FILE`. Secrets are refused in the JSON file. Pass them as `NAME_FILE` (preferred) or `NAME`: `NALAMDESK_PASSPHRASE`, `NALAMDESK_NEW_PASSPHRASE` and `NALAMDESK_ADMIN_PASSWORD`, which needs at least 12 characters. The process runs with umask 077. Until Cloud pairing moves into the server (#196), ABDM runs against the mock gateway, with HIU keys protected by the server's key store.
+
 ## Application version
 - Settings reads a single IPC, `app:getVersion`, backed by packaged `app.getVersion()` plus `build-identity.json` (commit / CI run id when stamped).
 - Development builds append `(development)` to the displayed version.

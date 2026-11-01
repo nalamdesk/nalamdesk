@@ -6,6 +6,7 @@ import { ApiServer } from '../app';
 import { ServerAuthStore } from '../auth-store';
 import { buildNetworkOptions, issueJoinCode } from '../network';
 import { createServerAbdmServices } from './abdm';
+import { describeServingState, pinOptions, readServingState, servingStateFrom, writeServingState } from './serving-state';
 import { runCli, type CliDeps, type CliIO } from './cli';
 
 // Vault files, backups and logs are readable by the service account only.
@@ -51,6 +52,8 @@ const deps: CliDeps = {
             network
         );
         await api.start(config.port, config.host);
+        // join-code reads this, so codes pin what clients will actually see.
+        writeServingState(config.dataDir, servingStateFrom(network));
         if (network.behindProxy) {
             io.out('Serving plain HTTP for a TLS reverse proxy (NALAMDESK_TLS=proxy).');
         } else if (network.tls?.selfSigned) {
@@ -60,11 +63,17 @@ const deps: CliDeps = {
         }
         return { close: () => api.close() };
     },
-    createDeviceAdmin(database, config, env) {
+    createDeviceAdmin(database, config) {
         const store = new ServerAuthStore(() => (database as any).rawDb());
         return {
-            // Load TLS the same way `start` does, so the code pins the certificate clients will see.
-            issueJoinCode: (input) => issueJoinCode(store, buildNetworkOptions({ dataDir: config.dataDir, env }), { createdBy: null, ...input }),
+            issueJoinCode: (input) => {
+                // Pin what the running service serves, not what this shell's environment would build.
+                const serving = readServingState(config.dataDir);
+                if (!serving) {
+                    throw new Error('Start the server once with `nalamdesk-server start`, so the join code can pin the certificate it serves.');
+                }
+                return { ...issueJoinCode(store, pinOptions(serving), { createdBy: null, ...input }), pin: describeServingState(serving) };
+            },
             listDevices: () => store.listDevices(),
             revokeDevice: (id) => store.revokeDevice(id, null)
         };

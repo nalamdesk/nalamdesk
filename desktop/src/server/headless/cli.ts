@@ -76,7 +76,8 @@ export interface CliJoinedDevice {
 
 /** Join codes and joined computers, against the open vault. */
 export interface CliDeviceAdmin {
-    issueJoinCode(input: { deviceName?: string | null; ttlMs: number }): { code: string; expiresAt: number; deviceName: string | null };
+    /** `pin` says which certificate the code pins, as the running server serves it. */
+    issueJoinCode(input: { deviceName?: string | null; ttlMs: number }): { code: string; expiresAt: number; deviceName: string | null; pin: string };
     listDevices(): CliJoinedDevice[];
     revokeDevice(id: string): boolean;
 }
@@ -446,6 +447,7 @@ async function cmdJoinCode(args: ParsedArgs, config: ServerConfig, io: CliIO, de
         io.out(`  ${issued.code}`);
         io.out('');
         io.out(`It works once, until ${new Date(issued.expiresAt).toISOString()}. Enter it in NalamDesk on the computer to join.`);
+        io.out(issued.pin);
         return 0;
     } finally {
         vault.closeDb();

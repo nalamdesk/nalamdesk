@@ -108,7 +108,7 @@ describe('nalamdesk-server CLI', () => {
             createDeviceAdmin: () => ({
                 issueJoinCode: (input) => {
                     joinCodes.push(input);
-                    return { code: 'ND1-ABCD-EFGH', expiresAt: Date.UTC(2026, 10, 1, 12, 0), deviceName: input.deviceName ?? null };
+                    return { code: 'ND1-ABCD-EFGH', expiresAt: Date.UTC(2026, 10, 1, 12, 0), deviceName: input.deviceName ?? null, pin: 'It pins the self-signed certificate (SHA-256 abc).' };
                 },
                 listDevices: () => devices,
                 revokeDevice: (id) => {
@@ -289,6 +289,7 @@ describe('nalamdesk-server CLI', () => {
         expect(joinCodes).toEqual([{ deviceName: 'Reception PC', ttlMs: 30 * 60_000 }]);
         expect(out.join('\n')).toContain('  ND1-ABCD-EFGH');
         expect(out.join('\n')).toContain('until 2026-11-01T12:00:00.000Z');
+        expect(out.at(-1)).toBe('It pins the self-signed certificate (SHA-256 abc).');
         expect(audits.at(-1)).toBe('JOIN_CODE_ISSUE: Issued a join code for "Reception PC" from the server console');
 
         const bad = makeIo(env);

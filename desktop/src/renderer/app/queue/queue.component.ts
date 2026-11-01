@@ -12,6 +12,8 @@ import { ReasonDialogComponent } from '../shared/components/reason-dialog/reason
 import { SharedTableComponent } from '../shared/components/table/table.component';
 import { ViewToggleComponent, CompactView, restoreCompactView, persistCompactView } from '../shared/components/view-toggle/view-toggle.component';
 import { QueueCountService } from '../shared/services/queue-count.service';
+import { ServerConnectionService } from '../services/server-connection.service';
+import type { Subscription } from 'rxjs';
 import { ColDef } from 'ag-grid-community';
 import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/doctor-pick.service';
 
@@ -321,7 +323,8 @@ export class QueueComponent implements OnInit, OnDestroy {
     private authService?: AuthService,
     private doctorPick?: DoctorPickService,
     private queueCountService?: QueueCountService,
-    private ngZone?: NgZone
+    private ngZone?: NgZone,
+    private server?: ServerConnectionService
   ) { }
 
   ngOnInit() {
@@ -339,15 +342,22 @@ export class QueueComponent implements OnInit, OnDestroy {
       if (this.ngZone) this.ngZone.run(refresh);
       else refresh();
     }) ?? null;
+    // Server clients (#194): the live events stream says what changed.
+    this.serverEvents = window.electron ? null : this.server?.events.subscribe((event) => {
+      if (event.topic === 'queue' || event.topic === 'resync') void this.refreshQueue();
+      if (event.topic === 'abdm.inbox' || event.topic === 'resync') void this.refreshShareTokens();
+    }) ?? null;
   }
 
   ngOnDestroy() {
     if (this.refreshIntervalId) clearInterval(this.refreshIntervalId);
     if (this.sharePollId) clearInterval(this.sharePollId);
     this.stopShareListener?.();
+    this.serverEvents?.unsubscribe();
   }
 
   private stopShareListener: (() => void) | null = null;
+  private serverEvents: Subscription | null = null;
 
   shareTokens: any[] = [];
   sharePollId: any;

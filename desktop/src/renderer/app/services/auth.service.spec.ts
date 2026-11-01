@@ -114,47 +114,41 @@ describe('AuthService', () => {
         });
     });
 
-    describe('login (Web Mode)', () => {
-        it('should login via fetch', async () => {
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                json: async () => ({ token: 'jwt-token', user: { id: 2 } })
-            });
-            global.fetch = mockFetch;
-
+    describe('login (server client)', () => {
+        it('signs in through the server connection', async () => {
+            const server = { login: vi.fn().mockResolvedValue({ ok: true, user: { id: 2, username: 'user', role: 'doctor', password: 'hash' } }) };
+            service = new AuthService(server as any);
             const result = await service.login('user', 'pass');
             expect(result.success).toBe(true);
-            expect(service.getToken()).toBe('jwt-token');
-            expect(service.getUser()).toEqual({ id: 2 });
-            expect(mockFetch).toHaveBeenCalledWith('/api/auth/login', expect.objectContaining({
-                method: 'POST',
-                body: JSON.stringify({ username: 'user', password: 'pass' })
-            }));
+            expect(server.login).toHaveBeenCalledWith('user', 'pass');
+            expect(service.getUser()).toEqual({ id: 2, username: 'user', role: 'doctor' });
         });
 
-        it('should handle fetch failure', async () => {
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: false,
-                json: async () => ({ error: 'Auth Failed' })
-            });
-            global.fetch = mockFetch;
+        it('returns the server error code', async () => {
+            const server = { login: vi.fn().mockResolvedValue({ ok: false, error: 'TOO_MANY_ATTEMPTS' }) };
+            service = new AuthService(server as any);
+            expect(await service.login('u', 'p')).toEqual({ success: false, error: 'TOO_MANY_ATTEMPTS' });
+            expect(service.getUser()).toBeNull();
+        });
 
-            const result = await service.login('u', 'p');
-            expect(result.success).toBe(false);
-            expect(result.error).toBe('Auth Failed');
-            expect(service.getToken()).toBeNull();
+        it('reports an unreachable server as a network error', async () => {
+            const server = { login: vi.fn().mockRejectedValue(new Error('SERVER_UNREACHABLE')) };
+            service = new AuthService(server as any);
+            expect(await service.login('u', 'p')).toEqual({ success: false, error: 'Network Error' });
         });
     });
 
     describe('Session Management', () => {
         it('should logout by clearing storage', async () => {
+            const server = { logout: vi.fn().mockResolvedValue(undefined) };
+            service = new AuthService(server as any);
             service['setUser']({ id: 1 });
             localStorage.setItem('nalamdesk_token', 'test-token');
             expect(service.getUser()).toBeTruthy();
-            expect(service.getToken()).toBe('test-token');
 
             const navigate = vi.fn();
             await service.logout(navigate);
+            expect(server.logout).toHaveBeenCalledOnce();
             expect(localStorage.getItem('nalamdesk_user')).toBeNull();
             expect(localStorage.getItem('nalamdesk_token')).toBeNull();
             expect(navigate).toHaveBeenCalled();
@@ -184,7 +178,7 @@ describe('AuthService', () => {
             expect(service.getUser()).toEqual(expect.objectContaining({
                 id: 1, username: 'admin', role: 'admin', name: 'Admin'
             }));
-            expect(service.getToken()).toBe('test-token');
+            expect(localStorage.getItem('nalamdesk_token')).toBe('test-token');
             expect(navigate).not.toHaveBeenCalled();
         });
     });

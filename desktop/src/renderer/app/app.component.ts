@@ -9,12 +9,14 @@ import { UniversalDialogComponent } from './shared/components/universal-dialog/u
 import { UpdatePromptComponent } from './shared/components/update-prompt/update-prompt.component';
 
 import { BackupSetupComponent } from './setup/backup-setup.component';
+import { ConnectionBannerComponent } from './shared/components/connection-banner/connection-banner.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, UniversalDialogComponent, BackupSetupComponent, UpdatePromptComponent],
+  imports: [CommonModule, RouterOutlet, UniversalDialogComponent, BackupSetupComponent, UpdatePromptComponent, ConnectionBannerComponent],
   template: `
+    <app-connection-banner></app-connection-banner>
     <router-outlet></router-outlet>
     <app-universal-dialog
       [isOpen]="dialogService.isOpen()"

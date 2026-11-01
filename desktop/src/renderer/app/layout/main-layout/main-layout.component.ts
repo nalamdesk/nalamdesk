@@ -7,6 +7,7 @@ import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { AuthService } from '../../services/auth.service';
 import { QueueCountService } from '../../shared/services/queue-count.service';
 import { RuntimeService } from '../../services/runtime.service';
+import { ServerConnectionService } from '../../services/server-connection.service';
 import { TourService } from '../../shared/services/tour.service';
 import { TourOverlayComponent } from '../../shared/components/tour-overlay/tour-overlay.component';
 
@@ -233,7 +234,8 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     public runtime: RuntimeService,
     public tourService: TourService,
     public doctorPick?: DoctorPickService,
-    private queueCountService?: QueueCountService
+    private queueCountService?: QueueCountService,
+    private server?: ServerConnectionService
   ) {
     this.currentUser = this.authService.getUser();
   }
@@ -253,6 +255,7 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
   }
 
   private badgeRefreshId: any;
+  private serverEvents: Subscription | null = null;
 
   ngOnInit() {
     if (!!(globalThis as any).electron) {
@@ -261,6 +264,13 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     void this.queueCountService?.refresh();
     // Backup cadence for mutations that don't navigate (same 30s as the queue page).
     this.badgeRefreshId = setInterval(() => void this.queueCountService?.refresh(), 30000);
+    // Server clients (#194): follow live changes instead of waiting for the poll.
+    if (!(globalThis as any).electron && this.server) {
+      this.server.startEvents();
+      this.serverEvents = this.server.events.subscribe((event) => {
+        if (event.topic === 'queue' || event.topic === 'resync') void this.queueCountService?.refresh();
+      });
+    }
     this.routerSub = this.router.events.subscribe(event => {
       if (event instanceof NavigationStart) {
         this.dialogService.close();
@@ -274,6 +284,7 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     if (this.badgeRefreshId) clearInterval(this.badgeRefreshId);
     this.routerSub?.unsubscribe();
+    this.serverEvents?.unsubscribe();
   }
 
   isCopied = false;

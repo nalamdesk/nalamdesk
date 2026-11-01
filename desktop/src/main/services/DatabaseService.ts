@@ -2,6 +2,19 @@ import { MIGRATIONS, FACILITY_SETTING_COLUMNS } from '../schema/migrations';
 
 /** Facility every existing vault migrates into (#195). */
 export const DEFAULT_FACILITY_ID = 1;
+
+/**
+ * Settings readable by admins and writable through saveSettings; the
+ * allowlist also guards the dynamic SQL. Keychain-protected blobs (the HIU
+ * private key) are never in it.
+ */
+const SETTINGS_COLUMNS = ['clinic_name', 'doctor_name', 'logo_path', 'license_key',
+    'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
+    'drive_client_id', 'drive_client_secret', 'local_backup_path',
+    'backup_schedule', 'cloud_backup_schedule', 'mrn_prefix', 'consultation_fee',
+    'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
+    'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
+    'abdm_hiu_public_key', 'standards_mode', 'organisation_name'];
 import type { CloudDeviceRow } from '../cloud/DeviceIdentity';
 import type { AbdmInboxRow } from '../cloud/AbdmInbox';
 import * as catalog from '../catalog/catalogStore';
@@ -400,13 +413,7 @@ export class DatabaseService {
     getSettings(facilityId: number = DEFAULT_FACILITY_ID) {
         // Explicit column list: keychain-protected blobs (the HIU private
         // key) never ride along on generic settings reads.
-        return this.settingsView(['clinic_name', 'doctor_name', 'logo_path', 'license_key',
-            'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
-            'drive_client_id', 'drive_client_secret', 'local_backup_path',
-            'backup_schedule', 'cloud_backup_schedule', 'mrn_prefix', 'consultation_fee',
-            'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
-            'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
-            'abdm_hiu_public_key', 'standards_mode', 'organisation_name'], facilityId);
+        return this.settingsView(SETTINGS_COLUMNS, facilityId);
     }
 
     /**
@@ -687,20 +694,8 @@ export class DatabaseService {
     }
 
     saveSettings(settings: any, facilityId: number = DEFAULT_FACILITY_ID) {
-        // Allowed columns whitelist to prevent SQL injection
-        const ALLOWED_COLUMNS = [
-            'clinic_name', 'doctor_name', 'logo_path', 'license_key',
-            'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
-            'drive_client_id', 'drive_client_secret', 'local_backup_path',
-            'backup_schedule', 'cloud_backup_schedule', 'mrn_prefix', 'consultation_fee',
-            'abdm_mock', 'abdm_hip_id', 'abdm_counter_id',
-            'abdm_hfr_id', 'abdm_hpr_id', 'abdm_hip_endpoint', 'abdm_recipient_key',
-            'abdm_hiu_public_key',
-            'standards_mode', 'organisation_name'
-        ];
-
         // Filter incoming settings to only allowed columns
-        const validKeys = Object.keys(settings).filter(k => ALLOWED_COLUMNS.includes(k));
+        const validKeys = Object.keys(settings).filter(k => SETTINGS_COLUMNS.includes(k));
 
         if (validKeys.length === 0) return; // Nothing to update/insert
 

@@ -2088,24 +2088,17 @@ function migrateOrganisationsAndFacilities(db: any) {
         SELECT id, 1, role FROM users WHERE role IS NOT NULL AND role <> ''`);
     // Until staff management grants roles per facility, a single-facility
     // vault mirrors users.role into its facility-1 grant automatically.
-    db.exec(`
-        CREATE TRIGGER IF NOT EXISTS trg_users_role_mirror_insert
-        AFTER INSERT ON users
-        WHEN NEW.role IS NOT NULL AND NEW.role <> '' AND (SELECT COUNT(*) FROM facilities) = 1
-        BEGIN
-            INSERT OR REPLACE INTO user_facility_roles (user_id, facility_id, role) VALUES (NEW.id, 1, NEW.role);
-            UPDATE users SET org_admin = (NEW.role = 'admin') WHERE id = NEW.id;
-        END;
-    `);
-    db.exec(`
-        CREATE TRIGGER IF NOT EXISTS trg_users_role_mirror_update
-        AFTER UPDATE OF role ON users
-        WHEN NEW.role IS NOT NULL AND NEW.role <> '' AND (SELECT COUNT(*) FROM facilities) = 1
-        BEGIN
-            INSERT OR REPLACE INTO user_facility_roles (user_id, facility_id, role) VALUES (NEW.id, 1, NEW.role);
-            UPDATE users SET org_admin = (NEW.role = 'admin') WHERE id = NEW.id;
-        END;
-    `);
+    for (const [name, event] of [['insert', 'INSERT'], ['update', 'UPDATE OF role']]) {
+        db.exec(`
+            CREATE TRIGGER IF NOT EXISTS trg_users_role_mirror_${name}
+            AFTER ${event} ON users
+            WHEN NEW.role IS NOT NULL AND NEW.role <> '' AND (SELECT COUNT(*) FROM facilities) = 1
+            BEGIN
+                INSERT OR REPLACE INTO user_facility_roles (user_id, facility_id, role) VALUES (NEW.id, 1, NEW.role);
+                UPDATE users SET org_admin = (NEW.role = 'admin') WHERE id = NEW.id;
+            END;
+        `);
+    }
 }
 
 /**

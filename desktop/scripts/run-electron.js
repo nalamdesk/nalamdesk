@@ -8,7 +8,7 @@ const path = require('node:path');
 delete process.env.ELECTRON_RUN_AS_NODE;
 
 const electronBinary = require('electron');
-const appEntry = path.resolve(__dirname, '../dist/main/main.js');
+const appEntry = path.resolve(__dirname, '../dist/main/entry.js');
 
 const child = spawn(electronBinary, [appEntry], {
     stdio: 'inherit',

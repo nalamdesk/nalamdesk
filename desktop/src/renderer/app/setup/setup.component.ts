@@ -7,6 +7,23 @@ import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 import { jsPDF } from 'jspdf';
 
+const CONNECT_ERRORS: Record<string, string> = {
+  INVALID_ADDRESS: 'Enter the server address, for example nalamdesk.myclinic.in or 192.168.1.20:3443.',
+  INVALID_CODE: 'That join code is not valid or has expired. Ask an admin for a new one.',
+  UNREACHABLE: 'Cannot reach that server. Check the address and that this computer is on the clinic network.',
+  WRONG_SERVER: 'The server at that address is not the one this join code is for. Check the address with your admin.',
+  CLIENT_UPGRADE_REQUIRED: 'This NalamDesk is older than the server. Update NalamDesk, then connect again.',
+  SERVER_UPGRADE_REQUIRED: 'The server runs an older NalamDesk. Ask your admin to upgrade it.',
+  NOT_A_NALAMDESK_SERVER: 'That address does not answer as a NalamDesk Server.',
+  TOO_MANY_ATTEMPTS: 'Too many wrong codes. Wait a few minutes and try again.',
+  SECURE_STORAGE_UNAVAILABLE: 'This computer\'s keychain is not available, so the connection cannot be stored safely.',
+  ALREADY_SET_UP: 'This computer already holds a clinic vault, so it cannot also join a server.'
+};
+
+export function connectErrorMessage(error?: string): string {
+  return (error && CONNECT_ERRORS[error]) || 'Could not connect. Try again or ask your admin for a new code.';
+}
+
 @Component({
   selector: 'app-setup',
   standalone: true,
@@ -105,8 +122,49 @@ import { jsPDF } from 'jspdf';
                     Restore Backup File…
                   </button>
                 </div>
+                <p *ngIf="canConnectToServer" class="mt-6 text-sm text-gray-400">
+                  Your clinic or hospital runs a NalamDesk Server?
+                  <button type="button" (click)="step = CONNECT_STEP" class="text-blue-400 hover:text-blue-300 underline" data-testid="connect-server-start">
+                    Connect this computer to it
+                  </button>
+                </p>
             </ng-template>
           </div>
+
+          <!-- Connect to a NalamDesk Server (#194) -->
+          <form *ngIf="step === CONNECT_STEP" (ngSubmit)="connectToServer()" data-testid="connect-server-form">
+            <h3 class="text-xl font-semibold mb-2 text-white">Connect to a NalamDesk Server</h3>
+            <p class="text-gray-300 mb-6 text-sm">
+              Patient records stay on the server; this computer keeps none. Ask an admin for a join code
+              (it works once, for 15 minutes).
+            </p>
+            <div class="space-y-4">
+              <div>
+                <label for="server-url" class="block text-gray-400 text-sm mb-1">Server address</label>
+                <input id="server-url" name="serverUrl" [(ngModel)]="serverUrl" placeholder="nalamdesk.myclinic.in or 192.168.1.20:3443"
+                  autocomplete="off" spellcheck="false" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+              </div>
+              <div>
+                <label for="server-join-code" class="block text-gray-400 text-sm mb-1">Join code</label>
+                <input id="server-join-code" name="joinCode" [(ngModel)]="joinCode" placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+                  autocomplete="off" spellcheck="false" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white font-mono uppercase tracking-wider">
+              </div>
+              <div>
+                <label for="server-device-name" class="block text-gray-400 text-sm mb-1">Name for this computer</label>
+                <input id="server-device-name" name="deviceName" [(ngModel)]="deviceName" maxlength="100" placeholder="Reception 1"
+                  class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+              </div>
+              <p *ngIf="connectError" aria-live="polite" class="text-red-400 text-sm">{{ connectError }}</p>
+              <p *ngIf="connectedTo" aria-live="polite" class="text-green-400 text-sm">Connected to {{ connectedTo }}. Restarting NalamDesk…</p>
+            </div>
+            <div class="mt-8 flex justify-between">
+              <button type="button" (click)="step = 1" class="text-gray-400 hover:text-white" [disabled]="isConnecting">Back</button>
+              <button type="submit" [disabled]="isConnecting || !serverUrl || !joinCode || !!connectedTo"
+                class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                {{ isConnecting ? 'Connecting…' : 'Connect' }}
+              </button>
+            </div>
+          </form>
 
           <!-- Step 2: Administrator password -->
           <div *ngIf="step === 2">
@@ -221,6 +279,16 @@ import { jsPDF } from 'jspdf';
 })
 export class SetupComponent implements OnInit {
   step = 1;
+  readonly CONNECT_STEP = 10;
+
+  // Client mode (#194)
+  readonly canConnectToServer = !!(globalThis as any).electron?.connectToServer;
+  serverUrl = '';
+  joinCode = '';
+  deviceName = '';
+  isConnecting = false;
+  connectError = '';
+  connectedTo = '';
 
   password = '';
   confirmPassword = '';
@@ -243,6 +311,26 @@ export class SetupComponent implements OnInit {
 
   ngOnInit() {
     this.checkRecovery();
+  }
+
+  async connectToServer() {
+    this.isConnecting = true;
+    this.connectError = '';
+    try {
+      const result = await (window as any).electron.connectToServer({
+        serverUrl: this.serverUrl,
+        code: this.joinCode,
+        deviceName: this.deviceName
+      });
+      this.ngZone.run(() => {
+        if (result?.ok) this.connectedTo = result.serverUrl;
+        else this.connectError = connectErrorMessage(result?.error);
+      });
+    } catch {
+      this.ngZone.run(() => { this.connectError = connectErrorMessage('JOIN_FAILED'); });
+    } finally {
+      this.ngZone.run(() => { this.isConnecting = false; });
+    }
   }
 
   async checkRecovery() {

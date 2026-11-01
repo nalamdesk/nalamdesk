@@ -18,6 +18,7 @@ import { AccessPolicy } from '../main/services/AccessPolicy';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import { FideliusService, parseKeyMaterial } from '../main/services/FideliusService';
 import { ElectronSafeStorageDeviceKeyStore } from '../main/services/DeviceKeyStore';
+import { assertMethodAccess, MethodAccessError, type ClinicMethod } from './runtime/clinicMethods';
 
 loadDevelopmentEnv();
 dotenv.config();
@@ -88,6 +89,45 @@ export interface ApiAbdmServices {
 
 export class ApiServer {
     private abdm: ApiAbdmServices | null;
+    // Cloud, booking and backup methods (#196), with their own access rules.
+    private readonly serviceMethods = new Map<string, ClinicMethod>();
+    private afterDbMethod: ((method: string, args: unknown[]) => void) | null = null;
+
+    /**
+     * Adds methods served beside the database allowlist. `afterDbMethod`
+     * runs after each database method succeeds (e.g. to reschedule backups
+     * when settings change).
+     */
+    registerServiceMethods(methods: Record<string, ClinicMethod>, afterDbMethod?: (method: string, args: unknown[]) => void): void {
+        for (const [name, method] of Object.entries(methods)) {
+            if (ALLOWED_IPC_METHODS.includes(name)) throw new Error(`${name} is already a database method.`);
+            this.serviceMethods.set(name, method);
+        }
+        if (afterDbMethod) this.afterDbMethod = afterDbMethod;
+    }
+
+    private async handleServiceMethod(method: ClinicMethod, name: string, args: unknown[], user: any, reply: FastifyReply) {
+        try {
+            assertMethodAccess(method.access, user);
+        } catch (error) {
+            const status = error instanceof MethodAccessError ? error.status : 403;
+            if (status === 403) {
+                try {
+                    (this.dbService as any).auditDenial({ user, method: name, channel: 'lan' });
+                } catch { /* audit must not mask the denial */ }
+            }
+            return reply.code(status).send({ error: status === 401 ? 'Unauthorized' : 'Forbidden' });
+        }
+        const run = async () => method.run(args, user);
+        try {
+            return await (method.selfFenced ? run() : this.dbService.runWork(run));
+        } catch (error: any) {
+            if (error?.message === 'RESTORE_IN_PROGRESS') return reply.code(503).send({ error: 'RESTORE_IN_PROGRESS' });
+            console.error(`[IPC Error] method: ${name}`, error);
+            // These methods serve admin screens; their messages are written for people.
+            return reply.code(500).send({ error: error instanceof Error ? error.message : 'Internal server error' });
+        }
+    }
 
     // Without services from the desktop (tests, the standalone server) ABDM
     // runs against the mock gateway, built lazily so tests that never touch
@@ -590,6 +630,9 @@ export class ApiServer {
 
         const user = (request as any).user;
 
+        const serviceMethod = this.serviceMethods.get(method);
+        if (serviceMethod) return this.handleServiceMethod(serviceMethod, method, args, user, reply);
+
         // 1. Allowlist Check (Security)
         if (!ALLOWED_IPC_METHODS.includes(method)) {
             return reply.code(404).send({ error: 'Method not found or not allowed' });
@@ -631,6 +674,7 @@ export class ApiServer {
                         || method === 'saveRole' || method === 'deleteRole') {
                         this.refreshAccessPolicy();
                     }
+                    this.notifyDbMethod(method, args);
                     return result;
                 } catch (e: any) {
                     console.error(`[IPC Error] method: ${method}`, e);
@@ -641,6 +685,14 @@ export class ApiServer {
             }
         } finally {
             this.dbService.endWork();
+        }
+    }
+
+    private notifyDbMethod(method: string, args: unknown[]): void {
+        try {
+            this.afterDbMethod?.(method, args);
+        } catch (e) {
+            console.error(`[API Server] After ${method} hook failed:`, e);
         }
     }
 

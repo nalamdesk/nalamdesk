@@ -133,11 +133,21 @@ export class SettingsComponent implements OnInit {
     return `${value.toFixed(1)} ${units[unit]}`;
   }
 
+  /**
+   * Admin screens backed by the server (#196): in the desktop app they use
+   * IPC, in a browser signed in as admin they call the server API.
+   */
+  get canManageBackups(): boolean {
+    return this.isElectron || this.currentUser?.role === 'admin';
+  }
+
   async loadBackupHealth(): Promise<void> {
-    if (!this.isElectron) return;
+    if (!this.canManageBackups) return;
     this.backupHealthLoading = true;
     try {
-      const health = await (window as any).electron.backup.getLocalBackupHealth();
+      const health = this.isElectron
+        ? await (window as any).electron.backup.getLocalBackupHealth()
+        : await this.dataService.invoke('backupGetHealth');
       this.ngZone.run(() => {
         this.backupHealth = health || null;
         this.backupHealthLoading = false;
@@ -149,10 +159,11 @@ export class SettingsComponent implements OnInit {
   }
 
   async runLocalBackupNow(): Promise<void> {
-    if (!this.isElectron || this.isBackupLoading) return;
+    if (!this.canManageBackups || this.isBackupLoading) return;
     this.isBackupLoading = true;
     try {
-      await (window as any).electron.backup.runNow();
+      if (this.isElectron) await (window as any).electron.backup.runNow();
+      else await this.dataService.invoke('backupRunNow');
       this.toastService?.success('Local backup finished.', 'Backup Complete');
       await this.loadBackupHealth();
     } catch (e) {
@@ -376,8 +387,8 @@ export class SettingsComponent implements OnInit {
     if (this.isElectron) {
       this.listBackups();
       this.checkDriveStatus();
-      void this.loadBackupHealth();
     }
+    if (this.canManageBackups) void this.loadBackupHealth();
     if (this.currentUser?.role === 'admin') {
       this.loadUsers();
       this.loadRoles();

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
 import {
     KEY_FILE_PROVIDER,
@@ -51,12 +52,19 @@ export interface RunningServer {
     close(): Promise<void>;
 }
 
+/** Backup and restore of the server's vault (BackupService). */
+export interface CliBackups {
+    createBackupBundle(destination: string): Promise<string>;
+    restoreLocalBackup(bundlePath: string, recoveryCode: string): Promise<{ preRestoreSnapshot?: string }>;
+}
+
 export interface CliDeps {
     createVault(store: DeviceKeyStore): CliVault;
     createDatabase(): CliDatabase;
     provision(vault: CliVault, database: CliDatabase, adminPassword: string, clinic: Record<string, unknown>,
         config: ServerConfig): Promise<string>;
     startServer(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig, io: CliIO): Promise<RunningServer>;
+    createBackups(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig): CliBackups;
     /** Resolves when the process is asked to stop. */
     waitForShutdown(): Promise<void>;
 }
@@ -104,6 +112,8 @@ Commands:
   key add --provider passphrase [--label <text>]
   key remove <slot-id>           Remove an unlock method.
   recovery confirm               Confirm you saved the recovery code.
+  backup [--out <file>]          Write an encrypted backup (default: <data dir>/backups).
+  restore <file>                 Replace the vault with a backup. Stop the server first.
 
 Options:
   --config <file>                JSON config file (or NALAMDESK_CONFIG).
@@ -112,6 +122,7 @@ Environment:
   NALAMDESK_DATA_DIR, NALAMDESK_HOST, NALAMDESK_PORT, NALAMDESK_STATIC_PATH,
   NALAMDESK_KEY_PROVIDER (key-file | passphrase), NALAMDESK_KEY_FILE,
   NALAMDESK_PASSPHRASE_FILE or NALAMDESK_PASSPHRASE,
+  NALAMDESK_RECOVERY_CODE_FILE or NALAMDESK_RECOVERY_CODE (restore only),
   NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only).`;
 
 async function askTwice(io: CliIO, label: string): Promise<string> {
@@ -238,13 +249,121 @@ async function cmdStart(config: ServerConfig, io: CliIO, deps: CliDeps): Promise
     if (vault.getPendingRecoveryCode()) {
         io.err('Warning: the recovery code has not been confirmed. Run `nalamdesk-server recovery confirm`.');
     }
-    const server = await deps.startServer(vault, database, store, config, io);
-    io.out(`NalamDesk Server listening on ${config.host}:${config.port} (data: ${config.dataDir}).`);
-    await deps.waitForShutdown();
-    io.out('Shutting down...');
-    await server.close();
+    acquireRunLock(config);
+    try {
+        const server = await deps.startServer(vault, database, store, config, io);
+        io.out(`NalamDesk Server listening on ${config.host}:${config.port} (data: ${config.dataDir}).`);
+        await deps.waitForShutdown();
+        io.out('Shutting down...');
+        await server.close();
+    } finally {
+        releaseRunLock(config);
+    }
     vault.closeDb();
     return 0;
+}
+
+const RUN_LOCK = 'server.pid';
+
+function processAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error: any) {
+        return error?.code === 'EPERM';
+    }
+}
+
+/** The pid of a server running on this data directory, if any. */
+export function runningServerPid(config: ServerConfig): number | null {
+    let pid: number;
+    try {
+        pid = Number.parseInt(fs.readFileSync(path.join(config.dataDir, RUN_LOCK), 'utf8'), 10);
+    } catch {
+        return null;
+    }
+    return Number.isInteger(pid) && pid > 0 && pid !== process.pid && processAlive(pid) ? pid : null;
+}
+
+function acquireRunLock(config: ServerConfig): void {
+    const other = runningServerPid(config);
+    if (other) throw new Error(`A server (pid ${other}) is already running on ${config.dataDir}.`);
+    fs.writeFileSync(path.join(config.dataDir, RUN_LOCK), String(process.pid), { mode: 0o600 });
+}
+
+function releaseRunLock(config: ServerConfig): void {
+    try {
+        fs.unlinkSync(path.join(config.dataDir, RUN_LOCK));
+    } catch { /* already gone */ }
+}
+
+function backupStamp(): string {
+    return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+async function cmdBackup(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const out = flagString(args, 'out');
+    const destination = out
+        ? path.resolve(out)
+        : path.join(config.dataDir, 'backups', `nalamdesk-manual-backup-${backupStamp()}.ndbackup`);
+    if (fs.existsSync(destination)) throw new Error(`${destination} already exists. Choose a new path.`);
+    const { vault, database, store } = await unlock(config, io, deps);
+    try {
+        const written = await deps.createBackups(vault, database, store, config).createBackupBundle(destination);
+        database.logAudit('BACKUP_LOCAL', 'system', null, null, `Created recoverable backup from the CLI: ${path.basename(written)}`);
+        io.out(`Wrote ${written}.`);
+        io.out('It opens with this vault\'s recovery code. Keep a copy off this machine.');
+        return 0;
+    } finally {
+        vault.closeDb();
+    }
+}
+
+async function readRecoveryCode(io: CliIO): Promise<string> {
+    const fromEnv = readSecretFromEnv('NALAMDESK_RECOVERY_CODE', io.env);
+    if (fromEnv !== undefined) return fromEnv.trim().toUpperCase();
+    if (!io.interactive) throw new Error('Set NALAMDESK_RECOVERY_CODE_FILE, or run restore in a terminal.');
+    return (await io.prompt('Recovery code for this backup: ', { secret: true })).trim().toUpperCase();
+}
+
+async function cmdRestore(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const file = args.positional[1];
+    if (!file) {
+        io.err('Usage: nalamdesk-server restore <backup-file>');
+        return 2;
+    }
+    const bundle = path.resolve(file);
+    if (!fs.existsSync(bundle)) throw new Error(`${bundle} does not exist.`);
+    const running = runningServerPid(config);
+    if (running) throw new Error(`Stop the server (pid ${running}) before restoring.`);
+    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+    const recoveryCode = await readRecoveryCode(io);
+
+    // An existing vault is opened first so the restore keeps a snapshot of it.
+    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
+    probe.reconcileProvisioning(config.dbPath, config.dataDir);
+    let opened: { vault: CliVault; database: CliDatabase; store: DeviceKeyStore };
+    if (probe.isSetup(config.dataDir).isSetup) {
+        opened = await unlock(config, io, deps);
+    } else {
+        const store = await openKeyStore(config, io, { create: true });
+        opened = { vault: deps.createVault(store), database: deps.createDatabase(), store };
+    }
+    const { vault, database, store } = opened;
+    try {
+        const result = await deps.createBackups(vault, database, store, config).restoreLocalBackup(bundle, recoveryCode);
+        database.logAudit('BACKUP_RESTORE', 'system', null, null, `Restored ${path.basename(bundle)} from the CLI`);
+        io.out(`Restored ${bundle}.`);
+        if (result.preRestoreSnapshot) io.out(`The previous vault was saved to ${result.preRestoreSnapshot}.`);
+        io.out(`The vault now opens with ${store.status().provider} and the backup's recovery code.`);
+        io.out('Add any other unlock methods again with `nalamdesk-server key add`.');
+        return 0;
+    } catch (error: any) {
+        if (error?.message === 'INVALID_RECOVERY_CODE') throw new Error('INVALID_RECOVERY_CODE: that recovery code does not open this backup.');
+        throw error;
+    } finally {
+        vault.closeDb();
+    }
 }
 
 async function cmdStatus(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
@@ -345,6 +464,8 @@ export async function runCli(argv: string[], io: CliIO, deps: CliDeps): Promise<
             case 'status': return await cmdStatus(config, io, deps);
             case 'key': return await cmdKey(args, config, io, deps);
             case 'recovery': return await cmdRecovery(args, config, io, deps);
+            case 'backup': return await cmdBackup(args, config, io, deps);
+            case 'restore': return await cmdRestore(args, config, io, deps);
             default:
                 io.err(`Unknown command "${command}".`);
                 io.err(USAGE);

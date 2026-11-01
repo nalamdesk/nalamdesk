@@ -6,9 +6,11 @@ import { CloudService } from './cloud.service';
 
 describe('CloudService', () => {
     let service: CloudService;
+    let data: { invoke: ReturnType<typeof vi.fn> };
 
     beforeEach(() => {
-        service = new CloudService();
+        data = { invoke: vi.fn().mockResolvedValue('from-server') };
+        service = new CloudService(data as any);
         vi.restoreAllMocks();
     });
 
@@ -94,44 +96,44 @@ describe('CloudService', () => {
         });
     });
 
-    describe('without electron bridge', () => {
-        it('publishSlots should return undefined', async () => {
-            const result = await service.publishSlots([], []);
-            expect(result).toBeUndefined();
+    describe('without electron bridge (browser on NalamDesk Server)', () => {
+        it('calls the server method for each cloud action', async () => {
+            await service.publishSlots([{ date: '2026-01-01', time: '10:00' }], ['2026-01-01']);
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudPublishSlots', [{ date: '2026-01-01', time: '10:00' }], ['2026-01-01']);
+            await service.getPublishedSlots('2026-01-01');
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudGetPublishedSlots', '2026-01-01');
+            await service.decide('ABCDEFGHJKMN', 'accepted', { date: '2026-01-01', time: '10:00' });
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudDecide', { ref: 'ABCDEFGHJKMN', decision: 'accepted', date: '2026-01-01', time: '10:00' });
+            expect(await service.getStatus()).toBe('from-server');
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudGetStatus');
+            await service.requestPairing('IN27', 'Reception');
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudRequestPairing', { hfrId: 'IN27', label: 'Reception' });
+            await service.activatePairing('ABCD-1234');
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudActivatePairing', { code: 'ABCD-1234' });
+            await service.cancelPairing();
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudCancelPairing');
+            await service.forgetPairing();
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudForgetPairing');
+            await service.enableListing({ name: 'Asha', city: 'Chennai' });
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudEnableListing', { name: 'Asha', city: 'Chennai' });
+            await service.disableListing();
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudDisableListing');
+            await service.syncNow();
+            expect(data.invoke).toHaveBeenLastCalledWith('cloudSyncNow');
         });
 
-        it('getPublishedSlots should return empty array', async () => {
-            const result = await service.getPublishedSlots('2026-01-01');
-            expect(result).toEqual([]);
+        it('reads and books appointments through the server', async () => {
+            await service.getAppointmentRequests();
+            expect(data.invoke).toHaveBeenLastCalledWith('getAppointmentRequests');
+            await service.saveAppointment({ id: 1 });
+            expect(data.invoke).toHaveBeenLastCalledWith('saveAppointment', { id: 1 });
+            await service.getAppointments('2026-01-01');
+            expect(data.invoke).toHaveBeenLastCalledWith('getAppointments', '2026-01-01');
         });
 
-        it('getAppointmentRequests should return empty array', async () => {
-            const result = await service.getAppointmentRequests();
-            expect(result).toEqual([]);
-        });
-
-        it('decide should return undefined', async () => {
-            const result = await service.decide('ABCDEFGHJKMN', 'declined');
-            expect(result).toBeUndefined();
-        });
-
-        it('getStatus should return null', async () => {
-            expect(await service.getStatus()).toBeNull();
-        });
-
-        it('syncNow should return undefined', async () => {
-            const result = await service.syncNow();
-            expect(result).toBeUndefined();
-        });
-
-        it('saveAppointment should return undefined', async () => {
-            const result = await service.saveAppointment({});
-            expect(result).toBeUndefined();
-        });
-
-        it('getAppointments should return empty array', async () => {
-            const result = await service.getAppointments('2026-01-01');
-            expect(result).toEqual([]);
+        it('has no pairing push without the desktop bridge', () => {
+            const unsubscribe = service.onPairingChanged(() => undefined);
+            expect(unsubscribe()).toBeUndefined();
         });
     });
 });

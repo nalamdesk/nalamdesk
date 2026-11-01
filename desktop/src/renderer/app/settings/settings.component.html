@@ -58,7 +58,7 @@
                     <span>Security</span>
                 </button>
 
-                <button (click)="switchTab('backup')" *ngIf="isElectron"
+                <button (click)="switchTab('backup')" *ngIf="canManageBackups"
                     [class]="activeTab === 'backup' ? 'bg-blue-50 text-blue-700 border-blue-500' : 'text-gray-600 hover:bg-gray-50 border-transparent'"
                     class="w-full text-left px-3 py-2 rounded-md transition-colors font-medium flex items-center gap-3 border-l-4">
                     <span>Data & Backup</span>
@@ -157,7 +157,7 @@
                 <p class="text-xs text-gray-500">Packaged desktop builds check a clinic update feed. This app does not claim full code-signature verification unless a later signed release channel is configured.</p>
             </div>
 
-            <app-cloud-link *ngIf="isElectron" [isAdmin]="currentUser?.role === 'admin'"></app-cloud-link>
+            <app-cloud-link *ngIf="canManageBackups" [isAdmin]="currentUser?.role === 'admin'"></app-cloud-link>
         </div>
 
         <div *ngIf="activeTab === 'catalogs'" class="h-full overflow-hidden">
@@ -589,7 +589,11 @@
                     </div>
                 </div>
 
-                <div class="flex items-center gap-4 bg-gray-50 p-3 rounded border border-gray-200 mb-3">
+                <div *ngIf="!isElectron" class="flex items-center gap-2">
+                    <button (click)="runLocalBackupNow()" [disabled]="isBackupLoading" class="btn btn-outline btn-sm">Back up now</button>
+                    <span class="text-xs text-gray-400">Backups are written on the server. Copy them off the server regularly.</span>
+                </div>
+                <div *ngIf="isElectron" class="flex items-center gap-4 bg-gray-50 p-3 rounded border border-gray-200 mb-3">
                     <div class="flex-1 overflow-hidden">
                         <label class="text-xs text-gray-500 font-bold uppercase flex items-center gap-1">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
@@ -604,7 +608,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="flex items-center gap-2">
+                <div *ngIf="isElectron" class="flex items-center gap-2">
                     <button (click)="useDefaultBackupPath()" class="btn btn-ghost btn-xs text-gray-500"
                         title="Reset to default AppData folder">Use Default</button>
                     <button (click)="selectBackupPath()" class="btn btn-outline btn-sm">Change Location</button>
@@ -649,8 +653,8 @@
                 <p *ngIf="restoreError" aria-live="polite" class="text-red-600 text-sm mt-3">{{ restoreError }}</p>
             </div>
 
-            <!-- Google Drive Backup Section -->
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6 overflow-hidden">
+            <!-- Google Drive Backup Section (desktop only) -->
+            <div *ngIf="isElectron" class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6 overflow-hidden">
                 <!-- Header -->
                 <div class="p-6 border-b border-gray-100 bg-gray-50/30">
                     <div class="flex items-center gap-4">

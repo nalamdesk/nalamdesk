@@ -75,6 +75,7 @@ describe('nalamdesk-server CLI', () => {
     let audits: string[];
     let started: { port: number; closed: boolean } | null;
     let deps: CliDeps;
+    let backupCalls: { created: string[]; restored: Array<[string, string]>; restoreError: Error | null };
 
     beforeEach(() => {
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nalamdesk-cli-'));
@@ -82,6 +83,7 @@ describe('nalamdesk-server CLI', () => {
         FakeVault.state = { setup: false, slots: [], pending: null };
         audits = [];
         started = null;
+        backupCalls = { created: [], restored: [], restoreError: null };
         const database = (): CliDatabase => ({
             setDb: () => { },
             migrate: async () => { },
@@ -100,6 +102,17 @@ describe('nalamdesk-server CLI', () => {
                 started = { port: config.port, closed: false };
                 return { close: async () => { started!.closed = true; } };
             },
+            createBackups: () => ({
+                createBackupBundle: async (destination) => {
+                    backupCalls.created.push(destination);
+                    return destination;
+                },
+                restoreLocalBackup: async (bundle, code) => {
+                    if (backupCalls.restoreError) throw backupCalls.restoreError;
+                    backupCalls.restored.push([bundle, code]);
+                    return { preRestoreSnapshot: '/snap.ndbackup' };
+                }
+            }),
             waitForShutdown: async () => { }
         };
     });
@@ -227,5 +240,95 @@ describe('nalamdesk-server CLI', () => {
         expect(help.out.join()).toContain('Usage: nalamdesk-server');
         const unknown = makeIo(env);
         expect(await runCli(['frobnicate'], unknown.io, deps)).toBe(2);
+    });
+    async function initVault() {
+        const { io } = makeIo({ ...env, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' });
+        expect(await runCli(['init'], io, deps)).toBe(0);
+        audits = [];
+    }
+
+    it('backup writes a bundle under the data directory by default and audits it', async () => {
+        await initVault();
+        const { io, out } = makeIo(env);
+        expect(await runCli(['backup'], io, deps)).toBe(0);
+        expect(backupCalls.created).toHaveLength(1);
+        expect(backupCalls.created[0]).toMatch(/data[\\/]backups[\\/]nalamdesk-manual-backup-.*\.ndbackup$/);
+        expect(out.join('\n')).toContain('recovery code');
+        expect(audits[0]).toMatch(/^BACKUP_LOCAL: /);
+    });
+
+    it('backup honours --out and refuses to overwrite a file', async () => {
+        await initVault();
+        const target = path.join(directory, 'nightly.ndbackup');
+        expect(await runCli(['backup', '--out', target], makeIo(env).io, deps)).toBe(0);
+        expect(backupCalls.created).toEqual([target]);
+        fs.writeFileSync(target, 'x');
+        const clash = makeIo(env);
+        expect(await runCli(['backup', '--out', target], clash.io, deps)).toBe(1);
+        expect(clash.err.join()).toMatch(/already exists/);
+    });
+
+    it('restore replaces an existing vault with the recovery code from the environment', async () => {
+        await initVault();
+        const bundle = path.join(directory, 'clinic.ndbackup');
+        fs.writeFileSync(bundle, 'bundle');
+        const { io, out } = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: ' cccc-dddd\n' });
+        expect(await runCli(['restore', bundle], io, deps)).toBe(0);
+        expect(backupCalls.restored).toEqual([[bundle, 'CCCC-DDDD']]);
+        const printed = out.join('\n');
+        expect(printed).toContain('/snap.ndbackup');
+        expect(printed).toContain('key add');
+        expect(audits[0]).toMatch(/^BACKUP_RESTORE: /);
+    });
+
+    it('restore onto an empty data directory creates the key file first', async () => {
+        const bundle = path.join(directory, 'clinic.ndbackup');
+        fs.writeFileSync(bundle, 'bundle');
+        const { io } = makeIo(env, ['eeee-ffff'], true);
+        expect(await runCli(['restore', bundle], io, deps)).toBe(0);
+        expect(fs.existsSync(path.join(directory, 'data', 'vault.key'))).toBe(true);
+        expect(backupCalls.restored).toEqual([[bundle, 'EEEE-FFFF']]);
+    });
+
+    it('restore checks its input, the recovery code and a running server', async () => {
+        expect(await runCli(['restore'], makeIo(env).io, deps)).toBe(2);
+        const missing = makeIo(env);
+        expect(await runCli(['restore', path.join(directory, 'nope')], missing.io, deps)).toBe(1);
+        expect(missing.err.join()).toMatch(/does not exist/);
+
+        const bundle = path.join(directory, 'clinic.ndbackup');
+        fs.writeFileSync(bundle, 'bundle');
+        const headless = makeIo(env);
+        expect(await runCli(['restore', bundle], headless.io, deps)).toBe(1);
+        expect(headless.err.join()).toMatch(/NALAMDESK_RECOVERY_CODE_FILE/);
+
+        backupCalls.restoreError = new Error('INVALID_RECOVERY_CODE');
+        const wrong = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'x' });
+        expect(await runCli(['restore', bundle], wrong.io, deps)).toBe(1);
+        expect(wrong.err.join()).toMatch(/does not open this backup/);
+
+        fs.mkdirSync(path.join(directory, 'data'), { recursive: true });
+        fs.writeFileSync(path.join(directory, 'data', 'server.pid'), String(process.ppid));
+        const running = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'x' });
+        expect(await runCli(['restore', bundle], running.io, deps)).toBe(1);
+        expect(running.err.join()).toMatch(/Stop the server/);
+    });
+
+    it('start holds a run lock while serving and refuses a second server', async () => {
+        await initVault();
+        const lock = path.join(directory, 'data', 'server.pid');
+        deps.waitForShutdown = async () => {
+            expect(fs.readFileSync(lock, 'utf8')).toBe(String(process.pid));
+        };
+        expect(await runCli(['start'], makeIo(env).io, deps)).toBe(0);
+        expect(fs.existsSync(lock)).toBe(false);
+
+        fs.writeFileSync(lock, String(process.ppid));
+        const second = makeIo(env);
+        expect(await runCli(['start'], second.io, deps)).toBe(1);
+        expect(second.err.join()).toMatch(/already running/);
+
+        fs.writeFileSync(lock, '999999999');
+        expect(await runCli(['start'], makeIo(env).io, deps)).toBe(0);
     });
 });

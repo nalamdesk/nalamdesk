@@ -347,22 +347,24 @@ async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: 
 }
 
 async function cmdStart(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
-    const { vault, database, store } = await unlock(config, io, deps);
-    if (vault.getPendingRecoveryCode()) {
-        io.err('Warning: the recovery code has not been confirmed. Run `nalamdesk-server recovery confirm`.');
-    }
+    if (!fs.existsSync(config.dataDir)) throw new Error('This server has no vault yet. Run `nalamdesk-server init` first.');
+    // Held before the vault opens, so a restore never runs under this server.
     acquireRunLock(config);
     try {
+        const { vault, database, store } = await unlock(config, io, deps);
+        if (vault.getPendingRecoveryCode()) {
+            io.err('Warning: the recovery code has not been confirmed. Run `nalamdesk-server recovery confirm`.');
+        }
         const server = await deps.startServer(vault, database, store, config, io);
         io.out(`NalamDesk Server listening on ${config.host}:${config.port} (data: ${config.dataDir}).`);
         await deps.waitForShutdown();
         io.out('Shutting down...');
         await server.close();
+        vault.closeDb();
+        return 0;
     } finally {
         releaseRunLock(config);
     }
-    vault.closeDb();
-    return 0;
 }
 
 const RUN_LOCK = 'server.pid';
@@ -387,10 +389,21 @@ export function runningServerPid(config: ServerConfig): number | null {
     return Number.isInteger(pid) && pid > 0 && pid !== process.pid && processAlive(pid) ? pid : null;
 }
 
+/** Takes the data directory's run lock exclusively; a dead holder's lock is replaced. */
 function acquireRunLock(config: ServerConfig): void {
-    const other = runningServerPid(config);
-    if (other) throw new Error(`A server (pid ${other}) is already running on ${config.dataDir}.`);
-    fs.writeFileSync(path.join(config.dataDir, RUN_LOCK), String(process.pid), { mode: 0o600 });
+    const lock = path.join(config.dataDir, RUN_LOCK);
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            fs.writeFileSync(lock, String(process.pid), { mode: 0o600, flag: 'wx' });
+            return;
+        } catch (error: any) {
+            if (error?.code !== 'EEXIST') throw error;
+        }
+        const other = runningServerPid(config);
+        if (other) throw new Error(`A server or restore (pid ${other}) is already running on ${config.dataDir}.`);
+        try { fs.unlinkSync(lock); } catch { /* removed by its holder meanwhile */ }
+    }
+    throw new Error(`Could not take the run lock in ${config.dataDir}. Try again.`);
 }
 
 function releaseRunLock(config: ServerConfig): void {
@@ -436,9 +449,19 @@ async function cmdRestore(args: ParsedArgs, config: ServerConfig, io: CliIO, dep
     }
     const bundle = path.resolve(file);
     if (!fs.existsSync(bundle)) throw new Error(`${bundle} does not exist.`);
+    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
     const running = runningServerPid(config);
     if (running) throw new Error(`Stop the server (pid ${running}) before restoring.`);
-    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+    // Held for the whole restore, so a server cannot start on the vault mid-way.
+    acquireRunLock(config);
+    try {
+        return await restoreUnderLock(bundle, config, io, deps);
+    } finally {
+        releaseRunLock(config);
+    }
+}
+
+async function restoreUnderLock(bundle: string, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     const recoveryCode = await readRecoveryCode(io);
 
     // An existing vault is opened first so the restore keeps a snapshot of it.

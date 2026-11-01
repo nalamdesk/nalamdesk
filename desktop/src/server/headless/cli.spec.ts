@@ -108,6 +108,8 @@ describe('nalamdesk-server CLI', () => {
                     return destination;
                 },
                 restoreLocalBackup: async (bundle, code) => {
+                    // The run lock is held for the whole restore.
+                    expect(fs.readFileSync(path.join(directory, 'data', 'server.pid'), 'utf8')).toBe(String(process.pid));
                     if (backupCalls.restoreError) throw backupCalls.restoreError;
                     backupCalls.restored.push([bundle, code]);
                     return { preRestoreSnapshot: '/snap.ndbackup' };
@@ -332,6 +334,7 @@ describe('nalamdesk-server CLI', () => {
         const { io, out } = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: ' cccc-dddd\n' });
         expect(await runCli(['restore', bundle], io, deps)).toBe(0);
         expect(backupCalls.restored).toEqual([[bundle, 'CCCC-DDDD']]);
+        expect(fs.existsSync(path.join(directory, 'data', 'server.pid'))).toBe(false);
         const printed = out.join('\n');
         expect(printed).toContain('/snap.ndbackup');
         expect(printed).toContain('key add');

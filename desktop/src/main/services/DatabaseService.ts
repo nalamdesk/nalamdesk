@@ -4481,7 +4481,7 @@ export class DatabaseService {
         if (state !== 'arrived') {
             this._transitionAppointment(Number(id), 'arrived', undefined, actingUserId ?? undefined, { allowArrive: true });
         }
-        const queued: any = this.addToQueue(row.patient_id, { priority: 2 }, actingUserId);
+        const queued: any = this.addToQueue(row.patient_id, { priority: 2, department_id: row.department_id ?? null }, actingUserId);
         const queueEntryId = Number(queued.lastInsertRowid ?? queued.id);
         this.db.prepare('UPDATE appointments SET queue_entry_id = ? WHERE id = ?').run(queueEntryId, Number(id));
         return { appointmentId: Number(id), queueEntryId, reused: false };

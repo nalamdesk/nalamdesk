@@ -108,6 +108,11 @@ describe('facility scoping (#195)', () => {
         expect(at(BRANCH, () => service.getAppointments('2026-11-02')).map((a: any) => a.patient_id)).toEqual([2]);
         expect(() => at(MAIN, () => service.transitionAppointment(branchAppt, 'cancelled', { reason: 'x' }, 10)))
             .toThrow('belongs to another facility');
+        // Check-in queues the patient in the booked department.
+        at(BRANCH, () => service.transitionAppointment(branchAppt, 'confirmed', {}, 10));
+        at(BRANCH, () => service.checkInAppointment(branchAppt, 10));
+        expect(db.prepare('SELECT facility_id, department_id FROM patient_queue WHERE patient_id = 2').get())
+            .toEqual({ facility_id: 2, department_id: 2 });
 
         at(BRANCH, () => service.saveAppointmentRequest({ id: 'req-1', patient_name: 'A', phone: '1', date: '2026-11-03', time: '09:00', reason: '' }));
         expect(at(MAIN, () => service.getAppointmentRequests())).toEqual([]);

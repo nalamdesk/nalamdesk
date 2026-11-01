@@ -236,6 +236,13 @@ describe('nalamdesk-server CLI', () => {
         const viaCreds = makeIo({ ...env, NALAMDESK_KEY_PROVIDER: 'systemd-creds', NALAMDESK_CREDENTIAL_NAME: 'nd-key', CREDENTIALS_DIRECTORY: credDir });
         expect(await runCli(['key', 'list'], viaCreds.io, deps)).toBe(0);
         expect(viaCreds.out.join('\n')).toMatch(/systemd-creds\s+\(unlocked with this\)/);
+
+        // key add never reuses the loaded credential: a TPM slot under the same name gets its own key.
+        const tpmPath = path.join(directory, 'credstore', 'nd-key-tpm');
+        const tpmAdd = makeIo({ ...env, NALAMDESK_KEY_PROVIDER: 'systemd-creds', NALAMDESK_CREDENTIAL_NAME: 'nd-key', CREDENTIALS_DIRECTORY: credDir });
+        expect(await runCli(['key', 'add', '--provider', 'tpm', '--credential-name', 'nd-key', '--credential-path', tpmPath], tpmAdd.io, deps)).toBe(0);
+        expect(tpmAdd.out.join('\n')).toContain('(sealed to this TPM)');
+        expect(fs.readFileSync(tpmPath).equals(fs.readFileSync(credentialPath))).toBe(false);
     });
 
     it('init with systemd credentials writes the credential and names the unit line', async () => {

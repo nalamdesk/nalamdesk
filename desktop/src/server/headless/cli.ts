@@ -167,7 +167,7 @@ function assertAvailable(store: DeviceKeyStore): DeviceKeyStore {
  * file, an encrypted systemd credential, a DPAPI blob) when none exists yet.
  */
 async function buildKeyStore(provider: KeyProviderConfig, io: CliIO, exec: KeyExec | undefined,
-    options: { create: boolean; passphraseEnv: string }): Promise<DeviceKeyStore> {
+    options: { create: boolean; passphraseEnv: string; reuseLoaded?: boolean }): Promise<DeviceKeyStore> {
     switch (provider.provider) {
         case KEY_FILE_PROVIDER: {
             if (options.create && !fs.existsSync(provider.keyPath)) {
@@ -188,7 +188,9 @@ async function buildKeyStore(provider: KeyProviderConfig, io: CliIO, exec: KeyEx
         case TPM_PROVIDER: {
             const tpm = provider.provider === TPM_PROVIDER;
             const loaded = new SystemdCredsStore({ name: provider.credentialName, tpm, env: io.env });
-            if (loaded.status().available || !options.create) return assertAvailable(loaded);
+            if (!options.create) return assertAvailable(loaded);
+            // init may adopt a credential the admin already loaded; key add always makes a new one.
+            if (options.reuseLoaded && loaded.status().available) return loaded;
             const store = SystemdCredsStore.create({ name: provider.credentialName, tpm, env: io.env, outputPath: provider.credentialPath, exec });
             io.out(`Created encrypted credential ${provider.credentialPath}${tpm ? ' (sealed to this TPM)' : ''}.`);
             io.out(`Add \`${credentialUnitLine(provider.credentialName, provider.credentialPath)}\` to the nalamdesk-server service unit.`);
@@ -209,7 +211,9 @@ async function buildKeyStore(provider: KeyProviderConfig, io: CliIO, exec: KeyEx
 
 /** Opens the configured key store. `create` makes new key material on first init. */
 export async function openKeyStore(config: ServerConfig, io: CliIO, options: { create?: boolean; exec?: KeyExec } = {}): Promise<DeviceKeyStore> {
-    return buildKeyStore(config.keyProvider, io, options.exec, { create: !!options.create, passphraseEnv: 'NALAMDESK_PASSPHRASE' });
+    return buildKeyStore(config.keyProvider, io, options.exec, {
+        create: !!options.create, passphraseEnv: 'NALAMDESK_PASSPHRASE', reuseLoaded: true
+    });
 }
 
 /** The provider settings for `key add`, from flags. New key material is always created. */

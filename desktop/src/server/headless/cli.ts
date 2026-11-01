@@ -513,6 +513,27 @@ export function runningServerPid(config: ServerConfig): number | null {
 }
 
 /**
+ * Moves a dead holder's lock aside. If another process reclaimed it and took
+ * the lock first, the file moved aside is theirs: it goes back and this
+ * process stops.
+ */
+function reclaimStaleLock(lock: string, deadHolder: number, config: ServerConfig): void {
+    const aside = `${lock}.stale-${crypto.randomUUID()}`;
+    try {
+        fs.renameSync(lock, aside);
+    } catch {
+        return; // Already moved by another process; retry the link.
+    }
+    const moved = readLockPid(aside);
+    if (moved !== deadHolder) {
+        try { fs.linkSync(aside, lock); } catch { /* the lock was taken again meanwhile */ }
+        fs.rmSync(aside, { force: true });
+        throw new Error(`A server or restore${moved ? ` (pid ${moved})` : ''} is already running on ${config.dataDir}.`);
+    }
+    fs.rmSync(aside, { force: true });
+}
+
+/**
  * Takes the data directory's run lock. The pid is written to a private file
  * first and published with link(), which fails if the lock exists, so the
  * lock never exists without its pid. Only a lock whose holder is known dead
@@ -534,11 +555,7 @@ function acquireRunLock(config: ServerConfig): void {
             if (holder === null || holder === process.pid || processAlive(holder)) {
                 throw new Error(`A server or restore${holder ? ` (pid ${holder})` : ''} is already running on ${config.dataDir}.`);
             }
-            const aside = `${lock}.stale-${crypto.randomUUID()}`;
-            try {
-                fs.renameSync(lock, aside);
-                fs.rmSync(aside, { force: true });
-            } catch { /* reclaimed by another process */ }
+            reclaimStaleLock(lock, holder, config);
         }
         throw new Error(`Could not take the run lock in ${config.dataDir}. Try again.`);
     } finally {

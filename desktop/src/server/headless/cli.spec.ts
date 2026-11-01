@@ -209,6 +209,18 @@ describe('nalamdesk-server CLI', () => {
         expect(FakeVault.state.slots).toHaveLength(1);
     });
 
+    it('status reconciles an interrupted init before reporting', async () => {
+        const reconcile = vi.spyOn(FakeVault.prototype, 'reconcileProvisioning');
+        const isSetup = vi.spyOn(FakeVault.prototype, 'isSetup');
+        const { io, out } = makeIo(env);
+        await runCli(['status'], io, deps);
+        expect(reconcile).toHaveBeenCalledWith(path.join(directory, 'data', 'nalamdesk.db'), path.join(directory, 'data'));
+        expect(reconcile.mock.invocationCallOrder[0]).toBeLessThan(isSetup.mock.invocationCallOrder[0]);
+        expect(out.join('\n')).toContain('Data directory:');
+        reconcile.mockRestore();
+        isSetup.mockRestore();
+    });
+
     it('prints usage for help and unknown commands', async () => {
         const help = makeIo(env);
         expect(await runCli(['help'], help.io, deps)).toBe(0);

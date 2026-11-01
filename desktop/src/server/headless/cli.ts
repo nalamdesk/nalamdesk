@@ -249,6 +249,8 @@ async function cmdStart(config: ServerConfig, io: CliIO, deps: CliDeps): Promise
 
 async function cmdStatus(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
+    // Roll back an interrupted init first, so status never reports a half-made vault.
+    probe.reconcileProvisioning(config.dbPath, config.dataDir);
     const state = probe.isSetup(config.dataDir);
     io.out(`Data directory: ${config.dataDir}`);
     io.out(`Vault: ${state.isSetup ? 'set up' : 'not set up'}`);

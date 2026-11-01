@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null || true
+fi
+# Patient data in /var/lib/nalamdesk is never deleted, even on purge.
+if [ "$1" = "purge" ]; then
+    echo "NalamDesk Server removed. The clinic's data is still in /var/lib/nalamdesk."
+fi
+exit 0

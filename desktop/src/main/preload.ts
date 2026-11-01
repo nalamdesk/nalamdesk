@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electron', {
     regenerateRecoveryCode: (password: string) => ipcRenderer.invoke('auth:regenerateRecoveryCode', { password }),
     rotateDeviceEnvelope: (currentPassword: string) => ipcRenderer.invoke('auth:rotateDeviceEnvelope', { currentPassword }),
     changeLoginPassword: (data: { currentPassword: string; newPassword: string }) => ipcRenderer.invoke('auth:changeLoginPassword', data),
+    connectToServer: (data: { serverUrl: string; code: string; deviceName: string }) => ipcRenderer.invoke('client:join', data),
     resetUserPassword: (data: { targetUserId: number; currentAdminPassword: string; temporaryPassword: string }) => ipcRenderer.invoke('auth:resetUserPassword', data),
     // ...
     backup: {

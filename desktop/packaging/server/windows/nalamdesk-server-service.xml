@@ -1,0 +1,25 @@
+<!--
+  WinSW service definition for NalamDesk Server. install-service.ps1 installs
+  it; WinSW (nalamdesk-server-service.exe) reads this file from its folder.
+-->
+<service>
+  <id>NalamDeskServer</id>
+  <name>NalamDesk Server</name>
+  <description>Runs the NalamDesk clinic database, API and browser UI for the clinic's computers.</description>
+  <executable>%BASE%\..\runtime\node.exe</executable>
+  <arguments>"%BASE%\..\app\dist\server\server\headless\main.js" start</arguments>
+  <workingdirectory>%BASE%\..\app</workingdirectory>
+  <env name="NALAMDESK_CONFIG" value="%ProgramData%\NalamDesk\server\server.json"/>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <!-- Ctrl+C first, so the server closes the database cleanly. -->
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <logpath>%ProgramData%\NalamDesk\server\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

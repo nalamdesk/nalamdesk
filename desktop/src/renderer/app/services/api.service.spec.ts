@@ -14,7 +14,7 @@ describe('DataService', () => {
             getToken: vi.fn(),
             getUser: vi.fn()
         };
-        service = new DataService(mockAuthService);
+        service = new DataService(mockAuthService, {} as any);
         vi.restoreAllMocks();
     });
 
@@ -40,54 +40,17 @@ describe('DataService', () => {
         });
     });
 
-    describe('invoke (Web Mode)', () => {
-        beforeEach(() => {
-            mockAuthService.getToken.mockReturnValue('valid-token');
+    describe('invoke (server client)', () => {
+        it('sends data calls through the server connection', async () => {
+            const server = { invoke: vi.fn().mockResolvedValue({ lastInsertRowid: 1 }) };
+            service = new DataService(mockAuthService, server as any);
+            await expect(service.invoke('addToQueue', { patientId: 42, priority: 2 })).resolves.toEqual({ lastInsertRowid: 1 });
+            expect(server.invoke).toHaveBeenCalledWith('addToQueue', [{ patientId: 42, priority: 2 }]);
         });
 
-        it('should call fetch with token', async () => {
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                headers: { get: () => 'application/json' },
-                json: async () => ({ data: 'remote' })
-            });
-            global.fetch = mockFetch;
-
-            const result = await service.invoke('remoteMethod', 123);
-            expect(result).toEqual({ data: 'remote' });
-            expect(mockFetch).toHaveBeenCalledWith('/api/ipc/remoteMethod', expect.objectContaining({
-                headers: expect.objectContaining({ 'Authorization': 'Bearer valid-token' }),
-                body: JSON.stringify([123])
-            }));
-        });
-
-        it('posts addToQueue with the same object payload Electron IPC receives', async () => {
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                headers: { get: () => 'application/json' },
-                json: async () => ({ lastInsertRowid: 1 })
-            });
-            global.fetch = mockFetch;
-
-            await service.invoke('addToQueue', { patientId: 42, priority: 2 });
-            expect(mockFetch).toHaveBeenCalledWith('/api/ipc/addToQueue', expect.objectContaining({
-                body: JSON.stringify([{ patientId: 42, priority: 2 }])
-            }));
-        });
-
-        it('should throw if not authenticated', async () => {
-            mockAuthService.getToken.mockReturnValue(null);
-            await expect(service.invoke('any')).rejects.toThrow('Not authenticated');
-        });
-
-        it('should handle server errors', async () => {
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: false,
-                headers: { get: () => 'application/json' },
-                json: async () => ({ error: 'Server Boom' })
-            });
-            global.fetch = mockFetch;
-
+        it('passes server errors on', async () => {
+            const server = { invoke: vi.fn().mockRejectedValue(new Error('Server Boom')) };
+            service = new DataService(mockAuthService, server as any);
             await expect(service.invoke('crash')).rejects.toThrow('Server Boom');
         });
     });

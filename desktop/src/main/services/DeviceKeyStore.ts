@@ -1,4 +1,16 @@
-import { safeStorage } from 'electron';
+import type { SafeStorage } from 'electron';
+
+type SafeStorageApi = Pick<SafeStorage, 'isEncryptionAvailable' | 'encryptString' | 'decryptString'> &
+    Partial<Pick<SafeStorage, 'getSelectedStorageBackend'>>;
+
+/**
+ * Electron is loaded on first use, not at import time: NalamDesk Server
+ * imports this module for its interface and helpers, and ships without Electron.
+ */
+function loadElectronSafeStorage(): SafeStorageApi {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return (require('electron') as typeof import('electron')).safeStorage;
+}
 
 export type DeviceKeyUnavailableReason = 'ENCRYPTION_UNAVAILABLE' | 'INSECURE_LINUX_BACKEND';
 
@@ -50,7 +62,7 @@ export function formatInsecureLinuxBackendMessage(): string {
     ].join(' ');
 }
 
-function selectedStorageBackend(): string | undefined {
+function selectedStorageBackend(safeStorage: SafeStorageApi): string | undefined {
     try {
         if (typeof safeStorage.getSelectedStorageBackend !== 'function') return undefined;
         return String(safeStorage.getSelectedStorageBackend());
@@ -60,9 +72,20 @@ function selectedStorageBackend(): string | undefined {
 }
 
 export class ElectronSafeStorageDeviceKeyStore implements DeviceKeyStore {
+    private cachedSafeStorage: SafeStorageApi | undefined;
+
+    constructor(safeStorage?: SafeStorageApi) {
+        this.cachedSafeStorage = safeStorage;
+    }
+
+    private get safeStorage(): SafeStorageApi {
+        this.cachedSafeStorage ??= loadElectronSafeStorage();
+        return this.cachedSafeStorage;
+    }
+
     status(): DeviceKeyStoreStatus {
-        const backend = selectedStorageBackend();
-        if (!safeStorage.isEncryptionAvailable()) {
+        const backend = selectedStorageBackend(this.safeStorage);
+        if (!this.safeStorage.isEncryptionAvailable()) {
             return {
                 available: false,
                 provider: 'electron-safe-storage',
@@ -85,12 +108,12 @@ export class ElectronSafeStorageDeviceKeyStore implements DeviceKeyStore {
 
     protect(value: Buffer): Buffer {
         this.assertAvailable();
-        return safeStorage.encryptString(value.toString('base64'));
+        return this.safeStorage.encryptString(value.toString('base64'));
     }
 
     unprotect(value: Buffer): Buffer {
         this.assertAvailable();
-        return Buffer.from(safeStorage.decryptString(value), 'base64');
+        return Buffer.from(this.safeStorage.decryptString(value), 'base64');
     }
 
     private assertAvailable(): void {

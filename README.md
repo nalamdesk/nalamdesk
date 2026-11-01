@@ -58,6 +58,10 @@ The cloud runs on AWS CDK in ap-south-1. Deploy the shared Core stacks first
 ([cloud/core](./cloud/core/README.md)), then the ABDM relay
 ([cloud/relay](./cloud/relay/README.md)).
 
+## Self-hosting NalamDesk Server
+Run the clinic's server with Docker, a Debian/Ubuntu package or a Windows
+service. See the **[self-hosting guide](./docs/self-hosting.md)**.
+
 ## Documentation
 See `cloud/documentation` for full architectural details.
 See **[Testing Strategy](./cloud/documentation/docs/developer-guide/testing-strategy.md)** for detailed Testing Architecture.

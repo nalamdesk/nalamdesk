@@ -100,6 +100,11 @@ describe('nalamdesk-server CLI', () => {
                 FakeVault.state.pending = 'AAAA-BBBB';
                 return 'AAAA-BBBB';
             },
+            importBackup: async (vault, _d, _backup, code) => {
+                if (code !== 'RCVR-CODE') throw new Error('INVALID_RECOVERY_CODE');
+                FakeVault.state.setup = true;
+                FakeVault.state.slots.push({ id: 'primary', provider: (vault as FakeVault).store.status().provider, store: (vault as FakeVault).store });
+            },
             startServer: async (_v, _d, _s, config) => {
                 started = { port: config.port, closed: false };
                 return { close: async () => { started!.closed = true; } };
@@ -162,6 +167,63 @@ describe('nalamdesk-server CLI', () => {
         expect(await runCli(['init'], again.io, deps)).toBe(1);
         expect(again.err.join()).toMatch(/already exists/);
         expect(provision).not.toHaveBeenCalled();
+    });
+
+    it('import restores a desktop backup with the recovery code, onto the server key provider', async () => {
+        const backup = path.join(directory, 'clinic.ndbackup');
+        fs.writeFileSync(backup, 'bundle');
+        const importBackup = vi.spyOn(deps, 'importBackup');
+        const { io, out } = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: ' rcvr-code ' });
+        expect(await runCli(['import', backup], io, deps)).toBe(0);
+        expect(importBackup.mock.calls[0][2]).toBe(backup);
+        expect(importBackup.mock.calls[0][3]).toBe('RCVR-CODE');
+        expect(fs.statSync(path.join(directory, 'data', 'vault.key')).size).toBe(32);
+        expect(audits).toEqual(['VAULT_IMPORT: Imported desktop backup clinic.ndbackup; unlocks with key-file']);
+        expect(out.join('\n')).toMatch(/same one the clinic already has/);
+
+        // The imported vault now starts with the server's key file.
+        expect(await runCli(['start'], makeIo(env).io, deps)).toBe(0);
+        expect(started?.closed).toBe(true);
+    });
+
+    it('import shows and confirms a new recovery code when the backup needed one', async () => {
+        const backup = path.join(directory, 'old.ndbackup');
+        fs.writeFileSync(backup, 'bundle');
+        deps.importBackup = async (vault) => {
+            FakeVault.state.setup = true;
+            FakeVault.state.slots.push({ id: 'primary', provider: 'key-file', store: (vault as FakeVault).store });
+            FakeVault.state.pending = 'NEWC-ODEX';
+        };
+        const { io, out } = makeIo(env, ['RCVR-CODE', 'newc-odex'], true);
+        expect(await runCli(['import', backup], io, deps)).toBe(0);
+        expect(out.join('\n')).toContain('New recovery code:  NEWC-ODEX');
+        expect(FakeVault.state.pending).toBeNull();
+    });
+
+    it('import refuses a wrong recovery code, a missing file, no code without a terminal, and an existing vault', async () => {
+        const backup = path.join(directory, 'clinic.ndbackup');
+        fs.writeFileSync(backup, 'bundle');
+        const wrong = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'NOPE-NOPE' });
+        expect(await runCli(['import', backup], wrong.io, deps)).toBe(1);
+        expect(wrong.err.join()).toMatch(/does not open this backup/);
+
+        const missing = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'RCVR-CODE' });
+        expect(await runCli(['import', path.join(directory, 'nope.ndbackup')], missing.io, deps)).toBe(1);
+        expect(missing.err.join()).toMatch(/does not exist/);
+
+        const usage = makeIo(env);
+        expect(await runCli(['import'], usage.io, deps)).toBe(2);
+
+        const headless = makeIo(env);
+        expect(await runCli(['import', backup], headless.io, deps)).toBe(1);
+        expect(headless.err.join()).toMatch(/NALAMDESK_RECOVERY_CODE_FILE/);
+
+        FakeVault.state.setup = true;
+        const importBackup = vi.spyOn(deps, 'importBackup');
+        const again = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'RCVR-CODE' });
+        expect(await runCli(['import', backup], again.io, deps)).toBe(1);
+        expect(again.err.join()).toMatch(/already exists/);
+        expect(importBackup).not.toHaveBeenCalled();
     });
 
     it('start unlocks, serves until shutdown, warns about an unconfirmed recovery code, then closes', async () => {

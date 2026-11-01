@@ -671,14 +671,14 @@ function facilityLoginResult(facilities: FacilityGrant[]) {
     };
 }
 
-async function handleAdminLogin(password: string): Promise<{ success: boolean; user?: any; error?: string } | null> {
+async function handleAdminLogin(password: string, requestedFacility?: unknown): Promise<{ success: boolean; user?: any; error?: string } | null> {
     const user = await databaseService.getUserByUsername('admin');
     if (!user) return null;
 
     const argon2 = await import('argon2');
     if (!await argon2.verify(user.password, password)) return null;
 
-    const facilities = startFacilitySession(user);
+    const facilities = startFacilitySession(user, requestedFacility);
     if (!facilities) return { success: false, error: 'NO_FACILITY_ACCESS' };
     initializeServices(databaseService.getSettings());
     return facilityLoginResult(facilities);
@@ -817,10 +817,9 @@ handleDb('auth:login', async (event, credentials) => {
 
         // 3. Admin fast path
         if (username === 'admin') {
-            const adminResult = await handleAdminLogin(password);
+            const adminResult = await handleAdminLogin(password, credentials.facilityId);
             if (adminResult) {
-                const user = sessionService.getUser();
-                auditLogin(true, username, user);
+                auditLogin(adminResult.success, username, adminResult.success ? sessionService.getUser() : null);
                 return adminResult;
             }
             // Fallthrough to standard validation if admin user missing from DB
@@ -831,7 +830,7 @@ handleDb('auth:login', async (event, credentials) => {
         const result = await databaseService.validateUser(username, password);
 
         if (result.success && result.user) {
-            const facilities = startFacilitySession(result.user);
+            const facilities = startFacilitySession(result.user, credentials.facilityId);
             if (!facilities) {
                 auditLogin(false, username, result.user);
                 return { success: false, error: 'NO_FACILITY_ACCESS' };

@@ -104,8 +104,9 @@ jobs:
         if: inputs.tag != ''
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          gh release upload "${{ inputs.tag }}" --repo nalamdesk/releases --clobber \
+          gh release upload "$RELEASE_TAG" --repo nalamdesk/releases --clobber \
             release/server/nalamdesk-server_*.deb release/server/nalamdesk-server-*-linux-*.tar.gz
 
   docker:
@@ -157,8 +158,14 @@ jobs:
             nalamdesk-server:test init --clinic-name "CI Clinic"
           docker run -d --name nd-init -p 3101:3000 -v nd-init:/var/lib/nalamdesk nalamdesk-server:test
           node packaging/server/smoke/login.js wait https://127.0.0.1:3101 || { docker logs nd-init; exit 1; }
-          code="$(docker exec nd-init nalamdesk-server join-code --name CI | grep -oE '[0-9A-Z]{5}(-[0-9A-Z]{5}){3}' | head -n 1)"
-          node packaging/server/smoke/login.js https://127.0.0.1:3101 admin "$work/admin-password" "$code" \
+          code=""
+          for _ in $(seq 1 10); do
+            code="$(docker exec nd-init nalamdesk-server join-code --name CI 2>/dev/null | grep -oE '[0-9A-Z]{5}(-[0-9A-Z]{5}){3}' | head -n 1 || true)"
+            [ -n "$code" ] && break
+            sleep 1
+          done
+          docker cp nd-init:/var/lib/nalamdesk/tls/server.crt "$work/nd-init.crt"
+          NODE_EXTRA_CA_CERTS="$work/nd-init.crt" node packaging/server/smoke/login.js https://127.0.0.1:3101 admin "$work/admin-password" "$code" \
             || { docker logs nd-init; exit 1; }
 
           docker run --rm -v nd-import:/var/lib/nalamdesk -v "$work:/run/secrets:ro" \
@@ -166,8 +173,14 @@ jobs:
             nalamdesk-server:test import /run/secrets/clinic.ndbackup
           docker run -d --name nd-import -p 3102:3000 -v nd-import:/var/lib/nalamdesk nalamdesk-server:test
           node packaging/server/smoke/login.js wait https://127.0.0.1:3102 || { docker logs nd-import; exit 1; }
-          code="$(docker exec nd-import nalamdesk-server join-code --name CI | grep -oE '[0-9A-Z]{5}(-[0-9A-Z]{5}){3}' | head -n 1)"
-          node packaging/server/smoke/login.js https://127.0.0.1:3102 admin "$work/desktop-password" "$code" \
+          code=""
+          for _ in $(seq 1 10); do
+            code="$(docker exec nd-import nalamdesk-server join-code --name CI 2>/dev/null | grep -oE '[0-9A-Z]{5}(-[0-9A-Z]{5}){3}' | head -n 1 || true)"
+            [ -n "$code" ] && break
+            sleep 1
+          done
+          docker cp nd-import:/var/lib/nalamdesk/tls/server.crt "$work/nd-import.crt"
+          NODE_EXTRA_CA_CERTS="$work/nd-import.crt" node packaging/server/smoke/login.js https://127.0.0.1:3102 admin "$work/desktop-password" "$code" \
             || { docker logs nd-import; exit 1; }
 
           # A clean stop closes the database within the grace period.
@@ -259,8 +272,13 @@ jobs:
           node packaging/server/smoke/login.js wait https://127.0.0.1:3000
           $ok = $LASTEXITCODE -eq 0
           if ($ok) {
-            $joinOutput = (& $cli join-code --name CI) -join "`n"
-            $code = [regex]::Match($joinOutput, '[0-9A-Z]{5}(-[0-9A-Z]{5}){3}').Value
+            $code = ''
+            for ($i = 0; $i -lt 10 -and -not $code; $i++) {
+              $joinOutput = (& $cli join-code --name CI 2>$null) -join "`n"
+              $code = [regex]::Match($joinOutput, '[0-9A-Z]{5}(-[0-9A-Z]{5}){3}').Value
+              if (-not $code) { Start-Sleep -Seconds 1 }
+            }
+            $env:NODE_EXTRA_CA_CERTS = Join-Path $env:ProgramData 'NalamDesk\server\tls\server.crt'
             node packaging/server/smoke/login.js https://127.0.0.1:3000 admin (Join-Path $work 'desktop-password') $code
             $ok = $LASTEXITCODE -eq 0
           }
@@ -283,6 +301,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           $zip = Get-ChildItem release/server/nalamdesk-server-*-windows-*.zip | Select-Object -First 1
-          gh release upload "${{ inputs.tag }}" --repo nalamdesk/releases --clobber $zip.FullName
+          gh release upload $env:RELEASE_TAG --repo nalamdesk/releases --clobber $zip.FullName

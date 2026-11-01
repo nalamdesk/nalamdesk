@@ -3,36 +3,37 @@
  * Smoke check for a running NalamDesk Server.
  *
  *   node login.js wait <base-url>
- *       Waits until the server answers /api/server/hello.
+ *       Waits until the server accepts connections on its port.
  *   node login.js <base-url> <username> <password-file> <join-code>
  *       Joins this "computer" with the join code, signs in with its device
  *       credential, and checks that the browser UI is served.
  *
- * The server's self-signed certificate is accepted: this runs on the server
- * itself, in CI.
+ * To trust the server's self-signed certificate, point NODE_EXTRA_CA_CERTS at
+ * <dataDir>/tls/server.crt (it exists once the server has started).
  */
 'use strict';
 
 const fs = require('fs');
-
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+const net = require('net');
 const DEVICE_HEADER = 'x-nalamdesk-device';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function canConnect(base) {
+    const url = new URL(base);
+    return new Promise((resolve) => {
+        const socket = net.connect(Number(url.port) || 443, url.hostname);
+        socket.once('connect', () => { socket.destroy(); resolve(true); });
+        socket.once('error', () => resolve(false));
+    });
+}
+
 async function waitForServer(base) {
-    let lastError;
     for (let attempt = 0; attempt < 60; attempt++) {
-        try {
-            const hello = await fetch(`${base}/api/server/hello`);
-            if (hello.ok) return;
-            lastError = new Error(`hello returned ${hello.status}`);
-        } catch (error) {
-            lastError = error;
-        }
+        if (await canConnect(base)) return;
         await sleep(1000);
     }
-    throw lastError;
+    throw new Error(`${base} did not start listening.`);
 }
 
 async function postJson(url, body, headers = {}) {

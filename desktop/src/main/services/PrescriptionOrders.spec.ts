@@ -63,10 +63,7 @@ describe('prescription orders', () => {
         db.prepare("INSERT INTO users (id, username, role, name, license_number, specialty, active) VALUES (11, 'dr_iyer', 'doctor', 'Dr. Iyer', 'TNMC-5678', 'Paediatrics', 1)").run();
         db.prepare("INSERT INTO users (id, username, role, name, active) VALUES (99, 'admin', 'admin', 'Admin', 1)").run();
         db.prepare("INSERT INTO patients (id, uuid, name, mobile, age, gender) VALUES (1, 'p-1', 'Meena', '9876543210', 34, 'Female')").run();
-        db.prepare("UPDATE settings SET clinic_name = 'Nalam Clinic', abdm_hfr_id = 'IN3310000001'").run();
-        if (!db.prepare('SELECT 1 FROM settings').get()) {
-            db.prepare("INSERT INTO settings (clinic_name, abdm_hfr_id) VALUES ('Nalam Clinic', 'IN3310000001')").run();
-        }
+        service.saveSettings({ clinic_name: 'Nalam Clinic', abdm_hfr_id: 'IN3310000001' });
     });
 
     afterEach(() => db.close());

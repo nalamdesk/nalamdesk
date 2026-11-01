@@ -1900,8 +1900,213 @@ export const MIGRATIONS = [
                 admin: [...careTeam, 'cancelPrescription']
             });
         }
+    },
+    {
+        version: 51,
+        up: (db: any) => migrateOrganisationsAndFacilities(db)
     }
 ];
+
+/** Facility-scoped operational tables (#195); existing rows land in facility 1. */
+export const FACILITY_SCOPED_TABLES = [
+    'patient_queue', 'appointments', 'appointment_requests', 'visits',
+    'invoices', 'payments', 'encounter_requests', 'abdm_share_tokens',
+    'abdm_hip_links', 'abdm_hip_link_requests', 'abdm_hip_consents',
+    'abdm_hip_requests', 'abdm_hip_discoveries', 'abdm_inbox', 'abdm_mailbox',
+    'cloud_device'
+];
+
+/**
+ * Settings columns that belong to a facility rather than the organisation.
+ * `settings` stays the organisation row; these now live on `facilities`.
+ * Keys are the settings names callers use; values are facility columns.
+ */
+export const FACILITY_SETTING_COLUMNS: Record<string, string> = {
+    clinic_name: 'name',
+    doctor_name: 'doctor_name',
+    logo_path: 'logo_path',
+    consultation_fee: 'consultation_fee',
+    abdm_hip_id: 'abdm_hip_id',
+    abdm_counter_id: 'abdm_counter_id',
+    abdm_hfr_id: 'abdm_hfr_id',
+    abdm_hpr_id: 'abdm_hpr_id',
+    abdm_hip_endpoint: 'abdm_hip_endpoint',
+    abdm_recipient_key: 'abdm_recipient_key'
+};
+
+function tableExists(db: any, name: string): boolean {
+    return !!db.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+}
+
+function addColumn(db: any, table: string, column: string) {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`); } catch (e) { /* already present */ }
+}
+
+/**
+ * Migration v51: organisation -> facility -> department (#195, ADR 0001).
+ * One vault is one organisation (the `settings` row). Every existing vault
+ * becomes a single `clinic` facility (id 1, code MAIN) with one General OPD
+ * department (id 1), and every operational row is stamped with facility 1,
+ * so single-clinic installs behave exactly as before.
+ */
+function migrateOrganisationsAndFacilities(db: any) {
+    console.log('Running Migration v51 (organisations and facilities)...');
+    const hasSettings = tableExists(db, 'settings');
+    const hasUsers = tableExists(db, 'users')
+        && (db.prepare('PRAGMA table_info(users)').all() as any[]).some(c => c.name === 'role');
+    if (hasSettings) addColumn(db, 'settings', 'organisation_name TEXT');
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS facilities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            name TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'clinic' CHECK (kind IN ('clinic', 'hospital')),
+            active INTEGER NOT NULL DEFAULT 1,
+            doctor_name TEXT,
+            logo_path TEXT,
+            address TEXT,
+            phone TEXT,
+            consultation_fee REAL DEFAULT 0,
+            abdm_hfr_id TEXT,
+            abdm_hip_id TEXT,
+            abdm_counter_id TEXT,
+            abdm_hpr_id TEXT,
+            abdm_hip_endpoint TEXT,
+            abdm_recipient_key TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_facilities_hfr ON facilities(abdm_hfr_id)
+        WHERE abdm_hfr_id IS NOT NULL AND abdm_hfr_id <> ''`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_facilities_hip ON facilities(abdm_hip_id)
+        WHERE abdm_hip_id IS NOT NULL AND abdm_hip_id <> ''`);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS departments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            facility_id INTEGER NOT NULL REFERENCES facilities(id),
+            code TEXT NOT NULL COLLATE NOCASE,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'opd'
+                CHECK (kind IN ('opd', 'ipd', 'emergency', 'diagnostics', 'pharmacy', 'other')),
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (facility_id, code)
+        );
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS user_facility_roles (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            facility_id INTEGER NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+            role TEXT NOT NULL,
+            granted_by INTEGER REFERENCES users(id),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, facility_id)
+        );
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_user_facility_roles_facility
+        ON user_facility_roles(facility_id)`);
+
+    // Gap-free per-facility counters (invoice, receipt), same pattern as care_context_seq.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS facility_sequences (
+            facility_id INTEGER NOT NULL REFERENCES facilities(id),
+            kind TEXT NOT NULL,
+            period TEXT NOT NULL DEFAULT '',
+            last_no INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (facility_id, kind, period)
+        );
+    `);
+
+    // Inpatient structure; screens and admissions arrive with the IPD milestone.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS wards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            facility_id INTEGER NOT NULL REFERENCES facilities(id),
+            department_id INTEGER REFERENCES departments(id),
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'general',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (facility_id, name)
+        );
+    `);
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS beds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ward_id INTEGER NOT NULL REFERENCES wards(id),
+            code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'available'
+                CHECK (status IN ('available', 'occupied', 'cleaning', 'blocked')),
+            active INTEGER NOT NULL DEFAULT 1,
+            UNIQUE (ward_id, code)
+        );
+    `);
+
+    // Facility 1 takes the clinic's identity, letterhead and ABDM HIP fields.
+    const settings = (hasSettings ? db.prepare('SELECT * FROM settings LIMIT 1').get() ?? {} : {}) as Record<string, any>;
+    const facilityColumns = Object.values(FACILITY_SETTING_COLUMNS);
+    const values = Object.keys(FACILITY_SETTING_COLUMNS).map(key => {
+        const value = settings[key];
+        if (key === 'clinic_name') return value ?? '';
+        if (key === 'consultation_fee') return Number(value || 0);
+        return value ?? null;
+    });
+    db.prepare(`INSERT OR IGNORE INTO facilities (id, code, kind, ${facilityColumns.join(', ')})
+        VALUES (1, 'MAIN', 'clinic', ${facilityColumns.map(() => '?').join(', ')})`).run(...values);
+    db.prepare(`INSERT OR IGNORE INTO departments (id, facility_id, code, name, kind)
+        VALUES (1, 1, 'OPD', 'General OPD', 'opd')`).run();
+    if (hasSettings) {
+        db.exec(`UPDATE settings SET organisation_name = clinic_name
+            WHERE organisation_name IS NULL OR organisation_name = ''`);
+    }
+
+    for (const table of FACILITY_SCOPED_TABLES) {
+        if (!tableExists(db, table)) continue;
+        // SQLite cannot add a REFERENCES column with a non-null default;
+        // DatabaseService enforces the facility reference.
+        addColumn(db, table, 'facility_id INTEGER NOT NULL DEFAULT 1');
+    }
+    for (const table of ['patient_queue', 'appointments', 'visits']) {
+        if (!tableExists(db, table)) continue;
+        addColumn(db, table, 'department_id INTEGER');
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_facility ON ${table}(facility_id, department_id)`);
+    }
+    if (tableExists(db, 'invoices')) db.exec(`CREATE INDEX IF NOT EXISTS idx_invoices_facility ON invoices(facility_id, created_at)`);
+    if (tableExists(db, 'payments')) db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_facility ON payments(facility_id, created_at)`);
+    if (tableExists(db, 'cloud_device')) db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_device_facility ON cloud_device(facility_id)`);
+    if (tableExists(db, 'visits')) addColumn(db, 'visits', `encounter_class TEXT NOT NULL DEFAULT 'OPD' CHECK (encounter_class IN ('OPD', 'IPD', 'EMER'))`);
+    if (tableExists(db, 'audit_logs')) addColumn(db, 'audit_logs', 'facility_id INTEGER');
+    if (!hasUsers) return;
+
+    // Roles move to per-facility grants; admins become organisation admins.
+    addColumn(db, 'users', 'org_admin INTEGER NOT NULL DEFAULT 0');
+    db.exec(`UPDATE users SET org_admin = 1 WHERE role = 'admin'`);
+    db.exec(`INSERT OR IGNORE INTO user_facility_roles (user_id, facility_id, role)
+        SELECT id, 1, role FROM users WHERE role IS NOT NULL AND role <> ''`);
+    // Until staff management grants roles per facility, a single-facility
+    // vault mirrors users.role into its facility-1 grant automatically.
+    db.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_users_role_mirror_insert
+        AFTER INSERT ON users
+        WHEN NEW.role IS NOT NULL AND NEW.role <> '' AND (SELECT COUNT(*) FROM facilities) = 1
+        BEGIN
+            INSERT OR REPLACE INTO user_facility_roles (user_id, facility_id, role) VALUES (NEW.id, 1, NEW.role);
+            UPDATE users SET org_admin = (NEW.role = 'admin') WHERE id = NEW.id;
+        END;
+    `);
+    db.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_users_role_mirror_update
+        AFTER UPDATE OF role ON users
+        WHEN NEW.role IS NOT NULL AND NEW.role <> '' AND (SELECT COUNT(*) FROM facilities) = 1
+        BEGIN
+            INSERT OR REPLACE INTO user_facility_roles (user_id, facility_id, role) VALUES (NEW.id, 1, NEW.role);
+            UPDATE users SET org_admin = (NEW.role = 'admin') WHERE id = NEW.id;
+        END;
+    `);
+}
 
 /**
  * Essential outpatient conditions (issue #56 seed core).

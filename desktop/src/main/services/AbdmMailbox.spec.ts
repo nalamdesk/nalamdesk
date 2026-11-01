@@ -89,7 +89,7 @@ describe('live HIU consent through the relay on a real database (#164)', () => {
         const service = new DatabaseService();
         service.setDb(db);
         await service.migrate();
-        db.prepare(`INSERT INTO settings (clinic_name, doctor_name, abdm_hpr_id) VALUES ('Clinic', 'Dr. Asha', '71-0001')`).run();
+        service.saveSettings({ clinic_name: 'Clinic', doctor_name: 'Dr. Asha', abdm_hpr_id: '71-0001' });
         const calls: Array<{ path: string; body: any; requestId?: string }> = [];
         let n = 0;
         const hiu = new HiuService({

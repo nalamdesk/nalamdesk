@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
 import type { KeySlotSummary } from '../../main/services/SecurityService';
-import { parseArgs, runCli, type CliDatabase, type CliDeps, type CliIO, type CliVault } from './cli';
+import { parseArgs, runCli, type CliDatabase, type CliDeps, type CliIO, type CliJoinedDevice, type CliVault } from './cli';
 
 /** A vault that records what the CLI asked of it; slots carry their store. */
 class FakeVault implements CliVault {
@@ -76,6 +76,8 @@ describe('nalamdesk-server CLI', () => {
     let started: { port: number; closed: boolean } | null;
     let deps: CliDeps;
     let backupCalls: { created: string[]; restored: Array<[string, string]>; restoreError: Error | null };
+    let devices: CliJoinedDevice[];
+    let joinCodes: { deviceName?: string | null; ttlMs: number }[];
 
     beforeEach(() => {
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nalamdesk-cli-'));
@@ -84,6 +86,8 @@ describe('nalamdesk-server CLI', () => {
         audits = [];
         started = null;
         backupCalls = { created: [], restored: [], restoreError: null };
+        devices = [];
+        joinCodes = [];
         const database = (): CliDatabase => ({
             setDb: () => { },
             migrate: async () => { },
@@ -97,6 +101,11 @@ describe('nalamdesk-server CLI', () => {
                 FakeVault.state.slots.push({ id: 'primary', provider: (vault as FakeVault).store.status().provider, store: (vault as FakeVault).store });
                 FakeVault.state.pending = 'AAAA-BBBB';
                 return 'AAAA-BBBB';
+            },
+            importBackup: async (vault, _d, _backup, code) => {
+                if (code !== 'RCVR-CODE') throw new Error('INVALID_RECOVERY_CODE');
+                FakeVault.state.setup = true;
+                FakeVault.state.slots.push({ id: 'primary', provider: (vault as FakeVault).store.status().provider, store: (vault as FakeVault).store });
             },
             startServer: async (_v, _d, _s, config) => {
                 started = { port: config.port, closed: false };
@@ -115,7 +124,19 @@ describe('nalamdesk-server CLI', () => {
                     return { preRestoreSnapshot: '/snap.ndbackup' };
                 }
             }),
-            waitForShutdown: async () => { }
+            waitForShutdown: async () => { },
+            createDeviceAdmin: () => ({
+                issueJoinCode: (input) => {
+                    joinCodes.push(input);
+                    return { code: 'ND1-ABCD-EFGH', expiresAt: Date.UTC(2026, 10, 1, 12, 0), deviceName: input.deviceName ?? null, pin: 'It pins the self-signed certificate (SHA-256 abc).' };
+                },
+                listDevices: () => devices,
+                revokeDevice: (id) => {
+                    const device = devices.find((d) => d.id === id && !d.revokedAt);
+                    if (device) device.revokedAt = Date.UTC(2026, 10, 1, 13, 0);
+                    return !!device;
+                }
+            })
         };
     });
     afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -161,6 +182,63 @@ describe('nalamdesk-server CLI', () => {
         expect(await runCli(['init'], again.io, deps)).toBe(1);
         expect(again.err.join()).toMatch(/already exists/);
         expect(provision).not.toHaveBeenCalled();
+    });
+
+    it('import restores a desktop backup with the recovery code, onto the server key provider', async () => {
+        const backup = path.join(directory, 'clinic.ndbackup');
+        fs.writeFileSync(backup, 'bundle');
+        const importBackup = vi.spyOn(deps, 'importBackup');
+        const { io, out } = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: ' rcvr-code ' });
+        expect(await runCli(['import', backup], io, deps)).toBe(0);
+        expect(importBackup.mock.calls[0][2]).toBe(backup);
+        expect(importBackup.mock.calls[0][3]).toBe('RCVR-CODE');
+        expect(fs.statSync(path.join(directory, 'data', 'vault.key')).size).toBe(32);
+        expect(audits).toEqual(['VAULT_IMPORT: Imported desktop backup clinic.ndbackup; unlocks with key-file']);
+        expect(out.join('\n')).toMatch(/same one the clinic already has/);
+
+        // The imported vault now starts with the server's key file.
+        expect(await runCli(['start'], makeIo(env).io, deps)).toBe(0);
+        expect(started?.closed).toBe(true);
+    });
+
+    it('import shows and confirms a new recovery code when the backup needed one', async () => {
+        const backup = path.join(directory, 'old.ndbackup');
+        fs.writeFileSync(backup, 'bundle');
+        deps.importBackup = async (vault) => {
+            FakeVault.state.setup = true;
+            FakeVault.state.slots.push({ id: 'primary', provider: 'key-file', store: (vault as FakeVault).store });
+            FakeVault.state.pending = 'NEWC-ODEX';
+        };
+        const { io, out } = makeIo(env, ['RCVR-CODE', 'newc-odex'], true);
+        expect(await runCli(['import', backup], io, deps)).toBe(0);
+        expect(out.join('\n')).toContain('New recovery code:  NEWC-ODEX');
+        expect(FakeVault.state.pending).toBeNull();
+    });
+
+    it('import refuses a wrong recovery code, a missing file, no code without a terminal, and an existing vault', async () => {
+        const backup = path.join(directory, 'clinic.ndbackup');
+        fs.writeFileSync(backup, 'bundle');
+        const wrong = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'NOPE-NOPE' });
+        expect(await runCli(['import', backup], wrong.io, deps)).toBe(1);
+        expect(wrong.err.join()).toMatch(/does not open this backup/);
+
+        const missing = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'RCVR-CODE' });
+        expect(await runCli(['import', path.join(directory, 'nope.ndbackup')], missing.io, deps)).toBe(1);
+        expect(missing.err.join()).toMatch(/does not exist/);
+
+        const usage = makeIo(env);
+        expect(await runCli(['import'], usage.io, deps)).toBe(2);
+
+        const headless = makeIo(env);
+        expect(await runCli(['import', backup], headless.io, deps)).toBe(1);
+        expect(headless.err.join()).toMatch(/NALAMDESK_RECOVERY_CODE_FILE/);
+
+        FakeVault.state.setup = true;
+        const importBackup = vi.spyOn(deps, 'importBackup');
+        const again = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'RCVR-CODE' });
+        expect(await runCli(['import', backup], again.io, deps)).toBe(1);
+        expect(again.err.join()).toMatch(/already exists/);
+        expect(importBackup).not.toHaveBeenCalled();
     });
 
     it('start unlocks, serves until shutdown, warns about an unconfirmed recovery code, then closes', async () => {
@@ -281,6 +359,47 @@ describe('nalamdesk-server CLI', () => {
         expect(FakeVault.state.slots).toHaveLength(1);
     });
 
+    it('join-code issues a one-time code for a named computer and audits it', async () => {
+        await runCli(['init'], makeIo({ ...env, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' }).io, deps);
+        const { io, out } = makeIo(env);
+        expect(await runCli(['join-code', '--name', 'Reception PC', '--minutes', '30'], io, deps)).toBe(0);
+        expect(joinCodes).toEqual([{ deviceName: 'Reception PC', ttlMs: 30 * 60_000 }]);
+        expect(out.join('\n')).toContain('  ND1-ABCD-EFGH');
+        expect(out.join('\n')).toContain('until 2026-11-01T12:00:00.000Z');
+        expect(out.at(-1)).toBe('It pins the self-signed certificate (SHA-256 abc).');
+        expect(audits.at(-1)).toBe('JOIN_CODE_ISSUE: Issued a join code for "Reception PC" from the server console');
+
+        const bad = makeIo(env);
+        expect(await runCli(['join-code', '--minutes', '0'], bad.io, deps)).toBe(1);
+        expect(bad.err.join()).toMatch(/--minutes must be a whole number from 1 to 1440/);
+        expect(joinCodes).toHaveLength(1);
+    });
+
+    it('devices list and revoke manage joined computers', async () => {
+        await runCli(['init'], makeIo({ ...env, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' }).io, deps);
+        const empty = makeIo(env);
+        expect(await runCli(['devices', 'list'], empty.io, deps)).toBe(0);
+        expect(empty.out.join()).toMatch(/No computers have joined yet/);
+
+        devices = [{ id: 'dev_1', name: 'Reception PC', joinedAt: Date.UTC(2026, 10, 1, 9, 0), lastSeenAt: Date.UTC(2026, 10, 1, 10, 30), lastIp: '192.168.1.20', revokedAt: null }];
+        const list = makeIo(env);
+        expect(await runCli(['devices', 'list'], list.io, deps)).toBe(0);
+        expect(list.out).toEqual(['dev_1  "Reception PC"  joined 2026-11-01 09:00  last seen 2026-11-01 10:30  192.168.1.20']);
+
+        const revoke = makeIo(env);
+        expect(await runCli(['devices', 'revoke', 'dev_1'], revoke.io, deps)).toBe(0);
+        expect(revoke.out.join()).toContain('Revoked "Reception PC" dev_1');
+        expect(audits.at(-1)).toBe('DEVICE_REVOKE: Revoked computer dev_1 from the server console');
+
+        const again = makeIo(env);
+        expect(await runCli(['devices', 'revoke', 'dev_1'], again.io, deps)).toBe(1);
+        expect(again.err.join()).toMatch(/already revoked/);
+        const unknown = makeIo(env);
+        expect(await runCli(['devices', 'revoke', 'dev_9'], unknown.io, deps)).toBe(1);
+        expect(unknown.err.join()).toMatch(/No joined computer/);
+        expect(await runCli(['devices'], makeIo(env).io, deps)).toBe(2);
+    });
+
     it('status reconciles an interrupted init before reporting', async () => {
         const reconcile = vi.spyOn(FakeVault.prototype, 'reconcileProvisioning');
         const isSetup = vi.spyOn(FakeVault.prototype, 'isSetup');
@@ -341,13 +460,14 @@ describe('nalamdesk-server CLI', () => {
         expect(audits[0]).toMatch(/^BACKUP_RESTORE: /);
     });
 
-    it('restore onto an empty data directory creates the key file first', async () => {
+    it('restore points an empty data directory to import', async () => {
         const bundle = path.join(directory, 'clinic.ndbackup');
         fs.writeFileSync(bundle, 'bundle');
-        const { io } = makeIo(env, ['eeee-ffff'], true);
-        expect(await runCli(['restore', bundle], io, deps)).toBe(0);
-        expect(fs.existsSync(path.join(directory, 'data', 'vault.key'))).toBe(true);
-        expect(backupCalls.restored).toEqual([[bundle, 'EEEE-FFFF']]);
+        const { io, err } = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'eeee-ffff' });
+        expect(await runCli(['restore', bundle], io, deps)).toBe(1);
+        expect(err.join()).toMatch(/nalamdesk-server import/);
+        expect(backupCalls.restored).toEqual([]);
+        expect(fs.existsSync(path.join(directory, 'data', 'server.pid'))).toBe(false);
     });
 
     it('restore checks its input, the recovery code and a running server', async () => {
@@ -362,6 +482,7 @@ describe('nalamdesk-server CLI', () => {
         expect(await runCli(['restore', bundle], headless.io, deps)).toBe(1);
         expect(headless.err.join()).toMatch(/NALAMDESK_RECOVERY_CODE_FILE/);
 
+        await initVault();
         backupCalls.restoreError = new Error('INVALID_RECOVERY_CODE');
         const wrong = makeIo({ ...env, NALAMDESK_RECOVERY_CODE: 'x' });
         expect(await runCli(['restore', bundle], wrong.io, deps)).toBe(1);

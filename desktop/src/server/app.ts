@@ -9,6 +9,7 @@ import * as dotenv from 'dotenv';
 import * as http from 'node:http';
 import { loadDevelopmentEnv } from '../shared/load-env';
 import { invokeDbMethod } from '../shared/ipc-db-args';
+import { DEFAULT_FACILITY_ID, runWithContext } from '../shared/request-context';
 import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmRelayService, abdmConfigView } from '../main/services/AbdmRelayService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
@@ -120,19 +121,25 @@ export class ApiServer {
         if (afterDbMethod) this.afterDbMethod = afterDbMethod;
     }
 
-    private async handleServiceMethod(method: ClinicMethod, name: string, args: unknown[], user: any, reply: FastifyReply) {
+    private async handleServiceMethod(method: ClinicMethod, name: string, args: unknown[], tokenUser: any, reply: FastifyReply) {
+        // The role comes from the user's grant in the request's facility, never the token (#195).
+        const facilityId = Number(tokenUser?.facility_id) || DEFAULT_FACILITY_ID;
+        const context = { userId: Number(tokenUser?.id), facilityId };
+        let user: any = tokenUser;
         try {
+            const role = tokenUser ? this.dbService.getFacilityRole(Number(tokenUser.id), facilityId) : null;
+            if (tokenUser) user = { ...tokenUser, role: role ?? 'no-access' };
             assertMethodAccess(method.access, user);
         } catch (error) {
             const status = error instanceof MethodAccessError ? error.status : 403;
             if (status === 403) {
                 try {
-                    (this.dbService as any).auditDenial({ user, method: name, channel: 'lan' });
+                    runWithContext(context, () => (this.dbService as any).auditDenial({ user, method: name, channel: 'lan' }));
                 } catch { /* audit must not mask the denial */ }
             }
             return reply.code(status).send({ error: status === 401 ? 'Unauthorized' : 'Forbidden' });
         }
-        const run = async () => method.run(args, user);
+        const run = async () => runWithContext(context, () => method.run(args, user));
         try {
             const result = await (method.selfFenced ? run() : this.dbService.runWork(run));
             this.events.publishForMethod(name);
@@ -999,22 +1006,37 @@ export class ApiServer {
             throw error;
         }
         try {
-            // 2. RBAC Enforcement (single Cedar engine, shared with Electron IPC)
-            if (!this.checkPermission(user.role, method, user.id)) {
+            // 2. The request runs in one facility: the session's, or facility 1
+            // for sessions minted before facilities. The role checked is the
+            // user's role there, never the one carried in the token (#195).
+            const facilityId = Number(user.facility_id) || DEFAULT_FACILITY_ID;
+            const context = { userId: Number(user.id), facilityId };
+            // Denials are audited in the request's facility, with the role checked there.
+            const auditDenied = (role: string) => {
                 try {
-                    (this.dbService as any).auditDenial({ user, method, channel: 'lan' });
+                    runWithContext(context, () => (this.dbService as any).auditDenial({ user: { ...user, role }, method, channel: 'lan' }));
                 } catch { /* audit must not mask the denial */ }
+            };
+            const role = this.dbService.getFacilityRole(Number(user.id), facilityId);
+            if (!role) {
+                auditDenied('no-access');
+                return reply.code(403).send({ error: 'Forbidden' });
+            }
+
+            // 3. RBAC Enforcement (single Cedar engine, shared with Electron IPC)
+            if (!this.checkPermission(role, method, user.id)) {
+                auditDenied(role);
                 return reply.code(403).send({ error: 'Forbidden' });
             }
 
             const dbAny = this.dbService as any;
 
-            // 3. Execution: ABDM service methods first, then DatabaseService.
+            // 4. Execution: ABDM service methods first, then DatabaseService.
             // Same arg unpacking contract as Electron IPC.
             const deviceId = this.deviceIdOf(request);
             if (ABDM_SERVICE_METHODS.has(method)) {
                 try {
-                    const result = await auditContext.run({ deviceId }, () => this.invokeAbdmMethod(method, args, user));
+                    const result = await auditContext.run({ deviceId }, () => runWithContext(context, () => this.invokeAbdmMethod(method, args, user)));
                     this.events.publishForMethod(method);
                     return result;
                 } catch (e: any) {
@@ -1024,7 +1046,7 @@ export class ApiServer {
             }
             if (typeof dbAny[method] === 'function') {
                 try {
-                    const result = await auditContext.run({ deviceId }, () => invokeDbMethod(dbAny, method, args, user.id));
+                    const result = await auditContext.run({ deviceId }, () => invokeDbMethod(dbAny, method, args, context));
                     this.events.publishForMethod(method);
                     if (method === 'saveUserOverride' || method === 'deleteUserOverride'
                         || method === 'saveRole' || method === 'deleteRole') {

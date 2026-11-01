@@ -1,0 +1,33 @@
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+    if ! getent group nalamdesk >/dev/null; then
+        addgroup --system nalamdesk >/dev/null
+    fi
+    mkdir -p /var/lib/nalamdesk
+    if ! getent passwd nalamdesk >/dev/null; then
+        adduser --system --ingroup nalamdesk --home /var/lib/nalamdesk --no-create-home \
+            --shell /usr/sbin/nologin --gecos "NalamDesk Server" nalamdesk >/dev/null
+    fi
+    install -d -o nalamdesk -g nalamdesk -m 0700 /var/lib/nalamdesk
+    chown root:nalamdesk /etc/nalamdesk /etc/nalamdesk/server.json
+    chmod 0750 /etc/nalamdesk
+    chmod 0640 /etc/nalamdesk/server.json
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null || true
+        # Enabled, not started: the vault does not exist until `init` or `import`.
+        systemctl enable nalamdesk-server.service >/dev/null || true
+        if [ -f /var/lib/nalamdesk/security.json ]; then
+            # An upgrade: restart on the new version. Migrations run on start.
+            systemctl restart nalamdesk-server.service || true
+        fi
+    fi
+    if [ ! -f /var/lib/nalamdesk/security.json ]; then
+        echo "NalamDesk Server is installed. Next, create the vault:"
+        echo "  sudo nalamdesk-server init --clinic-name \"Your Clinic\""
+        echo "or move a desktop clinic here:"
+        echo "  sudo nalamdesk-server import /path/to/backup.ndbackup"
+        echo "then: sudo systemctl start nalamdesk-server"
+    fi
+fi
+exit 0

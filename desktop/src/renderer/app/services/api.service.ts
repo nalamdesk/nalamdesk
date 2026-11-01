@@ -1,12 +1,13 @@
 import { Injectable } from '@angular/core';
 import { AuthService } from './auth.service';
+import { ServerConnectionService } from './server-connection.service';
 
 @Injectable({
     providedIn: 'root'
 })
 export class DataService {
 
-    constructor(private auth: AuthService) { }
+    constructor(private auth: AuthService, private server: ServerConnectionService) { }
 
     async invoke<T = any>(method: string, ...args: any[]): Promise<T> {
         if (window.electron) {
@@ -34,35 +35,9 @@ export class DataService {
         throw new Error(`Method ${method} not implemented locally`);
     }
 
-    private async invokeRemote<T>(method: string, args: any[]): Promise<T> {
-        const token = this.auth.getToken();
-        if (!token) {
-            throw new Error('Not authenticated');
-        }
-
-        const response = await fetch(`/api/ipc/${method}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify(args)
-        });
-
-        const data = await this.parseResponse(response);
-
-        if (!response.ok) {
-            throw new Error(data?.error || data || 'Server Error');
-        }
-
-        return data;
-    }
-
-    private async parseResponse(response: Response): Promise<any> {
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-            return response.json();
-        }
-        return response.text();
+    private invokeRemote<T>(method: string, args: any[]): Promise<T> {
+        // Browser client and the app in client mode (#194): tokens, refresh,
+        // the handshake and reconnects live in the server connection.
+        return this.server.invoke<T>(method, args);
     }
 }

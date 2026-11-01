@@ -12,6 +12,7 @@ import { ColDef, ValueGetterParams } from 'ag-grid-community';
 import { DatePickerComponent } from '../shared/components/date-picker/date-picker.component';
 import { CloudLinkComponent } from './cloud-link.component';
 import { CatalogSettingsComponent } from './catalog-settings.component';
+import { JoinedComputersComponent } from './joined-computers.component';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 import { METHOD_CATALOG, ROLE_TEMPLATES, HANDLER_GATED_ACTIONS } from '../../../shared/access';
@@ -20,7 +21,7 @@ import { AppUpdateService } from '../services/update.service';
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, SharedTableComponent, ActionRendererComponent, DatePickerComponent, CatalogSettingsComponent, CloudLinkComponent],
+  imports: [CommonModule, FormsModule, SharedTableComponent, ActionRendererComponent, DatePickerComponent, CatalogSettingsComponent, CloudLinkComponent, JoinedComputersComponent],
   templateUrl: './settings.component.html',
   styles: [`
     :host { display: block; height: 100%; }

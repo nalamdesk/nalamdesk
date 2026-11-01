@@ -31,6 +31,9 @@ import { verifyPersistedActiveAdmin } from './services/AdminCredentialVerifier';
 import { acknowledgeRecoveryCodeForActiveAdmin } from './services/RecoveryCodeAcknowledgement';
 import { ApiServer } from '../server/app';
 import { invokeDbMethod } from '../shared/ipc-db-args';
+import { registerJoinIpc } from './client/join-ipc';
+import { safeStorageCipher } from './client/electron-env';
+import { setFallbackFacility } from '../shared/request-context';
 import { parseClinicalBundle } from '../shared/fhir/parser';
 import {
     DEV_APP_NAME,
@@ -208,6 +211,8 @@ const apiServer = new ApiServer(
     { relay: abdmRelayService, abha: abdmAbhaService, hiu: hiuService, hip: hipService }
 );
 const sessionService = new SessionService();
+// Desktop IPC calls run in the signed-in session's facility (#195).
+setFallbackFacility(() => sessionService.getUser()?.facilityId);
 const backupService = new BackupService(databaseService, googleDriveService, securityService, userDataPath, {
     appVersion: app.getVersion(),
     // Restore validation must not reconfigure or close the live vault.
@@ -492,6 +497,17 @@ ipcMain.handle('auth:acknowledgeRecoveryCode', async (_event, { recoveryCode }) 
     const user = sessionService.getUser();
     acknowledgeRecoveryCodeForActiveAdmin(user, databaseService, securityService, recoveryCode);
     return { success: true };
+});
+
+// First run: join a NalamDesk Server instead of creating a vault (#194).
+registerJoinIpc(ipcMain, {
+    userDataPath,
+    cipher: safeStorageCipher,
+    canJoin: () => !securityService.isSetup(userDataPath).isSetup,
+    restart: () => {
+        app.relaunch();
+        app.exit(0);
+    }
 });
 
 ipcMain.handle('clipboard:writeText', (event, text) => {

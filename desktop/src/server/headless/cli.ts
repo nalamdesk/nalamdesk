@@ -71,15 +71,40 @@ export interface CliBackups {
     restoreLocalBackup(bundlePath: string, recoveryCode: string): Promise<{ preRestoreSnapshot?: string }>;
 }
 
+/** A computer joined to this server, as `devices list` shows it. */
+export interface CliJoinedDevice {
+    id: string;
+    name: string;
+    joinedAt: number;
+    lastSeenAt: number | null;
+    lastIp: string | null;
+    revokedAt: number | null;
+}
+
+/** Join codes and joined computers, against the open vault. */
+export interface CliDeviceAdmin {
+    /** `pin` says which certificate the code pins, as the running server serves it. */
+    issueJoinCode(input: { deviceName?: string | null; ttlMs: number }): { code: string; expiresAt: number; deviceName: string | null; pin: string };
+    listDevices(): CliJoinedDevice[];
+    revokeDevice(id: string): boolean;
+}
+
+export const JOIN_CODE_DEFAULT_MINUTES = 15;
+export const JOIN_CODE_MAX_MINUTES = 24 * 60;
+
 export interface CliDeps {
     createVault(store: DeviceKeyStore): CliVault;
     createDatabase(): CliDatabase;
     provision(vault: CliVault, database: CliDatabase, adminPassword: string, clinic: Record<string, unknown>,
         config: ServerConfig): Promise<string>;
+    /** Restores a desktop backup bundle into an empty data directory and unlocks it. */
+    importBackup(vault: CliVault, database: CliDatabase, backupPath: string, recoveryCode: string,
+        store: DeviceKeyStore, config: ServerConfig): Promise<void>;
     startServer(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig, io: CliIO): Promise<RunningServer>;
     createBackups(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig): CliBackups;
     /** Resolves when the process is asked to stop. */
     waitForShutdown(): Promise<void>;
+    createDeviceAdmin(database: CliDatabase, config: ServerConfig, env: NodeJS.ProcessEnv): CliDeviceAdmin;
     /** Runs systemd-creds, PowerShell (DPAPI) and key commands. Tests replace it. */
     keyExec?: KeyExec;
 }
@@ -122,6 +147,7 @@ Commands:
   init [--clinic-name <name>]    Create the encrypted vault and the admin account.
   start                          Unlock the vault and serve clients (default).
   status                         Show whether the vault is set up.
+  import <backup.ndbackup>       Move a single-PC clinic onto this server from its backup.
   key list                       List the ways this vault can be unlocked.
   key add --provider key-file --key-file <path> [--label <text>]
   key add --provider passphrase [--label <text>]
@@ -132,6 +158,10 @@ Commands:
   recovery confirm               Confirm you saved the recovery code.
   backup [--out <file>]          Write an encrypted backup (default: <data dir>/backups).
   restore <file>                 Replace the vault with a backup. Stop the server first.
+  join-code [--name <computer>] [--minutes <n>]
+                                 Issue a one-time code that joins a computer (default 15 minutes).
+  devices list                   List joined computers.
+  devices revoke <id>            Revoke a computer and sign out its sessions.
 
 Options:
   --config <file>                JSON config file (or NALAMDESK_CONFIG).
@@ -142,8 +172,10 @@ Environment:
   NALAMDESK_KEY_FILE, NALAMDESK_PASSPHRASE_FILE or NALAMDESK_PASSPHRASE,
   NALAMDESK_CREDENTIAL_NAME, NALAMDESK_CREDENTIAL_PATH, NALAMDESK_DPAPI_BLOB,
   NALAMDESK_KEY_COMMAND,
-  NALAMDESK_RECOVERY_CODE_FILE or NALAMDESK_RECOVERY_CODE (restore only),
-  NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only).`;
+  NALAMDESK_TLS_CERT and NALAMDESK_TLS_KEY (default: a self-signed certificate),
+  NALAMDESK_TLS=proxy (TLS ends at a reverse proxy), NALAMDESK_PUBLIC_HOSTNAMES,
+  NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only),
+  NALAMDESK_RECOVERY_CODE_FILE or NALAMDESK_RECOVERY_CODE (import and restore).`;
 
 async function askTwice(io: CliIO, label: string): Promise<string> {
     const first = await io.prompt(`${label}: `, { secret: true });
@@ -309,10 +341,10 @@ async function confirmRecovery(vault: CliVault, io: CliIO): Promise<boolean> {
 
 async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
-    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
-    probe.reconcileProvisioning(config.dbPath, config.dataDir);
-    if (probe.isSetup(config.dataDir).isSetup) {
-        io.err(`A vault already exists in ${config.dataDir}. Nothing was changed.`);
+    try {
+        assertNoVault(config, deps);
+    } catch (error: any) {
+        io.err(error.message);
         return 1;
     }
 
@@ -344,6 +376,91 @@ async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: 
         io.out('Run `nalamdesk-server recovery confirm` once the code is stored.');
     }
     vault.closeDb();
+    return 0;
+}
+
+/** Tells a missing file apart from one this account (the service user) cannot read. */
+function assertReadable(file: string): void {
+    try {
+        fs.accessSync(file, fs.constants.R_OK);
+    } catch (error: any) {
+        if (error?.code === 'ENOENT') throw new Error(`${file} does not exist.`);
+        throw new Error(`${file} is not readable by this account. Copy it to a folder the service user can read, such as /tmp, and make it readable.`);
+    }
+}
+
+function assertNoVault(config: ServerConfig, deps: CliDeps): void {
+    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
+    probe.reconcileProvisioning(config.dbPath, config.dataDir);
+    if (probe.isSetup(config.dataDir).isSetup) {
+        throw new Error(`A vault already exists in ${config.dataDir}. Nothing was changed.`);
+    }
+}
+
+function assertVaultExists(config: ServerConfig, deps: CliDeps): void {
+    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
+    probe.reconcileProvisioning(config.dbPath, config.dataDir);
+    if (!probe.isSetup(config.dataDir).isSetup) {
+        throw new Error(`There is no vault in ${config.dataDir} to restore over. Use \`nalamdesk-server import <file>\` to set up a server from a backup.`);
+    }
+}
+
+async function cmdImport(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const backupPath = args.positional[1];
+    if (!backupPath) {
+        io.err('Usage: nalamdesk-server import <backup.ndbackup>');
+        return 2;
+    }
+    const resolvedBackup = path.resolve(backupPath);
+    assertReadable(resolvedBackup);
+    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+    assertNoVault(config, deps);
+
+    let recoveryCode = readSecretFromEnv('NALAMDESK_RECOVERY_CODE', io.env);
+    if (recoveryCode === undefined) {
+        if (!io.interactive) throw new Error('Set NALAMDESK_RECOVERY_CODE_FILE, or run import in a terminal.');
+        recoveryCode = await io.prompt('Recovery code of the clinic that made this backup: ', { secret: true });
+    }
+    recoveryCode = recoveryCode.trim().toUpperCase();
+    if (!recoveryCode) throw new Error('The recovery code is required to open the backup.');
+
+    const store = await openKeyStore(config, io, { create: true, exec: deps.keyExec });
+    const vault = deps.createVault(store);
+    const database = deps.createDatabase();
+    try {
+        await deps.importBackup(vault, database, resolvedBackup, recoveryCode, store, config);
+    } catch (error: any) {
+        if (error?.message === 'INVALID_RECOVERY_CODE') {
+            throw new Error('INVALID_RECOVERY_CODE: that recovery code does not open this backup. Nothing was changed.');
+        }
+        if (error?.message === 'LEGACY_DATABASE_ONLY_BACKUP') {
+            throw new Error('LEGACY_DATABASE_ONLY_BACKUP: this is an old database-only backup. Make a new backup from the desktop app (Settings, Backups) and import that.');
+        }
+        throw error;
+    }
+    try {
+        database.setDb(vault.getDb());
+        await database.migrate();
+        database.logAudit('VAULT_IMPORT', 'vault', null, null,
+            `Imported desktop backup ${path.basename(resolvedBackup)}; unlocks with ${store.status().provider}`);
+        io.out(`Imported ${path.basename(resolvedBackup)} into ${config.dataDir}.`);
+        io.out('Staff sign in with their existing accounts.');
+        const freshCode = vault.getPendingRecoveryCode();
+        if (freshCode) {
+            // An old transition backup: the vault now has a new recovery code.
+            io.out('');
+            io.out(`  New recovery code:  ${freshCode}`);
+            io.out('');
+            io.out('This replaces the code you typed. Store it somewhere safe and offline. It will not be shown again.');
+            const confirmed = await confirmRecovery(vault, io);
+            if (!confirmed) io.out('Run `nalamdesk-server recovery confirm` once the new code is stored.');
+        } else {
+            io.out('The recovery code is the same one the clinic already has.');
+        }
+        io.out('Stop using the desktop copy for this clinic now, so records do not split between the two.');
+    } finally {
+        vault.closeDb();
+    }
     return 0;
 }
 
@@ -487,17 +604,9 @@ async function cmdRestore(args: ParsedArgs, config: ServerConfig, io: CliIO, dep
 async function restoreUnderLock(bundle: string, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     const recoveryCode = await readRecoveryCode(io);
 
-    // An existing vault is opened first so the restore keeps a snapshot of it.
-    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
-    probe.reconcileProvisioning(config.dbPath, config.dataDir);
-    let opened: { vault: CliVault; database: CliDatabase; store: DeviceKeyStore };
-    if (probe.isSetup(config.dataDir).isSetup) {
-        opened = await unlock(config, io, deps);
-    } else {
-        const store = await openKeyStore(config, io, { create: true });
-        opened = { vault: deps.createVault(store), database: deps.createDatabase(), store };
-    }
-    const { vault, database, store } = opened;
+    // Restore replaces a live vault (keeping a snapshot of it); a new server starts from `import`.
+    assertVaultExists(config, deps);
+    const { vault, database, store } = await unlock(config, io, deps);
     try {
         const result = await deps.createBackups(vault, database, store, config).restoreLocalBackup(bundle, recoveryCode);
         database.logAudit('BACKUP_RESTORE', 'system', null, null, `Restored ${path.basename(bundle)} from the CLI`);
@@ -559,6 +668,72 @@ async function cmdKey(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: C
     }
 }
 
+function parseMinutes(args: ParsedArgs): number {
+    const raw = flagString(args, 'minutes');
+    if (raw === undefined) return JOIN_CODE_DEFAULT_MINUTES;
+    const minutes = Number(raw);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > JOIN_CODE_MAX_MINUTES) {
+        throw new Error(`--minutes must be a whole number from 1 to ${JOIN_CODE_MAX_MINUTES}.`);
+    }
+    return minutes;
+}
+
+async function cmdJoinCode(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const minutes = parseMinutes(args);
+    const name = flagString(args, 'name');
+    const { vault, database } = await unlock(config, io, deps);
+    try {
+        const admin = deps.createDeviceAdmin(database, config, io.env);
+        const issued = admin.issueJoinCode({ deviceName: name ?? null, ttlMs: minutes * 60_000 });
+        const forWhom = issued.deviceName ? ` for "${issued.deviceName}"` : '';
+        database.logAudit('JOIN_CODE_ISSUE', 'join_codes', null, null, `Issued a join code${forWhom} from the server console`);
+        io.out(`Join code${forWhom}:`);
+        io.out('');
+        io.out(`  ${issued.code}`);
+        io.out('');
+        io.out(`It works once, until ${new Date(issued.expiresAt).toISOString()}. Enter it in NalamDesk on the computer to join.`);
+        io.out(issued.pin);
+        return 0;
+    } finally {
+        vault.closeDb();
+    }
+}
+
+const formatTime = (ms: number | null) => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) : '-');
+
+async function cmdDevices(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const action = args.positional[1];
+    if (action !== 'list' && action !== 'revoke') {
+        io.err('Usage: nalamdesk-server devices list | devices revoke <id>');
+        return 2;
+    }
+    const id = args.positional[2];
+    if (action === 'revoke' && !id) throw new Error('Name the computer to revoke. See `nalamdesk-server devices list`.');
+    const { vault, database } = await unlock(config, io, deps);
+    try {
+        const admin = deps.createDeviceAdmin(database, config, io.env);
+        if (action === 'list') {
+            const devices = admin.listDevices();
+            if (!devices.length) io.out('No computers have joined yet. Run `nalamdesk-server join-code` to add one.');
+            for (const device of devices) {
+                const state = device.revokedAt ? `revoked ${formatTime(device.revokedAt)}` : `last seen ${formatTime(device.lastSeenAt)}`;
+                io.out([device.id, `"${device.name}"`, `joined ${formatTime(device.joinedAt)}`, state, device.lastIp ?? ''].filter(Boolean).join('  '));
+            }
+            return 0;
+        }
+        const device = admin.listDevices().find((d) => d.id === id);
+        if (!admin.revokeDevice(id!)) {
+            io.err(device ? `Computer ${id} is already revoked.` : `No joined computer has the id ${id}.`);
+            return 1;
+        }
+        database.logAudit('DEVICE_REVOKE', 'joined_devices', null, null, `Revoked computer ${id} from the server console`);
+        io.out(`Revoked ${device ? `"${device.name}" ` : ''}${id}. Its sessions are signed out.`);
+        return 0;
+    } finally {
+        vault.closeDb();
+    }
+}
+
 async function cmdRecovery(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     if (args.positional[1] !== 'confirm') {
         io.err('Usage: nalamdesk-server recovery confirm');
@@ -596,10 +771,13 @@ export async function runCli(argv: string[], io: CliIO, deps: CliDeps): Promise<
             case 'init': return await cmdInit(args, config, io, deps);
             case 'start': return await cmdStart(config, io, deps);
             case 'status': return await cmdStatus(config, io, deps);
+            case 'import': return await cmdImport(args, config, io, deps);
             case 'key': return await cmdKey(args, config, io, deps);
             case 'recovery': return await cmdRecovery(args, config, io, deps);
             case 'backup': return await cmdBackup(args, config, io, deps);
             case 'restore': return await cmdRestore(args, config, io, deps);
+            case 'join-code': return await cmdJoinCode(args, config, io, deps);
+            case 'devices': return await cmdDevices(args, config, io, deps);
             default:
                 io.err(`Unknown command "${command}".`);
                 io.err(USAGE);

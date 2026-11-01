@@ -1,0 +1,46 @@
+[Unit]
+Description=NalamDesk Server
+Documentation=https://github.com/nalamdesk/nalamdesk/blob/master/docs/self-hosting.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nalamdesk
+Group=nalamdesk
+Environment=NALAMDESK_CONFIG=/etc/nalamdesk/server.json
+EnvironmentFile=-/etc/default/nalamdesk-server
+ExecStart=/opt/nalamdesk-server/runtime/node /opt/nalamdesk-server/app/dist/server/server/headless/main.js start
+Restart=on-failure
+RestartSec=5
+# Give in-flight requests and the database time to close cleanly.
+TimeoutStopSec=30
+UMask=0077
+
+# /var/lib/nalamdesk holds the encrypted vault, key file, backups and TLS files.
+StateDirectory=nalamdesk
+StateDirectoryMode=0700
+
+# Hardening. The server needs only its state directory and the network.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

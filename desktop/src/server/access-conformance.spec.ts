@@ -143,6 +143,20 @@ describe('LAN access conformance', () => {
         expect(JSON.stringify(entry)).not.toContain('intruder-probe');
     }, 120000);
 
+    it('refuses a facility the user has no role at and audits it there', async () => {
+        const db = (server as any).dbService;
+        db.rawDb().prepare("INSERT INTO facilities (id, code, name) VALUES (2, 'ANN', 'Anna Nagar')").run();
+        const token = jwt.sign({ id: probeId('nurse'), role: 'nurse', facility_id: 2 }, JWT_SECRET, { expiresIn: '1h' });
+        const denied = await server.inject({
+            method: 'POST', url: '/api/ipc/getQueue',
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, payload: []
+        });
+        expect(denied.statusCode).toBe(403);
+        const entry = (db.getAuditLogs(5) as any[]).find((r) => r.action === 'AUTH_DENIED');
+        expect(entry).toMatchObject({ facility_id: 2 });
+        expect(entry.details).toContain('no-access');
+    }, 120000);
+
     it('denies destructive and secret methods off-admin', async () => {
         for (const method of DESTRUCTIVE) {
             expect(ALLOWED_IPC_METHODS).toContain(method);

@@ -959,20 +959,22 @@ export class ApiServer {
             // for sessions minted before facilities. The role checked is the
             // user's role there, never the one carried in the token (#195).
             const facilityId = Number(user.facility_id) || DEFAULT_FACILITY_ID;
+            const context = { userId: Number(user.id), facilityId };
+            // Denials are audited in the request's facility, with the role checked there.
+            const auditDenied = (role: string) => {
+                try {
+                    runWithContext(context, () => (this.dbService as any).auditDenial({ user: { ...user, role }, method, channel: 'lan' }));
+                } catch { /* audit must not mask the denial */ }
+            };
             const role = this.dbService.getFacilityRole(Number(user.id), facilityId);
             if (!role) {
-                try {
-                    (this.dbService as any).auditDenial({ user, method, channel: 'lan' });
-                } catch { /* audit must not mask the denial */ }
+                auditDenied('no-access');
                 return reply.code(403).send({ error: 'Forbidden' });
             }
-            const context = { userId: Number(user.id), facilityId };
 
             // 3. RBAC Enforcement (single Cedar engine, shared with Electron IPC)
             if (!this.checkPermission(role, method, user.id)) {
-                try {
-                    (this.dbService as any).auditDenial({ user, method, channel: 'lan' });
-                } catch { /* audit must not mask the denial */ }
+                auditDenied(role);
                 return reply.code(403).send({ error: 'Forbidden' });
             }
 

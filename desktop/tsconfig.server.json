@@ -13,6 +13,9 @@
         "src/server/**/*.ts",
         "src/shared/**/*.ts",
         "src/main/services/**/*.ts",
+        "src/main/cloud/**/*.ts",
+        "src/main/booking/**/*.ts",
+        "src/main/appVersionInfo.ts",
         "src/main/schema/**/*.ts"
     ],
     "exclude": [

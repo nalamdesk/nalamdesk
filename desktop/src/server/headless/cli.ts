@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
@@ -64,6 +65,12 @@ export interface RunningServer {
     close(): Promise<void>;
 }
 
+/** Backup and restore of the server's vault (BackupService). */
+export interface CliBackups {
+    createBackupBundle(destination: string): Promise<string>;
+    restoreLocalBackup(bundlePath: string, recoveryCode: string): Promise<{ preRestoreSnapshot?: string }>;
+}
+
 /** A computer joined to this server, as `devices list` shows it. */
 export interface CliJoinedDevice {
     id: string;
@@ -94,6 +101,7 @@ export interface CliDeps {
     importBackup(vault: CliVault, database: CliDatabase, backupPath: string, recoveryCode: string,
         store: DeviceKeyStore, config: ServerConfig): Promise<void>;
     startServer(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig, io: CliIO): Promise<RunningServer>;
+    createBackups(vault: CliVault, database: CliDatabase, store: DeviceKeyStore, config: ServerConfig): CliBackups;
     /** Resolves when the process is asked to stop. */
     waitForShutdown(): Promise<void>;
     createDeviceAdmin(database: CliDatabase, config: ServerConfig, env: NodeJS.ProcessEnv): CliDeviceAdmin;
@@ -148,6 +156,8 @@ Commands:
   key add --provider kms --key-command <command>
   key remove <slot-id>           Remove an unlock method.
   recovery confirm               Confirm you saved the recovery code.
+  backup [--out <file>]          Write an encrypted backup (default: <data dir>/backups).
+  restore <file>                 Replace the vault with a backup. Stop the server first.
   join-code [--name <computer>] [--minutes <n>]
                                  Issue a one-time code that joins a computer (default 15 minutes).
   devices list                   List joined computers.
@@ -165,7 +175,7 @@ Environment:
   NALAMDESK_TLS_CERT and NALAMDESK_TLS_KEY (default: a self-signed certificate),
   NALAMDESK_TLS=proxy (TLS ends at a reverse proxy), NALAMDESK_PUBLIC_HOSTNAMES,
   NALAMDESK_ADMIN_PASSWORD_FILE or NALAMDESK_ADMIN_PASSWORD (init only),
-  NALAMDESK_RECOVERY_CODE_FILE or NALAMDESK_RECOVERY_CODE (import only).`;
+  NALAMDESK_RECOVERY_CODE_FILE or NALAMDESK_RECOVERY_CODE (import and restore).`;
 
 async function askTwice(io: CliIO, label: string): Promise<string> {
     const first = await io.prompt(`${label}: `, { secret: true });
@@ -387,6 +397,14 @@ function assertNoVault(config: ServerConfig, deps: CliDeps): void {
     }
 }
 
+function assertVaultExists(config: ServerConfig, deps: CliDeps): void {
+    const probe = deps.createVault({ status: () => ({ available: true, provider: 'probe' }), protect: (v) => v, unprotect: (v) => v });
+    probe.reconcileProvisioning(config.dbPath, config.dataDir);
+    if (!probe.isSetup(config.dataDir).isSetup) {
+        throw new Error(`There is no vault in ${config.dataDir} to restore over. Use \`nalamdesk-server import <file>\` to set up a server from a backup.`);
+    }
+}
+
 async function cmdImport(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
     const backupPath = args.positional[1];
     if (!backupPath) {
@@ -447,17 +465,179 @@ async function cmdImport(args: ParsedArgs, config: ServerConfig, io: CliIO, deps
 }
 
 async function cmdStart(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
-    const { vault, database, store } = await unlock(config, io, deps);
-    if (vault.getPendingRecoveryCode()) {
-        io.err('Warning: the recovery code has not been confirmed. Run `nalamdesk-server recovery confirm`.');
+    if (!fs.existsSync(config.dataDir)) throw new Error('This server has no vault yet. Run `nalamdesk-server init` first.');
+    // Held before the vault opens, so a restore never runs under this server.
+    acquireRunLock(config);
+    try {
+        const { vault, database, store } = await unlock(config, io, deps);
+        if (vault.getPendingRecoveryCode()) {
+            io.err('Warning: the recovery code has not been confirmed. Run `nalamdesk-server recovery confirm`.');
+        }
+        const server = await deps.startServer(vault, database, store, config, io);
+        io.out(`NalamDesk Server listening on ${config.host}:${config.port} (data: ${config.dataDir}).`);
+        await deps.waitForShutdown();
+        io.out('Shutting down...');
+        await server.close();
+        vault.closeDb();
+        return 0;
+    } finally {
+        releaseRunLock(config);
     }
-    const server = await deps.startServer(vault, database, store, config, io);
-    io.out(`NalamDesk Server listening on ${config.host}:${config.port} (data: ${config.dataDir}).`);
-    await deps.waitForShutdown();
-    io.out('Shutting down...');
-    await server.close();
-    vault.closeDb();
-    return 0;
+}
+
+const RUN_LOCK = 'server.pid';
+
+function processAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error: any) {
+        return error?.code === 'EPERM';
+    }
+}
+
+/** The pid in a lock file, or null when it is missing or unreadable. */
+function readLockPid(lock: string): number | null {
+    try {
+        const pid = Number.parseInt(fs.readFileSync(lock, 'utf8'), 10);
+        return Number.isInteger(pid) && pid > 0 ? pid : null;
+    } catch {
+        return null;
+    }
+}
+
+/** The pid of a server running on this data directory, if any. */
+export function runningServerPid(config: ServerConfig): number | null {
+    const pid = readLockPid(path.join(config.dataDir, RUN_LOCK));
+    return pid !== null && pid !== process.pid && processAlive(pid) ? pid : null;
+}
+
+/**
+ * Moves a dead holder's lock aside. If another process reclaimed it and took
+ * the lock first, the file moved aside is theirs: it goes back and this
+ * process stops.
+ */
+function reclaimStaleLock(lock: string, deadHolder: number, config: ServerConfig): void {
+    const aside = `${lock}.stale-${crypto.randomUUID()}`;
+    try {
+        fs.renameSync(lock, aside);
+    } catch {
+        return; // Already moved by another process; retry the link.
+    }
+    const moved = readLockPid(aside);
+    if (moved !== deadHolder) {
+        try { fs.linkSync(aside, lock); } catch { /* the lock was taken again meanwhile */ }
+        fs.rmSync(aside, { force: true });
+        throw new Error(`A server or restore${moved ? ` (pid ${moved})` : ''} is already running on ${config.dataDir}.`);
+    }
+    fs.rmSync(aside, { force: true });
+}
+
+/**
+ * Takes the data directory's run lock. The pid is written to a private file
+ * first and published with link(), which fails if the lock exists, so the
+ * lock never exists without its pid. Only a lock whose holder is known dead
+ * is reclaimed, by renaming it aside.
+ */
+function acquireRunLock(config: ServerConfig): void {
+    const lock = path.join(config.dataDir, RUN_LOCK);
+    const draft = `${lock}.${process.pid}.${crypto.randomUUID()}`;
+    fs.writeFileSync(draft, String(process.pid), { mode: 0o600 });
+    try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                fs.linkSync(draft, lock);
+                return;
+            } catch (error: any) {
+                if (error?.code !== 'EEXIST') throw error;
+            }
+            const holder = readLockPid(lock);
+            if (holder === null || holder === process.pid || processAlive(holder)) {
+                throw new Error(`A server or restore${holder ? ` (pid ${holder})` : ''} is already running on ${config.dataDir}.`);
+            }
+            reclaimStaleLock(lock, holder, config);
+        }
+        throw new Error(`Could not take the run lock in ${config.dataDir}. Try again.`);
+    } finally {
+        fs.rmSync(draft, { force: true });
+    }
+}
+
+function releaseRunLock(config: ServerConfig): void {
+    try {
+        fs.unlinkSync(path.join(config.dataDir, RUN_LOCK));
+    } catch { /* already gone */ }
+}
+
+function backupStamp(): string {
+    return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+async function cmdBackup(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const out = flagString(args, 'out');
+    const destination = out
+        ? path.resolve(out)
+        : path.join(config.dataDir, 'backups', `nalamdesk-manual-backup-${backupStamp()}.ndbackup`);
+    if (fs.existsSync(destination)) throw new Error(`${destination} already exists. Choose a new path.`);
+    const { vault, database, store } = await unlock(config, io, deps);
+    try {
+        const written = await deps.createBackups(vault, database, store, config).createBackupBundle(destination);
+        database.logAudit('BACKUP_LOCAL', 'system', null, null, `Created recoverable backup from the CLI: ${path.basename(written)}`);
+        io.out(`Wrote ${written}.`);
+        io.out('It opens with this vault\'s recovery code. Keep a copy off this machine.');
+        return 0;
+    } finally {
+        vault.closeDb();
+    }
+}
+
+async function readRecoveryCode(io: CliIO): Promise<string> {
+    const fromEnv = readSecretFromEnv('NALAMDESK_RECOVERY_CODE', io.env);
+    if (fromEnv !== undefined) return fromEnv.trim().toUpperCase();
+    if (!io.interactive) throw new Error('Set NALAMDESK_RECOVERY_CODE_FILE, or run restore in a terminal.');
+    return (await io.prompt('Recovery code for this backup: ', { secret: true })).trim().toUpperCase();
+}
+
+async function cmdRestore(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const file = args.positional[1];
+    if (!file) {
+        io.err('Usage: nalamdesk-server restore <backup-file>');
+        return 2;
+    }
+    const bundle = path.resolve(file);
+    if (!fs.existsSync(bundle)) throw new Error(`${bundle} does not exist.`);
+    fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+    const running = runningServerPid(config);
+    if (running) throw new Error(`Stop the server (pid ${running}) before restoring.`);
+    // Held for the whole restore, so a server cannot start on the vault mid-way.
+    acquireRunLock(config);
+    try {
+        return await restoreUnderLock(bundle, config, io, deps);
+    } finally {
+        releaseRunLock(config);
+    }
+}
+
+async function restoreUnderLock(bundle: string, config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
+    const recoveryCode = await readRecoveryCode(io);
+
+    // Restore replaces a live vault (keeping a snapshot of it); a new server starts from `import`.
+    assertVaultExists(config, deps);
+    const { vault, database, store } = await unlock(config, io, deps);
+    try {
+        const result = await deps.createBackups(vault, database, store, config).restoreLocalBackup(bundle, recoveryCode);
+        database.logAudit('BACKUP_RESTORE', 'system', null, null, `Restored ${path.basename(bundle)} from the CLI`);
+        io.out(`Restored ${bundle}.`);
+        if (result.preRestoreSnapshot) io.out(`The previous vault was saved to ${result.preRestoreSnapshot}.`);
+        io.out(`The vault now opens with ${store.status().provider} and the backup's recovery code.`);
+        io.out('Add any other unlock methods again with `nalamdesk-server key add`.');
+        return 0;
+    } catch (error: any) {
+        if (error?.message === 'INVALID_RECOVERY_CODE') throw new Error('INVALID_RECOVERY_CODE: that recovery code does not open this backup.');
+        throw error;
+    } finally {
+        vault.closeDb();
+    }
 }
 
 async function cmdStatus(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<number> {
@@ -611,6 +791,8 @@ export async function runCli(argv: string[], io: CliIO, deps: CliDeps): Promise<
             case 'import': return await cmdImport(args, config, io, deps);
             case 'key': return await cmdKey(args, config, io, deps);
             case 'recovery': return await cmdRecovery(args, config, io, deps);
+            case 'backup': return await cmdBackup(args, config, io, deps);
+            case 'restore': return await cmdRestore(args, config, io, deps);
             case 'join-code': return await cmdJoinCode(args, config, io, deps);
             case 'devices': return await cmdDevices(args, config, io, deps);
             default:

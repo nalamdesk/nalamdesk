@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain, clipboard, shell, dialog } from 'electron';
 import * as path from 'path';
-import { CronJob } from 'cron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import { bindUpdateIpc, createUpdateService, type UpdaterPort } from './updates/updateService';
@@ -16,16 +15,14 @@ import { requireExistingRestoreAuthorization } from './services/RestoreAuthoriza
 import { CrashService } from './services/CrashService';
 import { SecurityService } from './services/SecurityService';
 import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './services/DeviceKeyStore';
-import { AbdmRelayService, abdmConfigView } from './services/AbdmRelayService';
-import { AbdmAbhaService } from './services/AbdmAbhaService';
-import { HiuService } from './services/HiuService';
-import { HipService } from './services/HipService';
+import { abdmConfigView } from './services/AbdmRelayService';
 import { FideliusService, parseKeyMaterial } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
 import { GoogleDriveService } from './services/GoogleDriveService';
-import { CloudLink } from './cloud/CloudLink';
-import { AbdmMailboxProcessor } from './cloud/AbdmMailboxProcessor';
-import { BookingError } from './booking/BookingInboxService';
+import { CLINIC_EVENT_TOPICS, createClinicServices, type ClinicServiceEvent } from '../server/runtime/clinicServices';
+import {
+    assertMethodAccess, BACKUP_IPC_CHANNELS, backupScheduleFollower, CLOUD_IPC_CHANNELS, createBackupMethods, createCloudMethods
+} from '../server/runtime/clinicMethods';
 import { getCloudServiceUrl } from '../shared/runtime-config';
 import { buildAuthenticatedLoginResult } from './services/AuthResult';
 import { ProvisioningService } from './services/ProvisioningService';
@@ -33,7 +30,6 @@ import { CredentialRotationService } from './services/CredentialRotationService'
 import { verifyPersistedActiveAdmin } from './services/AdminCredentialVerifier';
 import { acknowledgeRecoveryCodeForActiveAdmin } from './services/RecoveryCodeAcknowledgement';
 import { ApiServer } from '../server/app';
-import type { EventTopic } from '../server/events';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { registerJoinIpc } from './client/join-ipc';
 import { safeStorageCipher } from './client/electron-env';
@@ -165,94 +161,36 @@ autoUpdater.logger = log;
 // Services
 const securityService = new SecurityService(new ElectronSafeStorageDeviceKeyStore());
 const databaseService = new DatabaseService();
-// ABDM goes through the relay as the paired facility (#160); this computer
-// holds no ABDM credentials. Unpaired, the flows run against the mock gateway.
-const abdmRelayService = new AbdmRelayService({
-    getSettings: () => databaseService.getSettings(),
-    relay: () => cloudLink.abdmRelay(),
-    pairedHfrId: () => cloudLink.pairing.status().hfrId ?? null
-});
-const abdmAbhaService = new AbdmAbhaService({ relay: abdmRelayService });
-const hiuService = new HiuService({
-    getSettings: () => databaseService.getSettings(),
-    getHiuPrivateProtected: () => databaseService.getHiuPrivateProtected(),
-    saveHiuPrivateProtected: (value) => databaseService.saveHiuPrivateProtected(value),
-    saveSettingsPatch: (patch) => databaseService.saveSettings(patch),
-    saveHiuKeypair: (publicKey, protectedPrivate) => databaseService.saveHiuKeypair(publicKey, protectedPrivate),
-    keyStore: new ElectronSafeStorageDeviceKeyStore(),
-    store: {
-        createConsentRequest: (input, actingUserId) => databaseService.createConsentRequest(input, actingUserId),
-        getConsentById: (id) => databaseService.getConsentById(id),
-        getConsentByRequestId: (requestId) => databaseService.getConsentByRequestId(requestId),
-        updateConsentStatus: (id, status, handle, actingUserId) =>
-            databaseService.updateConsentStatus(id, status, handle, actingUserId),
-        storeFetchedRecord: (input, actingUserId) => databaseService.storeFetchedRecord(input, actingUserId),
-        getPendingInbox: () => databaseService.getPendingInbox(),
-        setConsentRequestId: (id, consentRequestId) => databaseService.setConsentRequestId(id, consentRequestId),
-        failConsentRequest: (id, error) => databaseService.failConsentRequest(id, error),
-        discardConsentRequest: (id) => databaseService.discardConsentRequest(id),
-        saveHiuArtefacts: (consentId, ids, status) => databaseService.saveHiuArtefacts(consentId, ids, status),
-        getHiuArtefacts: (consentId) => databaseService.getHiuArtefacts(consentId),
-        findHiuArtefact: (field, value) => databaseService.findHiuArtefact(field, value),
-        updateHiuArtefact: (id, patch) => databaseService.updateHiuArtefact(id, patch)
-    },
-    relay: abdmRelayService,
-    // Live consent goes out as the paired facility; HIPs push to the relay (#164).
-    hiuId: () => abdmRelayService.status().hfr_id,
-    dataPushUrl: () => databaseService.getCloudDevice()?.data_push_url ?? null,
-    requester: (actingUserId) => databaseService.getHiuRequester(actingUserId)
-});
 const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
 const provisioningService = new ProvisioningService(securityService, databaseService);
 const googleDriveService = new GoogleDriveService();
-// NalamDesk Cloud (#154, #155): pairing, signed requests, the mailbox and its doorbell.
+// NalamDesk Cloud (#154, #155) and ABDM through the relay (#160): the same
+// wiring NalamDesk Server uses, run in-process for single-PC mode.
 const stampedIdentity = readBuildIdentityFile(buildIdentityPath(app.getAppPath()));
 // Renderer pushes that clients of the API server also need (#193).
-const LIVE_EVENT_TOPICS: Record<string, EventTopic> = {
-    'cloud:newRequests': 'bookings',
-    'abdm:shareReceived': 'abdm.inbox'
-};
 const notifyRenderer = (channel: string, payload: unknown) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
-    const topic = LIVE_EVENT_TOPICS[channel];
+    const topic = CLINIC_EVENT_TOPICS[channel as ClinicServiceEvent];
     if (topic) {
         try { apiServer.events.publish(topic); } catch { /* server not up yet */ }
     }
 };
-const cloudLink: CloudLink = new CloudLink({
-    store: databaseService,
+const clinicServices = createClinicServices({
+    db: databaseService,
     keyStore: new ElectronSafeStorageDeviceKeyStore(),
     appVersion: app.getVersion(),
     baseUrl: (audience) => getCloudServiceUrl(audience, stampedIdentity),
-    onNewRequests: (count) => notifyRenderer('cloud:newRequests', { count }),
-    onPairingChange: (status) => {
-        abdmAbhaService.invalidateCert();
-        notifyRenderer('cloud:pairingChanged', status);
-    },
-    onMailboxChange: () => notifyRenderer('cloud:pairingChanged', cloudStatus()),
-    onAbdmItems: () => drainAbdmMailbox(),
-    // A restore drains cloud work before replacing the database, and refuses it after.
-    runWork: (work) => databaseService.runWork(work)
+    notify: notifyRenderer,
+    warn: (message) => log.warn(message)
 });
-// ABDM callbacks and data pushes arrive through the relay's mailbox (#160);
-// the local server has no public ABDM routes.
-const hipService = new HipService({
-    store: databaseService,
+const {
+    cloudLink,
     relay: abdmRelayService,
-    hipId: () => abdmRelayService.status().hfr_id
-});
-const abdmMailbox = new AbdmMailboxProcessor({
-    store: databaseService,
+    abha: abdmAbhaService,
     hiu: hiuService,
-    hip: hipService,
-    relay: () => cloudLink.abdmRelay(),
-    onShare: () => notifyRenderer('abdm:shareReceived', {}),
-    runWork: (work) => databaseService.runWork(work)
-});
-function drainAbdmMailbox(): void {
-    abdmMailbox.drain().catch((error) => log.warn(`[ABDM mailbox] Pass failed: ${(error as Error).message}`));
-}
+    hip: hipService
+} = clinicServices;
 
 // Determine Static Path for ApiServer
 const staticPath = isDev
@@ -633,31 +571,8 @@ function initializeServices(settings: any): void {
         if (settings?.local_backup_path || settings?.drive_tokens) {
             backupService.initAutomatedBackup();
         }
-        // HIU cache retention: sweep expired outside records at startup and
-        // once daily (03:00 local). Reads sweep first too, so the 30-day
-        // rule holds even if the scheduler never fires.
-        try {
-            databaseService.expireFetchedRecords();
-            databaseService.sweepExpiredMedications();
-        } catch (e) {
-            console.error('[HIU] Startup retention sweep failed:', e);
-        }
-        try {
-            const retentionJob = new CronJob('0 3 * * *', () => {
-                try {
-                    databaseService.expireFetchedRecords();
-                    databaseService.sweepExpiredMedications();
-                } catch (e) {
-                    console.error('[HIU] Scheduled retention sweep failed:', e);
-                }
-            });
-            retentionJob.start();
-        } catch (e) {
-            console.error('[HIU] Could not schedule retention sweep:', e);
-        }
-        cloudLink.start();
-        // Items saved before the last shutdown.
-        drainAbdmMailbox();
+        // Cloud link, mailbox drain and the daily HIU retention sweep.
+        clinicServices.start();
     } catch (e) {
         console.error('Failed to configure services', e);
     }
@@ -1640,122 +1555,22 @@ handleGuardedDb('db:getAuditLogs', (_, limit) => {
 });
 
 // Cloud IPC Handlers (#154). Pairing and the public listing are admin-only;
-// any signed-in user can see the state and refresh the inbox.
-const requireUser = () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    return user;
-};
-const requireAdminUser = () => {
-    const user = requireUser();
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    return user;
-};
-const requirePaired = () => {
-    if (!cloudLink.pairing.isPaired()) throw new Error('This computer is not paired with NalamDesk Cloud.');
-};
-// Cloud calls read the database, wait on the network and write back, so a
-// restore must drain them like any other database work.
-const handleCloud = (channel: string, handler: (...args: any[]) => unknown) =>
-    ipcMain.handle(channel, (...args) => databaseService.runWork(async () => handler(...args)));
-function cloudStatus() {
-    return {
-        ...cloudLink.pairing.status(),
-        listingEnabled: !!databaseService.getSettings()?.cloud_enabled,
-        mailbox: cloudLink.mailboxStatus()
+// any signed-in user can see the state and refresh the inbox. The same
+// methods back the server API (#196).
+const cloudMethods = createCloudMethods(databaseService, clinicServices);
+for (const [channel, name] of CLOUD_IPC_CHANNELS) {
+    const method = cloudMethods[name]!;
+    const run = (args: unknown[]) => {
+        const user = sessionService.getUser();
+        assertMethodAccess(method.access, user);
+        return method.run(args, user);
     };
+    // Cloud calls read the database, wait on the network and write back, so a
+    // restore must drain them like any other database work.
+    ipcMain.handle(channel, (_event, ...args) => method.selfFenced
+        ? run(args)
+        : databaseService.runWork(async () => run(args)));
 }
-handleCloud('cloud:getStatus', () => {
-    requireUser();
-    return cloudStatus();
-});
-handleCloud('cloud:requestPairing', async (_, input) => {
-    requireAdminUser();
-    await cloudLink.pairing.request({ hfrId: String(input?.hfrId ?? ''), label: String(input?.label ?? '') });
-    return cloudStatus();
-});
-handleCloud('cloud:cancelPairing', async () => {
-    requireAdminUser();
-    await cloudLink.pairing.cancel();
-    return cloudStatus();
-});
-handleCloud('cloud:activatePairing', async (_, input) => {
-    requireAdminUser();
-    await cloudLink.pairing.activate({ code: String(input?.code ?? '') });
-    return cloudStatus();
-});
-handleCloud('cloud:forgetPairing', () => {
-    requireAdminUser();
-    cloudLink.pairing.forget();
-    databaseService.saveSettings({ cloud_enabled: 0, cloud_clinic_id: null });
-    return cloudStatus();
-});
-handleCloud('cloud:enableListing', async (_, input) => {
-    requireAdminUser();
-    requirePaired();
-    const name = String(input?.name ?? '').trim();
-    const city = String(input?.city ?? '').trim();
-    if (!name || !city) throw new Error('Clinic name and city are required.');
-    await cloudLink.booking.enableListing({ name, city, specialty: String(input?.specialty ?? '').trim() || undefined });
-    databaseService.saveSettings({ cloud_enabled: 1, cloud_clinic_id: cloudLink.pairing.status().clinicId ?? null });
-    return cloudStatus();
-});
-handleCloud('cloud:disableListing', async () => {
-    requireAdminUser();
-    if (cloudLink.pairing.isPaired()) await cloudLink.booking.disableListing();
-    databaseService.saveSettings({ cloud_enabled: 0 });
-    return cloudStatus();
-});
-handleCloud('cloud:publishSlots', async (_, slots, dates) => {
-    requireAdminUser();
-    requirePaired();
-    const published = await cloudLink.booking.publishSlots(Array.isArray(dates) ? dates : [], Array.isArray(slots) ? slots : []);
-    return { published };
-});
-// Not handleCloud: the reader fences each save itself, so a restore never
-// waits on a slow mailbox download.
-ipcMain.handle('cloud:syncNow', async () => {
-    requireUser();
-    if (!cloudLink.pairing.isPaired()) return { success: false, paired: false, saved: 0 };
-    const saved = await cloudLink.checkMailbox();
-    return { success: true, paired: true, saved };
-});
-handleCloud('cloud:getPublishedSlots', async (_, date) => {
-    requireUser();
-    if (!cloudLink.pairing.isPaired()) return [];
-    const day = String(date ?? '');
-    return cloudLink.booking.publishedSlots(day, day);
-});
-// Accept or decline an online booking request: the cloud first (it books or
-// releases the slot and updates the patient's status page), then locally.
-handleCloud('cloud:decide', async (_, input) => {
-    requireDesk();
-    const ref = String(input?.ref ?? '');
-    const decision = input?.decision === 'accepted' ? 'accepted' : input?.decision === 'declined' ? 'declined' : null;
-    if (!decision) throw new Error('Decision must be accepted or declined.');
-    // An acceptance carries the appointment's slot, booked locally in the
-    // same transaction that marks the request accepted.
-    const date = String(input?.date ?? '');
-    const time = String(input?.time ?? '');
-    if (decision === 'accepted' && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time))) {
-        throw new Error('An accepted booking needs a date and time.');
-    }
-    const slot = decision === 'accepted' ? { date, time } : undefined;
-    try {
-        await cloudLink.booking.decide(ref, decision, slot);
-    } catch (error) {
-        // Requests left over from the retired cloud sync have no online
-        // reference; they are decided locally only.
-        if (error instanceof BookingError && error.code === 'bad_ref') {
-            if (slot) databaseService.acceptAppointmentRequest(ref, slot);
-            else databaseService.updateAppointmentRequestStatus(ref, 'rejected');
-            return { success: true, local: true };
-        }
-        if (error instanceof BookingError) throw new Error(`${error.code}: ${error.message}`);
-        throw error;
-    }
-    return { success: true };
-});
 
 // Appointment Request IPC
 // Appointment Request IPC
@@ -1989,29 +1804,18 @@ ipcMain.handle('backup:useDefaultPath', async () => {
     return defaultPath;
 });
 
-ipcMain.handle('backup:runNow', async () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    // Manual trigger for testing
-    console.log('[Main] Manual backup triggered via IPC');
-    await backupService.performBackup();
-    return { success: true };
-});
-
-ipcMain.handle('backup:listSystemBackups', async () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    return backupService.listSystemBackups();
-});
-
-ipcMain.handle('backup:getLocalBackupHealth', async () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (user.role !== 'admin') throw new Error('Forbidden');
-    return backupService.getLocalBackupHealth();
-});
+// Backups run now, list and health: the same methods back the server API (#196).
+const backupMethods = createBackupMethods(backupService);
+for (const [channel, name] of BACKUP_IPC_CHANNELS) {
+    const method = backupMethods[name]!;
+    ipcMain.handle(channel, () => {
+        const user = sessionService.getUser();
+        assertMethodAccess(method.access, user);
+        return method.run([], user);
+    });
+}
+// LAN browsers reach the same admin methods through the in-app API.
+apiServer.registerServiceMethods({ ...cloudMethods, ...backupMethods }, backupScheduleFollower(backupService));
 
 ipcMain.handle('auth:getRecoveryStatus', async () => {
     const userDataPath = app.getPath('userData');

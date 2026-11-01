@@ -6,7 +6,7 @@
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
-export type EventTopic = 'queue' | 'appointments' | 'bookings' | 'abdm.inbox' | 'patients' | 'billing' | 'clinical' | 'settings' | 'users' | 'data';
+export type EventTopic = 'queue' | 'appointments' | 'bookings' | 'abdm.inbox' | 'cloud' | 'patients' | 'billing' | 'clinical' | 'settings' | 'users' | 'data';
 
 export interface ServerEvent {
     id: number;
@@ -33,8 +33,12 @@ const READ_ONLY = /^(get|find|list|search|preview|detect|validate)/;
 
 /** Topics a successful API call changed; empty for reads. */
 export function topicsForMethod(method: string): EventTopic[] {
-    if (READ_ONLY.test(method)) return [];
+    // Backups change nothing clients show; a mailbox refresh announces new requests itself.
+    if (READ_ONLY.test(method) || method.startsWith('backup') || /^cloud(Get|SyncNow)/.test(method)) return [];
     const topics = new Set<EventTopic>();
+    // Cloud pairing and listing; a booking decision changes the requests list.
+    if (method === 'cloudDecide') return ['bookings', 'appointments'];
+    if (method.startsWith('cloud')) return ['cloud'];
     if (/Queue|Consultation|checkIn/i.test(method)) topics.add('queue');
     if (/AppointmentRequest/.test(method)) topics.add('bookings');
     else if (/Appointment|checkIn|fulfill/i.test(method)) topics.add('appointments');

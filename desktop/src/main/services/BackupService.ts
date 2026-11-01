@@ -1,6 +1,5 @@
 import { CronJob } from 'cron';
 import { DatabaseService } from './DatabaseService';
-import { GoogleDriveService } from './GoogleDriveService';
 import { SecurityService, type SecurityConfigV3 } from './SecurityService';
 import { MIGRATIONS } from '../schema/migrations';
 import * as crypto from 'crypto';
@@ -39,6 +38,18 @@ export type BackupStep = 'restore-after-stage-validation' | 'restore-after-snaps
     'restore-before-live-close' |
     'restore-after-journal' | 'restore-after-database-replace' |
     'restore-after-config-replace' | 'restore-after-activation';
+/** Off-site copy target (Google Drive on the desktop). NalamDesk Server has none yet. */
+export interface BackupUploader {
+    isAuthenticated(): boolean;
+    uploadFile(filePath: string, name: string): Promise<unknown>;
+}
+
+/** For hosts with no off-site target: backups stay local. */
+export const NO_UPLOADER: BackupUploader = {
+    isAuthenticated: () => false,
+    uploadFile: () => Promise.reject(new Error('No off-site backup target is configured.'))
+};
+
 export interface BackupServiceOptions {
     createIsolatedSecurityService?: () => SecurityService;
     appVersion?: string;
@@ -62,7 +73,7 @@ export class BackupService {
 
     constructor(
         private dbService: DatabaseService,
-        private driveService: GoogleDriveService,
+        private driveService: BackupUploader,
         private securityService: SecurityService,
         private userDataPath: string,
         private readonly options: BackupServiceOptions = {}
@@ -198,6 +209,11 @@ export class BackupService {
             // is either failing silently or never firing: surface, don't guess.
             missed: lastBackupAt == null || (ageHours != null && ageHours > 49)
         };
+    }
+    /** Stops scheduled backups (server shutdown). */
+    stopSchedules() {
+        this.localJob?.stop(); this.localJob = null;
+        this.cloudJob?.stop(); this.cloudJob = null;
     }
     updateSchedule(type: 'local' | 'cloud', time: string) {
         type === 'local' ? this.scheduleLocalBackup(time) : this.scheduleCloudBackup(time);

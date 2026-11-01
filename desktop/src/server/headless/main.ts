@@ -1,14 +1,20 @@
 import * as readline from 'readline';
-import { BackupService } from '../../main/services/BackupService';
 import { DatabaseService } from '../../main/services/DatabaseService';
 import { ProvisioningService } from '../../main/services/ProvisioningService';
 import { SecurityService } from '../../main/services/SecurityService';
+import * as path from 'path';
+import { BackupService, NO_UPLOADER } from '../../main/services/BackupService';
+import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
+import { buildIdentityPath, readBuildIdentityFile } from '../../main/appVersionInfo';
+import { getCloudServiceUrl } from '../../shared/runtime-config';
 import { ApiServer } from '../app';
+import { CLINIC_EVENT_TOPICS, createClinicServices } from '../runtime/clinicServices';
+import { backupScheduleFollower, createBackupMethods, createCloudMethods } from '../runtime/clinicMethods';
 import { ServerAuthStore } from '../auth-store';
 import { buildNetworkOptions, issueJoinCode } from '../network';
-import { createServerAbdmServices } from './abdm';
 import { describeServingState, pinOptions, readServingState, servingStateFrom, writeServingState } from './serving-state';
 import { runCli, type CliDeps, type CliIO } from './cli';
+import type { ServerConfig } from './config';
 
 // Vault files, backups and logs are readable by the service account only.
 if (process.platform !== 'win32') process.umask(0o077);
@@ -38,35 +44,56 @@ const io: CliIO = {
     env: process.env
 };
 
+// dist/server/server/headless → the package root, where releases stamp build-identity.json.
+const packageRoot = path.join(__dirname, '..', '..', '..', '..');
+const buildIdentity = readBuildIdentityFile(buildIdentityPath(packageRoot));
+const appVersion = buildIdentity?.version ?? process.env['npm_package_version'] ?? 'unknown';
+
+function createBackups(vault: SecurityService, database: DatabaseService, store: DeviceKeyStore, config: ServerConfig): BackupService {
+    // Backups live in the data directory; operators copy them off the machine.
+    return new BackupService(database, NO_UPLOADER, vault, config.dataDir, {
+        appVersion,
+        // Restore validation must not reconfigure or close the live vault.
+        createIsolatedSecurityService: () => new SecurityService(store),
+        onRestoreCommitted: () => undefined
+    });
+}
+
 const deps: CliDeps = {
     createVault: (store) => new SecurityService(store),
     createDatabase: () => new DatabaseService() as any,
     provision: (vault, database, adminPassword, clinic, config) =>
         new ProvisioningService(vault as any, database as any).provision(adminPassword, clinic, config.dbPath, config.dataDir),
+    createBackups: (vault, database, store, config) =>
+        createBackups(vault as unknown as SecurityService, database as unknown as DatabaseService, store, config),
     async importBackup(vault, database, backupPath, recoveryCode, store, config) {
-        const backups = new BackupService(
-            database as unknown as DatabaseService,
-            undefined as any, // Drive upload is not used by a restore.
-            vault as unknown as SecurityService,
-            config.dataDir,
-            {
-                createIsolatedSecurityService: () => new SecurityService(store),
-                // Nothing is signed in yet, so there are no sessions to end.
-                onRestoreCommitted: () => undefined
-            }
-        );
-        await backups.restoreLocalBackup(backupPath, recoveryCode);
+        // Nothing is signed in yet, so the restore has no sessions to end.
+        await createBackups(vault as unknown as SecurityService, database as unknown as DatabaseService, store, config)
+            .restoreLocalBackup(backupPath, recoveryCode);
     },
-    async startServer(_vault, database, store, config, io) {
+    async startServer(vault, database, store, config, io) {
+        const db = database as unknown as DatabaseService;
         const network = buildNetworkOptions({ dataDir: config.dataDir, env: process.env });
-        const api = new ApiServer(
-            database as unknown as DatabaseService,
-            config.staticPath,
-            undefined,
-            createServerAbdmServices(database as unknown as DatabaseService, store),
-            network
+        // Cloud pairing, the mailbox, ABDM and scheduled backups run here (#196).
+        let api: ApiServer | null = null;
+        const services = createClinicServices({
+            db,
+            keyStore: store,
+            appVersion,
+            baseUrl: (audience) => getCloudServiceUrl(audience, buildIdentity),
+            // Clients refetch through the API when a topic changes.
+            notify: (event) => api?.events.publish(CLINIC_EVENT_TOPICS[event])
+        });
+        const backups = createBackups(vault as unknown as SecurityService, db, store, config);
+        const server = new ApiServer(db, config.staticPath, undefined, services, network);
+        api = server;
+        server.registerServiceMethods(
+            { ...createCloudMethods(db, services), ...createBackupMethods(backups) },
+            backupScheduleFollower(backups)
         );
-        await api.start(config.port, config.host);
+        backups.initAutomatedBackup();
+        services.start();
+        await server.start(config.port, config.host);
         // join-code reads this, so codes pin what clients will actually see.
         writeServingState(config.dataDir, servingStateFrom(network));
         if (network.behindProxy) {
@@ -76,7 +103,13 @@ const deps: CliDeps = {
         } else {
             io.out('Serving HTTPS with the configured certificate.');
         }
-        return { close: () => api.close() };
+        return {
+            close: async () => {
+                services.stop();
+                backups.stopSchedules();
+                await server.close();
+            }
+        };
     },
     createDeviceAdmin(database, config) {
         const store = new ServerAuthStore(() => (database as any).rawDb());

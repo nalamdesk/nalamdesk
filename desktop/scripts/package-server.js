@@ -35,13 +35,16 @@ const SERVER_DEPENDENCIES = [
     'better-sqlite3-multiple-ciphers',
     'cron',
     'dotenv',
+    // Cloud link logging (works without Electron) and the doorbell connection (#196).
+    'electron-log',
     'fastify',
     'fflate',
     'jsonwebtoken',
+    'mqtt',
     'tslib'
 ];
 /** Required only by desktop modules that the server build compiles but never loads. */
-const DESKTOP_ONLY = new Set(['electron', 'electron-log', 'electron-updater', 'googleapis', 'open']);
+const DESKTOP_ONLY = new Set(['electron', 'electron-updater', 'googleapis', 'open']);
 const NATIVE = ['better-sqlite3-multiple-ciphers', 'argon2'];
 
 function parseArgs(argv) {

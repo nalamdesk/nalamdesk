@@ -165,6 +165,10 @@ describe('events', () => {
         expect(topicsForMethod('savePatient')).toEqual(['patients']);
         expect(topicsForMethod('recordPayment')).toEqual(['billing']);
         expect(topicsForMethod('somethingNew')).toEqual(['data']);
+        expect(topicsForMethod('cloudActivatePairing')).toEqual(['cloud']);
+        expect(topicsForMethod('cloudGetStatus')).toEqual([]);
+        expect(topicsForMethod('cloudDecide')).toEqual(['bookings', 'appointments']);
+        expect(topicsForMethod('backupRunNow')).toEqual([]);
     });
 
     it('numbers events and keeps a replay buffer', () => {

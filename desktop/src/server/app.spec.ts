@@ -522,3 +522,98 @@ describe('HTTP /api/ipc billing ledger over LAN', () => {
         expect(db.refundPayment).not.toHaveBeenCalled();
     });
 });
+
+describe('HTTP /api/ipc service methods (#196)', () => {
+    let server: ApiServer;
+    let db: any;
+    let after: ReturnType<typeof vi.fn>;
+    const run = vi.fn();
+
+    beforeEach(() => {
+        db = {
+            beginWork: vi.fn(),
+            endWork: vi.fn(),
+            runWork: vi.fn(async (work: () => unknown) => work()),
+            auditDenial: vi.fn(),
+            // Roles come from the facility grant, as stored; the token's role is not trusted.
+            getFacilityRole: vi.fn((userId: number) => ({ 1: 'admin', 5: 'nurse', 6: 'receptionist' } as Record<number, string>)[userId] ?? 'doctor'),
+            getAllRoles: vi.fn().mockReturnValue([]),
+            getAllOverrides: vi.fn().mockReturnValue([]),
+            saveSettings: vi.fn().mockReturnValue({ changes: 1 })
+        };
+        run.mockReset();
+        after = vi.fn();
+        server = new ApiServer(db, os.tmpdir());
+        server.registerServiceMethods({
+            cloudGetStatus: { access: 'user', run: () => ({ state: 'paired' }) },
+            cloudRequestPairing: { access: 'admin', run },
+            cloudDecide: { access: 'desk', run: () => ({ success: true }) },
+            cloudSyncNow: { access: 'user', selfFenced: true, run: () => ({ saved: 1 }) }
+        }, after);
+    });
+
+    afterEach(async () => {
+        await server.close();
+    });
+
+    function post(method: string, args: unknown[], user: { id: number; role: string }) {
+        return server.inject({
+            method: 'POST',
+            url: `/api/ipc/${method}`,
+            headers: { authorization: authHeader(user), 'content-type': 'application/json' },
+            payload: args
+        });
+    }
+
+    it('serves registered methods to the roles they allow, inside restore-drained work', async () => {
+        const status = await post('cloudGetStatus', [], { id: 5, role: 'nurse' });
+        expect(status.statusCode).toBe(200);
+        expect(status.json()).toEqual({ state: 'paired' });
+        expect(db.runWork).toHaveBeenCalledTimes(1);
+
+        expect((await post('cloudDecide', [{}], { id: 6, role: 'receptionist' })).statusCode).toBe(200);
+        expect((await post('cloudSyncNow', [], { id: 6, role: 'nurse' })).json()).toEqual({ saved: 1 });
+        expect(db.runWork).toHaveBeenCalledTimes(2);
+    });
+
+    it('announces cloud changes on the events stream, not reads or refusals', async () => {
+        const publish = vi.spyOn(server.events, 'publish');
+        await post('cloudGetStatus', [], { id: 5, role: 'nurse' });
+        await post('cloudRequestPairing', [{}], { id: 5, role: 'doctor' });
+        expect(publish).not.toHaveBeenCalled();
+        await post('cloudRequestPairing', [{}], { id: 1, role: 'admin' });
+        expect(publish).toHaveBeenCalledWith('cloud', 'cloudRequestPairing');
+        await post('cloudDecide', [{}], { id: 6, role: 'receptionist' });
+        expect(publish).toHaveBeenCalledWith('bookings', 'cloudDecide');
+    });
+
+    it('refuses and audits other roles', async () => {
+        const denied = await post('cloudRequestPairing', [{}], { id: 5, role: 'doctor' });
+        expect(denied.statusCode).toBe(403);
+        expect(run).not.toHaveBeenCalled();
+        expect(db.auditDenial).toHaveBeenCalledWith(expect.objectContaining({ method: 'cloudRequestPairing', channel: 'lan' }));
+        expect((await post('cloudDecide', [{}], { id: 5, role: 'nurse' })).statusCode).toBe(403);
+    });
+
+    it('passes the method error message to the admin screen', async () => {
+        run.mockRejectedValueOnce(new Error('This pairing code has expired.'));
+        const failed = await post('cloudRequestPairing', [{}], { id: 1, role: 'admin' });
+        expect(failed.statusCode).toBe(500);
+        expect(failed.json()).toEqual({ error: 'This pairing code has expired.' });
+
+        db.runWork.mockRejectedValueOnce(new Error('RESTORE_IN_PROGRESS'));
+        expect((await post('cloudRequestPairing', [{}], { id: 1, role: 'admin' })).statusCode).toBe(503);
+    });
+
+    it('tells the host after a database method succeeds', async () => {
+        const saved = await post('saveSettings', [{ backup_schedule: '02:00' }], { id: 1, role: 'admin' });
+        expect(saved.statusCode).toBe(200);
+        expect(after).toHaveBeenCalledWith('saveSettings', [{ backup_schedule: '02:00' }]);
+        after.mockImplementationOnce(() => { throw new Error('boom'); });
+        expect((await post('saveSettings', [{}], { id: 1, role: 'admin' })).statusCode).toBe(200);
+    });
+
+    it('will not shadow a database method', () => {
+        expect(() => server.registerServiceMethods({ getQueue: { access: 'user', run: () => [] } })).toThrow('already a database method');
+    });
+});

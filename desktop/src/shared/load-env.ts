@@ -10,11 +10,28 @@ export function loadDevelopmentEnv(): void {
         return;
     }
     loaded = true;
+    if (dotenvDisabled()) {
+        return;
+    }
 
     const envPaths = resolveEnvFilePaths();
     for (let i = 0; i < envPaths.length; i++) {
         dotenv.config({ path: envPaths[i], override: i > 0 });
     }
+}
+
+/**
+ * Installed NalamDesk Server packages set NALAMDESK_NO_DOTENV=1, so a `.env`
+ * in whatever folder the service or an operator's shell starts in can never
+ * change the server's configuration.
+ */
+export function dotenvDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+    return env['NALAMDESK_NO_DOTENV'] === '1';
+}
+
+/** `.env` in the working directory, unless NALAMDESK_NO_DOTENV=1. */
+export function loadWorkingDirEnv(): void {
+    if (!dotenvDisabled()) dotenv.config();
 }
 
 function resolveEnvFilePaths(): string[] {

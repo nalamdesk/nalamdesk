@@ -55,7 +55,9 @@ function tlsOptions(options: PinnedTransportOptions): https.RequestOptions {
         // Trust only the pinned certificate, and only by its fingerprint: a
         // self-signed certificate often lacks the IP or name being dialled.
         ca: options.pinnedCert,
-        checkServerIdentity: (_host: string, cert: tls.PeerCertificate) =>
+        // Reviewed (Sonar S5527): the identity check is the pinned
+        // fingerprint, which is stricter than a hostname match.
+        checkServerIdentity: (_host: string, cert: tls.PeerCertificate) => // NOSONAR
             normalizeFingerprint(cert.fingerprint256) === expected ? undefined : new Error('CERTIFICATE_PIN_MISMATCH')
     };
 }
@@ -168,7 +170,9 @@ export function fetchPeerCertificate(serverUrl: string, timeoutMs = DEFAULT_TIME
             // Read-only probe: nothing is sent on this socket. The certificate
             // is checked by fingerprint against the join code before any
             // request; later connections pin it with full verification.
-            rejectUnauthorized: false
+            // Reviewed (Sonar S4830): an unknown self-signed certificate
+            // cannot be read any other way.
+            rejectUnauthorized: false // NOSONAR
         }, () => {
             const peer = socket.getPeerCertificate(true);
             socket.end();

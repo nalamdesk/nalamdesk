@@ -35,6 +35,7 @@ COPY --from=build /out/nalamdesk-server /opt/nalamdesk-server
 RUN ln -s /opt/nalamdesk-server/bin/nalamdesk-server /usr/local/bin/nalamdesk-server
 
 ENV NALAMDESK_DATA_DIR=/var/lib/nalamdesk \
+    NALAMDESK_NO_DOTENV=1 \
     NALAMDESK_HOST=0.0.0.0 \
     NALAMDESK_PORT=3000
 # The vault, key file, backups and TLS files. Mount a volume here.

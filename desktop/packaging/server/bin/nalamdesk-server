@@ -1,6 +1,10 @@
 #!/bin/sh
 # NalamDesk Server launcher. Uses the bundled Node runtime when present.
 set -e
+# Configuration comes from /etc/nalamdesk and the environment, never a .env
+# file in the current folder.
+NALAMDESK_NO_DOTENV=1
+export NALAMDESK_NO_DOTENV
 ROOT="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)"
 NODE="$ROOT/runtime/node"
 [ -x "$NODE" ] || NODE="$(command -v node)"
@@ -13,7 +17,40 @@ fi
 if [ -z "${NALAMDESK_CONFIG:-}" ] && [ -f /etc/nalamdesk/server.json ]; then
     export NALAMDESK_CONFIG=/etc/nalamdesk/server.json
 fi
+# True when this command creates a systemd-creds or TPM credential. That
+# needs root: systemd-creds reads the host key in /var/lib/systemd and writes
+# /etc/credstore.encrypted, both root-only.
+creates_systemd_credential() {
+    case "${1:-}" in
+        init|import) ;;
+        key) [ "${2:-}" = "add" ] || return 1 ;;
+        *) return 1 ;;
+    esac
+    prev=""
+    for arg in "$@"; do
+        case "$prev:$arg" in
+            --provider:systemd-creds|--provider:tpm|*:--provider=systemd-creds|*:--provider=tpm) return 0 ;;
+        esac
+        prev="$arg"
+    done
+    # `key add` names its provider; init and import use the configured one.
+    [ "$1" = "key" ] && return 1
+    case "${NALAMDESK_KEY_PROVIDER:-}" in
+        systemd-creds|tpm) return 0 ;;
+        ?*) return 1 ;;
+    esac
+    [ -n "${NALAMDESK_CONFIG:-}" ] && [ -f "$NALAMDESK_CONFIG" ] \
+        && grep -Eq '"keyProvider"[[:space:]]*:[[:space:]]*"(systemd-creds|tpm)"' "$NALAMDESK_CONFIG"
+}
 if [ "$(id -u)" = "0" ] && [ -z "${NALAMDESK_ALLOW_ROOT:-}" ] && id nalamdesk >/dev/null 2>&1; then
+    if creates_systemd_credential "$@"; then
+        # Stay root for the credential, then hand the data directory back to
+        # the service account. The credential itself stays root-only, which
+        # is what LoadCredentialEncrypted= expects.
+        NALAMDESK_SERVICE_OWNER="$(id -u nalamdesk):$(id -g nalamdesk)"
+        export NALAMDESK_SERVICE_OWNER
+        exec "$NODE" "$ROOT/app/dist/server/server/headless/main.js" "$@"
+    fi
     if [ "${1:-}" = "import" ] && [ -n "${2:-}" ] && [ -f "$2" ]; then
         # The backup is often in a home folder the service user cannot read,
         # so hand it (and the recovery code file) over through a private copy.

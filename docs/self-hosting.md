@@ -33,6 +33,12 @@ Each release publishes the same version of the server in four forms. The
 image is `ghcr.io/nalamdesk/nalamdesk-server`. Each form bundles its own Node
 runtime, so you do not install Node.
 
+The Docker image, `.deb` and tarball come for `amd64` (x64) and `arm64`
+(for example a Raspberry Pi 4 or 5 with a 64-bit OS, or an ARM cloud
+server). Docker picks the right one by itself. For the `.deb` and tarball,
+download the file whose name ends in your architecture (`dpkg
+--print-architecture` prints it). The Windows zip is x64 only.
+
 ### Docker
 
 ```sh
@@ -92,11 +98,18 @@ The package:
   and enables it. It starts the service once a vault exists.
 
 Run CLI commands with `sudo`. The launcher switches to the `nalamdesk` user,
-so the files it creates stay readable by the service.
+so the files it creates stay readable by the service. The one exception is a
+command that creates a `systemd-creds` or `tpm` credential (see
+[key providers](#unlocking-the-vault-key-providers)): it stays root, because
+only root can use the host key and write `/etc/credstore.encrypted`, and then
+gives the data directory back to `nalamdesk`.
+
+The service and the launcher ignore `.env` files (`NALAMDESK_NO_DOTENV=1`).
+Put settings in `/etc/nalamdesk/server.json` or `/etc/default/nalamdesk-server`.
 
 ### Other Linux (tarball)
 
-Extract `nalamdesk-server-<version>-linux-x64.tar.gz` to
+Extract `nalamdesk-server-<version>-linux-x64.tar.gz` (or `-linux-arm64`) to
 `/opt/nalamdesk-server`, create a `nalamdesk` system user, and install
 `packaging/server/linux/nalamdesk-server.service` from the source tree. Or
 run `/opt/nalamdesk-server/bin/nalamdesk-server start` under the supervisor
@@ -256,10 +269,48 @@ service starts with it, and then remove the key file slot.
 
 The machine-bound providers and their options (`--credential-name`,
 `--dpapi-blob`, `--key-command`) are described in the
-[developer guide](../desktop/DEVELOPER_GUIDE.md). On the .deb, a
-`systemd-creds` slot also needs `Environment=NALAMDESK_KEY_PROVIDER=systemd-creds`
-and `LoadCredentialEncrypted=nalamdesk-vault-key` in a drop-in
-(`sudo systemctl edit nalamdesk-server`).
+[developer guide](../desktop/DEVELOPER_GUIDE.md).
+
+### systemd-creds on the .deb
+
+`systemd-creds` binds the vault key to this machine's host key (and, with
+`tpm`, its TPM chip). Run these as root with `sudo`. The launcher stays root
+for `key add --provider systemd-creds|tpm`, and for `init` or `import` when
+the configured provider is `systemd-creds` or `tpm`. The credential is
+written to `/etc/credstore.encrypted/nalamdesk-vault-key`, readable by root
+only, and systemd hands it to the service at start.
+
+1. Add the slot while the key file still unlocks the vault:
+
+   ```sh
+   sudo nalamdesk-server key add --provider systemd-creds --label "This server"
+   ```
+
+2. Tell the service to load the credential and unlock with it
+   (`sudo systemctl edit nalamdesk-server` opens the drop-in):
+
+   ```ini
+   [Service]
+   Environment=NALAMDESK_KEY_PROVIDER=systemd-creds
+   LoadCredentialEncrypted=nalamdesk-vault-key
+   ```
+
+   With `--credential-name` or `--credential-path`, use the line `key add`
+   printed instead, for example
+   `LoadCredentialEncrypted=clinic-key:/etc/credstore.encrypted/clinic-key`.
+
+3. Restart and check that it unlocks:
+
+   ```sh
+   sudo systemctl restart nalamdesk-server
+   sudo systemctl status nalamdesk-server
+   ```
+
+CLI commands run outside the service, so they have no `$CREDENTIALS_DIRECTORY`
+and cannot unlock with this slot; they keep using the provider in
+`/etc/nalamdesk/server.json`. Before you remove the key file slot
+(`sudo nalamdesk-server key remove <slot-id>`), add another slot for the CLI,
+such as a `passphrase`, and point `server.json` at it.
 
 **Keep the key file separate from your backups.** A backup and its key file
 together open the clinic's records.

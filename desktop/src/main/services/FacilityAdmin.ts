@@ -317,3 +317,20 @@ export function grantNewUserRole(db: any, userId: number, role: unknown, facilit
         SELECT ?, f.id, ?, ? FROM facilities f WHERE f.id = ?`)
         .run(Number(userId), name, actingUserId ?? null, Number(facilityId) || DEFAULT_FACILITY_ID);
 }
+
+/**
+ * Editing an admin's role in Users to something else also ends their
+ * organisation admin access, so the role shown there matches what they can
+ * do. Same guards as setOrgAdmin. Returns true when org_admin must be cleared.
+ */
+export function assertAdminDemotionAllowed(db: any, existing: any, newRole: unknown, actingUserId?: number): boolean {
+    const wasAdmin = String(existing?.role ?? '').toLowerCase() === 'admin';
+    const staysAdmin = String(newRole ?? '').toLowerCase() === 'admin';
+    if (!wasAdmin || staysAdmin || Number(existing?.org_admin) !== 1) return false;
+    if (actingUserId != null && Number(actingUserId) === Number(existing.id)) {
+        fail('You cannot remove your own admin access.');
+    }
+    const admins = Number((db.prepare('SELECT COUNT(*) AS n FROM users WHERE org_admin = 1 AND active = 1').get() as any).n);
+    if (admins <= 1) fail('At least one organisation admin must remain.');
+    return true;
+}

@@ -23,7 +23,7 @@ import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } f
 import { validateAbhaNumber, validateIdentifier } from '../../shared/patient-identifiers';
 import { durationEndDate } from '../../shared/clinical-timing';
 import { currentAuditDeviceId } from './AuditContext';
-import { FacilityAdmin, grantNewUserRole } from './FacilityAdmin';
+import { FacilityAdmin, assertAdminDemotionAllowed, grantNewUserRole } from './FacilityAdmin';
 import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder, type FinalRxLine } from '../../shared/prescription-order';
 
 export class DatabaseService {
@@ -344,7 +344,9 @@ export class DatabaseService {
             emergency_contact_name: safeUser.emergency_contact_name,
             emergency_contact_phone: safeUser.emergency_contact_phone
         };
+        const demoted = assertAdminDemotionAllowed(this.db, existing, safeUser.role, actingUserId);
         const result = this.db.prepare(query).run(params);
+        if (demoted) this.db.prepare('UPDATE users SET org_admin = 0 WHERE id = ?').run(Number(user.id));
         // With several facilities, the edited role is the one held at this facility.
         if (safeUser.role) {
             this.db.prepare('UPDATE user_facility_roles SET role = ? WHERE user_id = ? AND facility_id = ?')

@@ -101,19 +101,27 @@ describe('organisation admin (#214)', () => {
         expect(() => call('setOrgAdmin', { userId: RAVI, orgAdmin: true }, ASHA)).toThrow('Reactivate');
     });
 
-    it('keeps organisation admin when a user is edited in a one-facility vault', async () => {
+    it('keeps organisation admin through unrelated edits, and demotes with the role (#214)', async () => {
+        // A doctor made organisation admin stays one when their profile is edited.
         call('setOrgAdmin', { userId: ASHA, orgAdmin: true });
         await service.saveUser({ id: ASHA, username: 'asha', role: 'doctor', name: 'Dr. Asha', license_number: 'TN-1', mobile: '9', active: 1 }, BOSS);
         expect((db.prepare('SELECT org_admin FROM users WHERE id = ?').get(ASHA) as any).org_admin).toBe(1);
-        // The last organisation admin cannot be dropped by a role edit either.
         call('setOrgAdmin', { userId: ASHA, orgAdmin: false });
-        await service.saveUser({ id: BOSS, username: 'boss', role: 'doctor', name: 'Boss', license_number: 'TN-2', active: 1 }, BOSS);
-        expect((db.prepare('SELECT org_admin FROM users WHERE id = ?').get(BOSS) as any).org_admin).toBe(1);
+
+        // The last organisation admin cannot be demoted by a role edit, nor can you demote yourself.
+        await expect(service.saveUser({ id: BOSS, username: 'boss', role: 'doctor', name: 'Boss', active: 1 }, BOSS))
+            .rejects.toThrow('your own admin access');
+        await expect(service.saveUser({ id: BOSS, username: 'boss', role: 'doctor', name: 'Boss', active: 1 }, ASHA))
+            .rejects.toThrow('At least one organisation admin');
         expect(service.getFacilityRole(BOSS, 1)).toBe('admin');
 
-        // Promoting someone to admin in Users still makes them an organisation admin.
+        // Promoting someone to admin in Users makes them an organisation admin;
+        // changing their role back ends it, so Users shows what they can do.
         await service.saveUser({ id: RAVI, username: 'ravi', role: 'admin', name: 'Ravi', active: 1 }, BOSS);
         expect((db.prepare('SELECT org_admin FROM users WHERE id = ?').get(RAVI) as any).org_admin).toBe(1);
+        await service.saveUser({ id: RAVI, username: 'ravi', role: 'receptionist', name: 'Ravi', active: 1 }, BOSS);
+        expect((db.prepare('SELECT org_admin FROM users WHERE id = ?').get(RAVI) as any).org_admin).toBe(0);
+        expect(service.getFacilityRole(RAVI, 1)).toBe('receptionist');
     });
 
     it('gives a new staff member their role at the facility they were created in', async () => {

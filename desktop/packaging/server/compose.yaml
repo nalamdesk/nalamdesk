@@ -1,0 +1,24 @@
+# NalamDesk Server with Docker Compose. See docs/self-hosting.md.
+#
+#   curl -fsSLO https://raw.githubusercontent.com/nalamdesk/nalamdesk/master/desktop/packaging/server/compose.yaml
+#   docker compose run --rm nalamdesk init --clinic-name "Asha Clinic"
+#   docker compose up -d
+#
+# init asks for the admin password and prints the recovery code once.
+# Set NALAMDESK_VERSION (for example v0.0.14) to pin a release.
+# The project name keeps the volume name the same in any folder.
+name: nalamdesk
+
+services:
+  nalamdesk:
+    image: ghcr.io/nalamdesk/nalamdesk-server:${NALAMDESK_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "${NALAMDESK_PORT:-3000}:3000"
+    volumes:
+      - nalamdesk-data:/var/lib/nalamdesk
+    # Gives the server time to close the database on stop.
+    stop_grace_period: 30s
+
+volumes:
+  nalamdesk-data:

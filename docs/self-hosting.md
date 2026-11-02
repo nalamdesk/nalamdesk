@@ -41,6 +41,24 @@ download the file whose name ends in your architecture (`dpkg
 
 ### Docker
 
+The image is public, so any machine with Docker can run it. The quickest way
+is the [compose file](../desktop/packaging/server/compose.yaml):
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/nalamdesk/nalamdesk/master/desktop/packaging/server/compose.yaml
+docker compose run --rm nalamdesk init --clinic-name "Asha Clinic"
+docker compose up -d
+```
+
+`init` asks for the admin password (12 characters or more) and prints the
+**recovery code** once. Store it offline (see
+[The recovery code](#the-recovery-code)). Then join the clinic's computers
+with `docker compose exec nalamdesk nalamdesk-server join-code --name "Reception"`.
+Set `NALAMDESK_VERSION=v0.0.14` in a `.env` file next to `compose.yaml` to pin
+a version instead of `latest`, and `NALAMDESK_PORT` to publish another port.
+
+Without Compose, the same steps with `docker run`:
+
 ```sh
 docker volume create nalamdesk-data
 printf '%s\n' 'choose-a-strong-admin-password' > admin-password   # 12 characters or more
@@ -49,29 +67,10 @@ docker run --rm -v nalamdesk-data:/var/lib/nalamdesk \
   -e NALAMDESK_ADMIN_PASSWORD_FILE=/run/secrets/admin-password \
   ghcr.io/nalamdesk/nalamdesk-server:latest init --clinic-name "Asha Clinic"
 shred -u admin-password
-```
 
-`init` prints the **recovery code** once. Store it offline (see
-[The recovery code](#the-recovery-code)). Then start the server:
-
-```sh
 docker run -d --name nalamdesk --restart unless-stopped \
   -p 3000:3000 -v nalamdesk-data:/var/lib/nalamdesk \
   ghcr.io/nalamdesk/nalamdesk-server:latest
-```
-
-With Docker Compose:
-
-```yaml
-services:
-  nalamdesk:
-    image: ghcr.io/nalamdesk/nalamdesk-server:v0.0.14   # pin a version
-    restart: unless-stopped
-    ports: ["3000:3000"]
-    volumes: ["nalamdesk-data:/var/lib/nalamdesk"]
-    stop_grace_period: 30s
-volumes:
-  nalamdesk-data:
 ```
 
 The image runs as user `nalamdesk` (uid 10001). Everything it keeps is in the
@@ -403,8 +402,8 @@ against it, and sign in.
 
 The server never updates itself. To upgrade:
 
-- **Docker:** `docker pull` the new tag, then recreate the container with
-  the same volume.
+- **Docker:** `docker compose pull && docker compose up -d`, or `docker
+  pull` the new tag and recreate the container with the same volume.
 - **.deb:** `sudo apt install ./nalamdesk-server_<new>_amd64.deb`. The
   package restarts the service.
 - **Windows:** extract the new zip and run its `install-service.ps1`. It

@@ -191,6 +191,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
     cloud: {
         getStatus: () => ipcRenderer.invoke('cloud:getStatus'),
+        listFacilities: () => ipcRenderer.invoke('cloud:listFacilities'),
         requestPairing: (data: { hfrId: string, label: string }) => ipcRenderer.invoke('cloud:requestPairing', data),
         cancelPairing: () => ipcRenderer.invoke('cloud:cancelPairing'),
         activatePairing: (data: { code: string }) => ipcRenderer.invoke('cloud:activatePairing', data),

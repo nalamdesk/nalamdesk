@@ -54,6 +54,11 @@ export class CloudService {
         return this.call('getStatus', 'cloudGetStatus');
     }
 
+    /** Admin: the pairing state of every facility (#215). */
+    async listFacilities(): Promise<FacilityCloudStatus[]> {
+        return this.call('listFacilities', 'cloudListFacilities');
+    }
+
     async requestPairing(hfrId: string, label: string): Promise<CloudStatus> {
         return this.call('requestPairing', 'cloudRequestPairing', { hfrId, label });
     }

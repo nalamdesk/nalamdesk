@@ -1,11 +1,13 @@
 export { };
 
 declare global {
-    /** This computer's NalamDesk Cloud pairing (#154), as main reports it. */
+    /** The current facility's NalamDesk Cloud pairing (#154, #215), as main reports it. */
     interface CloudStatus {
         state: 'unpaired' | 'requested' | 'paired' | 'revoked' | 'keys_unavailable';
         configured: boolean;
         listingEnabled: boolean;
+        /** The facility this status is for. */
+        facilityId?: number;
         hfrId?: string;
         label?: string;
         requestExpiresAt?: number;
@@ -17,6 +19,17 @@ declare global {
         message?: string;
         /** Mailbox and doorbell (#155), while paired. */
         mailbox?: { doorbell: 'off' | 'connecting' | 'live'; lastCheckedAt: number | null };
+    }
+
+    /** One facility's pairing, for the admin's list of every facility (#215). */
+    interface FacilityCloudStatus {
+        facilityId: number;
+        code: string;
+        name: string;
+        state: CloudStatus['state'];
+        hfrId: string | null;
+        label: string | null;
+        listingEnabled: boolean;
     }
 
     /** A facility the signed-in user can work in, with their role there (#195). */

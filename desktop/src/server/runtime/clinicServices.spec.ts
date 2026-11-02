@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron-log', () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
-import { createClinicServices } from './clinicServices';
+import { createClinicServices, facilityScoped } from './clinicServices';
+import { currentFacilityId, runWithContext } from '../../shared/request-context';
 
 function fakeDb(overrides: Record<string, unknown> = {}) {
     return {
@@ -11,6 +12,8 @@ function fakeDb(overrides: Record<string, unknown> = {}) {
         saveCloudDevice: vi.fn(),
         clearCloudDevice: vi.fn(),
         getNewAbdmMailboxItems: vi.fn(() => []),
+        listCloudDeviceFacilities: vi.fn(() => [] as number[]),
+        listFacilitiesForCloud: vi.fn(() => [{ id: 1, code: 'MAIN', name: 'Main' }, { id: 2, code: 'ANN', name: 'Anna Nagar' }]),
         expireFetchedRecords: vi.fn(),
         sweepExpiredMedications: vi.fn(),
         runWork: vi.fn(async (work: () => unknown) => work()),
@@ -64,5 +67,67 @@ describe('createClinicServices', () => {
         const services = createClinicServices({ db: fakeDb() as any, keyStore, appVersion: '1.0.0', baseUrl: () => null, notify });
         (services.mailbox as any).deps.onShare();
         expect(notify).toHaveBeenCalledWith('abdm:shareReceived', {});
+    });
+
+    describe('per facility (#215)', () => {
+        const as = <T>(facilityId: number, run: () => T) => runWithContext({ userId: 1, facilityId }, run);
+
+        it('gives each facility its own cloud link, resolved from the request', () => {
+            const services = createClinicServices({ db: fakeDb() as any, keyStore, appVersion: '1.0.0', baseUrl: () => null });
+            const first = as(1, () => services.cloudLink);
+            const second = as(2, () => services.cloudLink);
+            expect(first).not.toBe(second);
+            expect(second).toBe(services.cloudLinkFor(2));
+            expect(as(2, () => services.cloudLink)).toBe(second);
+        });
+
+        it('reads and writes each link\'s pairing as its facility, whoever calls', () => {
+            const seen: number[] = [];
+            const db = fakeDb({ getCloudDevice: vi.fn(() => { seen.push(currentFacilityId()); return null; }) });
+            const services = createClinicServices({ db: db as any, keyStore, appVersion: '1.0.0', baseUrl: () => null });
+            as(1, () => services.cloudLinkFor(2).pairing.status());
+            expect(seen).toEqual([2]);
+            expect(as(2, () => services.cloudStatus())).toMatchObject({ facilityId: 2, state: 'unpaired' });
+        });
+
+        it('sends ABDM through the relay as the request\'s facility', async () => {
+            const services = createClinicServices({ db: fakeDb() as any, keyStore, appVersion: '1.0.0', baseUrl: () => null });
+            const send = vi.fn(async () => ({ status: 200, body: { ok: true } }));
+            vi.spyOn(services.cloudLinkFor(2), 'abdmRelay').mockReturnValue(send as any);
+            vi.spyOn(services.cloudLinkFor(2).pairing, 'status').mockReturnValue({ state: 'paired', configured: true, hfrId: 'IN3310000002' });
+
+            expect(as(1, () => services.relay.status())).toMatchObject({ mode: 'mock', hfr_id: null });
+            expect(as(2, () => services.relay.status())).toMatchObject({ mode: 'relay', hfr_id: 'IN3310000002' });
+            await as(2, () => services.relay.send('gateway', 'POST', '/x', {}));
+            expect(send).toHaveBeenCalledWith('POST', '/abdm/gateway/x', {});
+            await expect(as(1, () => services.relay.send('gateway', 'POST', '/x', {}))).rejects.toThrow(/not paired/);
+        });
+
+        it('starts the link of every facility with a cloud identity and lists each facility\'s state', () => {
+            const db = fakeDb({ listCloudDeviceFacilities: vi.fn(() => [1, 3]) });
+            const services = createClinicServices({ db: db as any, keyStore, appVersion: '1.0.0', baseUrl: () => null });
+            const start = vi.spyOn(services.cloudLinkFor(3), 'start');
+            services.start();
+            expect(start).toHaveBeenCalledTimes(1);
+            // A link first needed after start starts straight away.
+            const later = services.cloudLinkFor(4);
+            expect(later).toBe(services.cloudLinkFor(4));
+            expect(services.cloudFacilities()).toEqual([
+                { facilityId: 1, code: 'MAIN', name: 'Main', state: 'unpaired', hfrId: null, label: null, listingEnabled: true },
+                { facilityId: 2, code: 'ANN', name: 'Anna Nagar', state: 'unpaired', hfrId: null, label: null, listingEnabled: true }
+            ]);
+            const stop = vi.spyOn(services.cloudLinkFor(3), 'stop');
+            services.stop();
+            expect(stop).toHaveBeenCalled();
+        });
+    });
+});
+
+describe('facilityScoped', () => {
+    it('runs each method as the facility and passes other properties through', () => {
+        const target = { name: 'db', where() { return currentFacilityId(); } };
+        const scoped = facilityScoped(target, 7);
+        expect(scoped.where()).toBe(7);
+        expect(scoped.name).toBe('db');
     });
 });

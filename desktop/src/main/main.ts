@@ -186,7 +186,6 @@ const clinicServices = createClinicServices({
     warn: (message) => log.warn(message)
 });
 const {
-    cloudLink,
     relay: abdmRelayService,
     abha: abdmAbhaService,
     hiu: hiuService,
@@ -220,7 +219,7 @@ const backupService = new BackupService(databaseService, googleDriveService, sec
     // Restore validation must not reconfigure or close the live vault.
     createIsolatedSecurityService: () => new SecurityService(new ElectronSafeStorageDeviceKeyStore()),
     onRestoreCommitted: () => {
-        cloudLink.stop();
+        clinicServices.stop();
         sessionService.clearSession();
     }
 });

@@ -843,20 +843,21 @@ export class DatabaseService {
         return (save as any).immediate ? (save as any).immediate() : (save as any)();
     }
 
-    // Main-process-only: this computer's NalamDesk Cloud identity (#154).
-    // The private keys in it are keychain-wrapped; never exposed over IPC or LAN.
-    getCloudDevice(): CloudDeviceRow | null {
+    // Main-process-only: this computer's NalamDesk Cloud identity (#154),
+    // one per facility (#215). The private keys in it are keychain-wrapped;
+    // never exposed over IPC or LAN.
+    getCloudDevice(facilityId: number = currentFacilityId()): CloudDeviceRow | null {
         try {
-            const row = this.db.prepare('SELECT * FROM cloud_device WHERE id = 1').get() as any;
+            const row = this.db.prepare('SELECT * FROM cloud_device WHERE facility_id = ?').get(Number(facilityId)) as any;
             if (!row) return null;
-            const { id: _id, ...rest } = row;
-            return rest as CloudDeviceRow;
+            delete row.facility_id;
+            return row as CloudDeviceRow;
         } catch {
             return null;
         }
     }
 
-    saveCloudDevice(row: CloudDeviceRow) {
+    saveCloudDevice(row: CloudDeviceRow, facilityId: number = currentFacilityId()) {
         const columns = [
             'state', 'hfr_id', 'request_id', 'request_expires_at', 'device_id', 'clinic_id', 'data_push_url', 'label',
             'signing_public', 'signing_private_protected', 'signing_created_at', 'previous_signing_public',
@@ -864,24 +865,63 @@ export class DatabaseService {
             'revoked_reason', 'updated_at', 'iot_private_protected', 'iot_public', 'iot_certificate_pem', 'iot_endpoint',
             'iot_topic', 'iot_client_id'
         ] as const;
-        const params: Record<string, unknown> = { id: 1 };
+        const params: Record<string, unknown> = { facility_id: Number(facilityId) };
         for (const column of columns) params[column] = row[column] ?? null;
-        this.db.prepare(`INSERT OR REPLACE INTO cloud_device(id, ${columns.join(', ')})
-            VALUES(@id, ${columns.map((c) => `@${c}`).join(', ')})`).run(params);
+        const placeholders = columns.map((c) => `@${c}`).join(', ');
+        const save = this.db.transaction(() => {
+            if (!this.db.prepare('SELECT 1 AS ok FROM facilities WHERE id = ?').get(Number(facilityId))) {
+                throw new Error('Unknown facility.');
+            }
+            // One live pairing per HFR ID: the relay keeps one computer per HFR ID.
+            // Another facility's expired request is dropped rather than blocking it.
+            if (row.state !== 'revoked') {
+                this.db.prepare(`DELETE FROM cloud_device WHERE hfr_id = ? AND facility_id <> ? AND state = 'requested'
+                    AND COALESCE(request_expires_at, 0) <= ?`).run(row.hfr_id, Number(facilityId), Date.now());
+                const holder = this.db.prepare(`SELECT f.name, f.code, d.state FROM cloud_device d
+                    LEFT JOIN facilities f ON f.id = d.facility_id
+                    WHERE d.hfr_id = ? AND d.facility_id <> ? AND d.state <> 'revoked'`).get(row.hfr_id, Number(facilityId)) as any;
+                if (holder) {
+                    const where = holder.name || holder.code || 'Another facility';
+                    const what = holder.state === 'requested' ? 'has a pairing request open for' : 'is already paired with';
+                    throw new Error(`${where} ${what} this HFR ID. Cancel or unpair it there first.`);
+                }
+            }
+            this.db.prepare(`INSERT OR REPLACE INTO cloud_device(facility_id, ${columns.join(', ')})
+                VALUES(@facility_id, ${placeholders})`).run(params);
+        });
+        return (save as any).immediate ? (save as any).immediate() : (save as any)();
     }
 
-    clearCloudDevice() {
-        this.db.prepare('DELETE FROM cloud_device').run();
+    clearCloudDevice(facilityId: number = currentFacilityId()) {
+        this.db.prepare('DELETE FROM cloud_device WHERE facility_id = ?').run(Number(facilityId));
+    }
+
+    /** Facilities with a cloud identity: the ones whose cloud work starts at launch. */
+    listCloudDeviceFacilities(): number[] {
+        try {
+            return (this.db.prepare('SELECT facility_id FROM cloud_device ORDER BY facility_id').all() as any[])
+                .map((row) => Number(row.facility_id));
+        } catch {
+            return [];
+        }
+    }
+
+    /** Active facilities, for the per-facility pairing list on the admin screen. */
+    listFacilitiesForCloud(): Array<{ id: number; code: string; name: string }> {
+        return this.db.prepare('SELECT id, code, name FROM facilities WHERE active = 1 ORDER BY id').all() as any[];
     }
 
     // ABDM callbacks and data pushes opened from the cloud mailbox (#155).
+    // Each item belongs to the facility whose mailbox it came from (#215).
     saveAbdmInboxItem(row: AbdmInboxRow) {
-        this.db.prepare(`INSERT OR IGNORE INTO abdm_mailbox(id, type, path, request_id, received_at, payload, created_at)
-            VALUES(@id, @type, @path, @request_id, @received_at, @payload, @created_at)`).run({ ...row, created_at: Date.now() });
+        this.db.prepare(`INSERT OR IGNORE INTO abdm_mailbox(id, type, path, request_id, received_at, payload, created_at, facility_id)
+            VALUES(@id, @type, @path, @request_id, @received_at, @payload, @created_at, @facility_id)`)
+            .run({ ...row, created_at: Date.now(), facility_id: this.facilityId() });
     }
 
+    /** New items from every facility's mailbox; the processor applies each as its facility. */
     getNewAbdmMailboxItems(limit: number) {
-        return this.db.prepare(`SELECT id, type, path, request_id, received_at, payload, status FROM abdm_mailbox
+        return this.db.prepare(`SELECT id, type, path, request_id, received_at, payload, status, facility_id FROM abdm_mailbox
             WHERE status = 'new' ORDER BY created_at ASC, id ASC LIMIT ?`).all(limit);
     }
 
@@ -891,7 +931,8 @@ export class DatabaseService {
 
     abdmMailboxRequestSeen(path: string, requestId: string, exceptId: string): boolean {
         return !!this.db.prepare(`SELECT 1 FROM abdm_mailbox
-            WHERE request_id = ? AND path = ? AND id != ? AND status = 'processed' LIMIT 1`).get(requestId, path, exceptId);
+            WHERE request_id = ? AND path = ? AND id != ? AND status = 'processed' AND facility_id = ? LIMIT 1`)
+            .get(requestId, path, exceptId, this.facilityId());
     }
 
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL AND active != 0').get().count;

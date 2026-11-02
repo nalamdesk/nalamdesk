@@ -34,6 +34,8 @@ const MAX_RECORDS_PER_PUSH = 100;
 
 export interface AbdmMailboxItem extends AbdmInboxRow {
     status: 'new' | 'processed' | 'failed';
+    /** The facility whose mailbox the item came from (#215). */
+    facility_id?: number;
 }
 
 export interface AbdmMailboxStore {
@@ -71,6 +73,11 @@ export interface AbdmMailboxProcessorDeps {
     onShare?: () => void;
     /** DatabaseService.runWork: a restore drains this work before replacing the database. */
     runWork?: <T>(work: () => Promise<T>) => Promise<T>;
+    /**
+     * Runs `run` as `facilityId` (#215), so the item's writes, the HIU and
+     * HIP, and the relay reply all act as the facility it was sent to.
+     */
+    inFacility?: <T>(facilityId: number, run: () => T) => T;
     nowMs?: () => number;
 }
 
@@ -124,10 +131,11 @@ export class AbdmMailboxProcessor {
                 const items = this.deps.store.getNewAbdmMailboxItems(BATCH_SIZE);
                 if (items.length === 0) break;
                 for (const item of items) {
-                    const outcome = this.apply(item);
+                    const outcome = this.asFacility(item, () => this.apply(item));
                     this.deps.store.setAbdmMailboxStatus(item.id, outcome.status);
                     result[outcome.status] += 1;
-                    if (outcome.reply) replies.push(outcome.reply);
+                    const reply = outcome.reply;
+                    if (reply) replies.push(() => this.asFacility(item, reply));
                     if (outcome.status === 'processed' && item.path === SHARE_PATH) shared = true;
                 }
                 if (items.length < BATCH_SIZE) break;
@@ -138,6 +146,12 @@ export class AbdmMailboxProcessor {
             await reply().catch((error) => log.warn(`[ABDM mailbox] Gateway reply failed: ${(error as Error).message}`));
         }
         return result;
+    }
+
+    private asFacility<T>(item: AbdmMailboxItem, run: () => T): T {
+        const facilityId = Number(item.facility_id);
+        if (!this.deps.inFacility || !Number.isInteger(facilityId) || facilityId <= 0) return run();
+        return this.deps.inFacility(facilityId, run);
     }
 
     private apply(item: AbdmMailboxItem): Outcome {

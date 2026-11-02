@@ -8,6 +8,20 @@ The project is split into two domains:
 1.  **Desktop App** (`/desktop`): The core Electron application running locally. Stores data in SQLite.
 2.  **[Cloud Platform](./cloud/README.md)** (`/cloud`): The remote infrastructure (API + Web) for syncing and patient access.
 
+## Run NalamDesk Server with Docker 🐳
+
+A clinic with several computers can run NalamDesk Server on its own machine
+from the public image `ghcr.io/nalamdesk/nalamdesk-server` (amd64 and arm64):
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/nalamdesk/nalamdesk/master/desktop/packaging/server/compose.yaml
+docker compose run --rm nalamdesk init --clinic-name "My Clinic"
+docker compose up -d
+```
+
+The [self-hosting guide](docs/self-hosting.md) covers HTTPS, joining
+computers, backups and upgrades.
+
 ## Desktop Development Setup 💻
 
 Follow these steps to set up the development environment from a clean repository.

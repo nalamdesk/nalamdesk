@@ -210,6 +210,23 @@ jobs:
           docker stop -t 30 nd-init nd-import
           test "$(docker inspect -f '{{.State.ExitCode}}' nd-init)" = "0"
 
+      # The documented install: compose.yaml with init, then up.
+      - name: Smoke test compose.yaml
+        env:
+          NALAMDESK_VERSION: ci
+          NALAMDESK_PORT: '3103'
+          COMPOSE_PROJECT_NAME: ndcompose
+        run: |
+          docker tag nalamdesk-server:test ghcr.io/nalamdesk/nalamdesk-server:ci
+          compose="docker compose -f packaging/server/compose.yaml"
+          $compose config -q
+          $compose run --rm -T -e NALAMDESK_ADMIN_PASSWORD=a-strong-admin-password \
+            nalamdesk init --clinic-name "CI Clinic"
+          $compose up -d --pull never
+          node packaging/server/smoke/login.js wait https://127.0.0.1:3103 || { $compose logs; exit 1; }
+          $compose exec -T nalamdesk nalamdesk-server status
+          $compose down
+
       - name: Log in to GHCR
         if: inputs.tag != ''
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

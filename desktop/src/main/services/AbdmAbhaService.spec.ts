@@ -29,14 +29,14 @@ describe('AbdmAbhaService (mock gateway)', () => {
         const svc = new AbdmAbhaService({ relay: mockRelay() });
         await expect(svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123' }))
             .rejects.toThrow('12 digits');
-        await expect(svc.requestEnrollmentOtp({ via: 'mobile', identifier: '12' }))
-            .rejects.toThrow('10 to 15 digits');
+        await expect(svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' }))
+            .rejects.toThrow('starts with an Aadhaar number');
     });
 
     it('runs the mock enrollment round trip with any 6-digit code, and never calls the relay', async () => {
         const relay = mockRelay();
         const svc = new AbdmAbhaService({ relay });
-        const started = await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123412341234' });
         expect(started.txnId.startsWith('mock-txn-')).toBe(true);
         expect(started.mock).toBe(true);
         expect(started.hint).toContain('6-digit');
@@ -197,22 +197,22 @@ describe('AbdmAbhaService (through the relay)', () => {
         const svc = new AbdmAbhaService({ relay, nowMs: () => now });
         const certCalls = () => relay.send.mock.calls.filter((call) => call[2] === '/v3/profile/public/certificate').length;
 
-        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
-        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123412341234' });
+        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123412341234' });
         expect(certCalls()).toBe(1);
 
         svc.invalidateCert();
-        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123412341234' });
         expect(certCalls()).toBe(2);
 
         now += 25 * 60 * 60 * 1000;
-        await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123412341234' });
         expect(certCalls()).toBe(3);
     });
 
     it('fails plainly when the certificate is unusable', async () => {
         const svc = new AbdmAbhaService({ relay: liveRelay({}, { publicKey: 'nope' }) });
-        await expect(svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' })).rejects.toThrow('usable public key');
+        await expect(svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123412341234' })).rejects.toThrow('usable public key');
     });
 
     it('decides mock or relay once per operation, so pairing mid-flight never sends plaintext', async () => {
@@ -220,7 +220,7 @@ describe('AbdmAbhaService (through the relay)', () => {
         relay.isMockMode.mockReturnValueOnce(true);
         const svc = new AbdmAbhaService({ relay });
 
-        const started = await svc.requestEnrollmentOtp({ via: 'mobile', identifier: '9876543210' });
+        const started = await svc.requestEnrollmentOtp({ via: 'aadhaar', identifier: '123412341234' });
 
         expect(started.mock).toBe(true);
         expect(relay.send).not.toHaveBeenCalled();

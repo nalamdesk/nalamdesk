@@ -35,7 +35,6 @@ const PATHS = {
     enrolRequestOtp: '/v3/enrollment/request/otp',
     enrolByAadhaar: '/v3/enrollment/enrol/byAadhaar',
     enrolAuthByAbdm: '/v3/enrollment/auth/byAbdm',
-    enrolByDocument: '/v3/enrollment/enrol/byDocument',
     enrolSuggestion: '/v3/enrollment/enrol/suggestion',
     enrolAbhaAddress: '/v3/enrollment/enrol/abha-address',
     loginRequestOtp: '/v3/profile/login/request/otp',
@@ -129,25 +128,28 @@ export class AbdmAbhaService {
         return pem;
     }
 
-    /** Starts enrollment: sends an OTP for an Aadhaar number or mobile number (v3 request/otp). */
+    /**
+     * Starts enrollment: sends an OTP to the mobile linked with an Aadhaar
+     * number (v3 request/otp). ABDM v3 has no mobile-only ABHA enrolment; a
+     * mobile number is verified later through auth/byAbdm, so a mobile start
+     * is refused here rather than confirmed against the Aadhaar route.
+     */
     async requestEnrollmentOtp(request: AbdmOtpRequest): Promise<{ txnId: string; mock: boolean; hint?: string }> {
-        const via = request?.via === 'mobile' ? 'mobile' : 'aadhaar';
-        const identifier = String(request?.identifier || '').replace(/\D/g, '');
-        if (via === 'aadhaar' && identifier.length !== 12) {
-            throw new Error('Aadhaar number must be 12 digits.');
+        if (request?.via === 'mobile') {
+            throw new Error('ABHA enrolment starts with an Aadhaar number in ABDM v3. Enter the patient\'s Aadhaar number.');
         }
-        if (via === 'mobile' && (identifier.length < 10 || identifier.length > 15)) {
-            throw new Error('Mobile number must be 10 to 15 digits.');
+        const identifier = String(request?.identifier || '').replace(/\D/g, '');
+        if (identifier.length !== 12) {
+            throw new Error('Aadhaar number must be 12 digits.');
         }
         const path = PATHS.enrolRequestOtp;
         // Live identifiers travel RSA-encrypted; mock traffic stays plaintext.
         // The session is resolved once so the decision and the request agree.
-        const field = via === 'mobile' ? 'mobile' : 'aadhaar';
         const snapshot = this.resolveSnapshot();
         const value = snapshot.mock
             ? identifier
             : AbdmRelayService.encryptWithPublicKey(identifier, await this.getGatewayPublicKey(snapshot));
-        const { json, mock } = await this.authorized(path, { [field]: value }, 'POST', snapshot);
+        const { json, mock } = await this.authorized(path, { aadhaar: value }, 'POST', snapshot);
         const txnId = String(json?.txnId || json?.txn_id || '');
         if (!txnId) throw new Error('ABDM enrollment did not return a transaction.');
         return mock ? { txnId, mock, hint: MOCK_OTP_HINT } : { txnId, mock };

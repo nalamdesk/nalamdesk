@@ -80,19 +80,8 @@ type OtpMode = 'enroll' | 'login';
 
           <!-- Step 2: enrollment details -->
           <div *ngIf="step === 'enroll'">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Verify with</label>
-            <div class="inline-flex rounded-md shadow-sm text-xs mb-3" role="group">
-              <button type="button" (click)="via = 'aadhaar'"
-                      [class.bg-blue-600]="via === 'aadhaar'" [class.text-white]="via === 'aadhaar'"
-                      [class.bg-gray-100]="via !== 'aadhaar'" [class.text-gray-700]="via !== 'aadhaar'"
-                      class="px-3 py-1.5 rounded-l border border-gray-300 font-medium transition">Aadhaar</button>
-              <button type="button" (click)="via = 'mobile'"
-                      [class.bg-blue-600]="via === 'mobile'" [class.text-white]="via === 'mobile'"
-                      [class.bg-gray-100]="via !== 'mobile'" [class.text-gray-700]="via !== 'mobile'"
-                      class="px-3 py-1.5 rounded-r border-t border-b border-r border-gray-300 font-medium transition">Mobile</button>
-            </div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ via === 'mobile' ? 'Mobile number' : 'Aadhaar number' }}</label>
-            <input [(ngModel)]="identifier" [placeholder]="via === 'mobile' ? '10-digit mobile number' : '12-digit Aadhaar number'"
+            <label class="block text-sm font-medium text-gray-700 mb-1">Aadhaar number</label>
+            <input [(ngModel)]="identifier" placeholder="12-digit Aadhaar number"
                 inputmode="numeric" class="w-full border p-2 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono">
             <div class="mt-3 flex gap-2">
               <button (click)="requestOtp()" [disabled]="busy || !identifier.trim()" class="btn btn-primary btn-sm flex-1">
@@ -155,7 +144,6 @@ export class AbhaModalComponent {
     verifiedAddress = '';
     foundName = '';
     lookupMiss = false;
-    via: 'aadhaar' | 'mobile' = 'mobile';
     identifier = '';
     txnId = '';
     otp = '';
@@ -205,7 +193,7 @@ export class AbhaModalComponent {
         this.error = '';
         try {
             const result = await this.dataService.invoke<any>('abdmAbhaRequestOtp', {
-                via: this.via,
+                via: 'aadhaar',
                 identifier: this.identifier.trim()
             });
             this.txnId = result?.txnId || '';

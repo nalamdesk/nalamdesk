@@ -31,8 +31,6 @@ const HI_NOTIFY = '/data-flow/v3/health-information/notify';
 const GENERATE_TOKEN = '/v3/token/generate-token';
 const LINK_CARE_CONTEXT = '/hip/v3/link/carecontext';
 const CONTEXT_NOTIFY = '/hip/v3/link/context/notify';
-const LINKED_CONTEXTS = '/hip/v3/link/patient/links';
-const SMS_NOTIFY2 = '/hip/v3/link/patient/links/sms/notify2';
 
 // The only record type this clinic writes: one OP consultation per visit.
 const HI_TYPE = 'OPConsultation';
@@ -420,7 +418,7 @@ export class HipService {
         });
     }
 
-    /** Returns the linked care contexts for an ABHA address (official M2: GET links). */
+    /** Returns the care contexts this clinic has linked to an ABHA address, from the local store. */
     linkedContexts(abhaAddress: string): string[] {
         return this.deps.store.getHipLinkedRefs(String(abhaAddress || '').trim());
     }

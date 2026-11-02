@@ -1,10 +1,40 @@
 # ABDM v3 Validation Report — NalamDesk (M1/M2/M3)
 
-Scope: validate the current implementation against the ABDM v3 sandbox docs, the
-Nirmitee v3 Postman collection, and the NHA functional test-case workbooks
-(M1/M2/M3). M4 (NHCX) out of scope. Source-of-truth inputs: sandbox
-`/sandbox/v3/new-documentation`, `Nirmitee-tech/abdm-v3-postman-collection`,
-`sandboxcms.abdm.gov.in` test-case xlsx files.
+Scope: validate the current implementation against the official ABDM v3
+sandbox sources (docs hub `/sandbox/v3/new-documentation`, the official M1/M2/M3
+documents and Postman bundle on `sandboxcms.abdm.gov.in`, and the NHA
+functional test-case workbooks). M4 (NHCX) out of scope. See `AGENTS.md` for
+the canonical source list. Third-party Postman collections are **not** a
+source of truth; an earlier draft of this report leaned on one and picked up
+fictitious routes (`POST getAbhaCard`, `enrol/byAbdm` as an enrol route).
+
+## Status after the v3 gap-fix PR (#218)
+
+Sections 0 to 6 below are the original audit, kept for history. This PR
+resolved:
+
+- **ABHA card:** stays on the documented `GET /v3/profile/account/abha-card`;
+  `POST getAbhaCard` is refused by the relay.
+- **Enrolment:** OTP starts at `/v3/enrollment/request/otp` with an Aadhaar
+  number and confirms at `/v3/enrollment/enrol/byAadhaar`. `enrol/byMobile`
+  and `enrol/verify` are gone and refused. v3 has no mobile-only ABHA
+  enrolment, so a mobile start is refused with a clear message; mobile
+  verification is `/v3/enrollment/auth/byAbdm`.
+- **M1 extras:** suggestion, abha-address, login search/verify-user, profile,
+  qrCode, profile OTP and abha/search are implemented and allowlisted.
+- **HIP:** `context/on-notify` and `sms/on-notify` acks handled;
+  `notifyContextUpdate` sends `/hip/v3/link/context/notify`.
+- **HIU:** `/api/v3/hiu/consent/request/on-status` is handled (REVOKED ends
+  the consent; unknown consent fails the item so the mailbox retries), and
+  `fetchConsentStatus` calls `/consent/v3/request/status`.
+- **Relay allowlist:** explicit per-path rules only. Routes with no desktop
+  sender yet (`enrol/byDocument`, `link/patient/links/sms/notify2`,
+  `GET link/patient/links`, `bridge/getServices`) stay **refused** until a
+  sender lands, per the zero-dead-permissions rule.
+
+Still open: live sandbox verification of every path (#152), the ABHA card
+`X-Token` header and image body, and the legacy HIP callback paths in
+section 2.
 
 ## 0. Summary of top defects
 

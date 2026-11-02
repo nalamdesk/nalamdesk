@@ -6,7 +6,6 @@ describe('resolveRoute', () => {
         ['POST', '/abdm/abha/v3/enrollment/request/otp', 'abha', '/v3/enrollment/request/otp'],
         ['POST', '/abdm/abha/v3/enrollment/enrol/byAadhaar', 'abha', '/v3/enrollment/enrol/byAadhaar'],
         ['POST', '/abdm/abha/v3/enrollment/auth/byAbdm', 'abha', '/v3/enrollment/auth/byAbdm'],
-        ['POST', '/abdm/abha/v3/enrollment/enrol/byDocument', 'abha', '/v3/enrollment/enrol/byDocument'],
         ['GET', '/abdm/abha/v3/enrollment/enrol/suggestion', 'abha', '/v3/enrollment/enrol/suggestion'],
         ['POST', '/abdm/abha/v3/enrollment/enrol/abha-address', 'abha', '/v3/enrollment/enrol/abha-address'],
         ['POST', '/abdm/abha/v3/profile/login/request/otp', 'abha', '/v3/profile/login/request/otp'],
@@ -23,8 +22,6 @@ describe('resolveRoute', () => {
         ['POST', '/abdm/gateway/patient-share/v3/on-share', 'gateway', '/patient-share/v3/on-share'],
         ['POST', '/abdm/gateway/consent/v3/request/init', 'gateway', '/consent/v3/request/init'],
         ['POST', '/abdm/gateway/consent/v3/request/status', 'gateway', '/consent/v3/request/status'],
-        ['POST', '/abdm/gateway/hip/v3/link/patient/links/sms/notify2', 'gateway', '/hip/v3/link/patient/links/sms/notify2'],
-        ['GET', '/abdm/gateway/hip/v3/link/patient/links', 'gateway', '/hip/v3/link/patient/links'],
         ['POST', '/abdm/gateway/v3/token/generate-token', 'gateway', '/v3/token/generate-token'],
         ['POST', '/abdm/gateway/hip/v3/link/carecontext', 'gateway', '/hip/v3/link/carecontext'],
         ['POST', '/abdm/gateway/hip/v3/link/context/notify', 'gateway', '/hip/v3/link/context/notify'],
@@ -49,6 +46,10 @@ describe('resolveRoute', () => {
         ['POST', '/abdm/abha/v3/enrollment/enrol/byAbdm'],
         ['POST', '/abdm/abha/v3/profile/account/getAbhaCard'],
         ['GET', '/abdm/gateway/gateway/v3/bridge/getServices'],
+        // No desktop sender yet, so no permission (AGENTS.md: zero dead rules).
+        ['POST', '/abdm/abha/v3/enrollment/enrol/byDocument'],
+        ['POST', '/abdm/gateway/hip/v3/link/patient/links/sms/notify2'],
+        ['GET', '/abdm/gateway/hip/v3/link/patient/links'],
         ['POST', '/abdm/abha/patient-share/v3/on-share'],
         ['POST', '/abdm/other/v3/profile/login/verify'],
         ['POST', '/abha/v3/profile/login/verify']

@@ -123,6 +123,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
   selectedSlots: Set<string> = new Set();  // Slots currently selected (Blue/Green)
 
   private refreshInterval: any;
+  private stopRequestsListener: () => void = () => undefined;
   // Date and time staff pick for callback requests, kept across list refreshes.
   private callbackSlots = new Map<string, { date: string; time: string }>();
 
@@ -132,6 +133,10 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
   }
 
   async ngOnInit() {
+    // New or decided requests show at once (#216): main's push in the app,
+    // the server's events stream for clients. The requests are saved
+    // already, so this reloads the list without asking the cloud again.
+    this.stopRequestsListener = this.cloud.onRequestsChanged(() => this.reloadSaved());
     await this.loadRequests();
     // Poll every 30s locally for UI updates
     this.refreshInterval = setInterval(() => this.loadRequests(), 30000);
@@ -141,6 +146,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
     if (this.refreshInterval) {
       clearInterval(this.refreshInterval);
     }
+    this.stopRequestsListener();
   }
 
   setCalendarLimits() {
@@ -249,26 +255,46 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
   }
 
   isRefreshing = false;
+  // A change announced mid-refresh reloads once the refresh ends.
+  private reloadPending = false;
 
-  async loadRequests() {
-    if (this.isRefreshing) return;
+  async loadRequests(options: { sync?: boolean } = {}) {
+    if (this.isRefreshing) {
+      if (options.sync === false) this.reloadPending = true;
+      return;
+    }
 
     this.isRefreshing = true;
     try {
       // Fetch from the cloud first; requests already saved here still show when that fails.
-      try {
-        await this.cloud.syncNow();
-      } catch (e) {
-        console.error('Failed to sync requests', e);
-        this.toastService?.warning('Could not reach NalamDesk Cloud. Showing the requests already on this computer.', 'Not refreshed');
-      }
+      if (options.sync !== false) await this.syncFromCloud();
       const allRequests = await this.cloud.getAppointmentRequests();
       this.requests = (allRequests || []).filter((r: any) => r.status === 'pending');
     } catch (e) {
       console.error('Failed to load requests', e);
     } finally {
       // ensure distinct animation time
-      setTimeout(() => this.isRefreshing = false, 500);
+      setTimeout(() => {
+        this.isRefreshing = false;
+        if (this.reloadPending) {
+          this.reloadPending = false;
+          this.reloadSaved();
+        }
+      }, 500);
+    }
+  }
+
+  /** Reloads the requests saved here; loadRequests catches its own errors. */
+  private reloadSaved(): void {
+    this.loadRequests({ sync: false }).catch(() => undefined);
+  }
+
+  private async syncFromCloud(): Promise<void> {
+    try {
+      await this.cloud.syncNow();
+    } catch (e) {
+      console.error('Failed to sync requests', e);
+      this.toastService?.warning('Could not reach NalamDesk Cloud. Showing the requests already on this computer.', 'Not refreshed');
     }
   }
 

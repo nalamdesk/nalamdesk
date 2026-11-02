@@ -17,6 +17,24 @@ export interface AppUpdateStatus {
     packaged?: boolean;
 }
 
+export interface AppUpdatesApi {
+    check(opts?: { source?: 'startup' | 'manual' }): Promise<AppUpdateStatus>;
+    download(): Promise<AppUpdateStatus>;
+    install(): Promise<AppUpdateStatus>;
+    cancel(): Promise<AppUpdateStatus>;
+    getStatus(): Promise<AppUpdateStatus>;
+    onEvent(callback: (status: AppUpdateStatus) => void): () => void;
+}
+
+/**
+ * The app's updater: the single-PC preload's `electron.updates`, or the
+ * client-mode preload's `nalamdeskClient.updates` (#211). Browsers have none.
+ */
+export function appUpdatesApi(): AppUpdatesApi | null {
+    const g = globalThis as { electron?: { updates?: AppUpdatesApi }; nalamdeskClient?: { updates?: AppUpdatesApi } };
+    return g.electron?.updates ?? g.nalamdeskClient?.updates ?? null;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AppUpdateService {
     readonly status = signal<AppUpdateStatus>({ state: 'idle' });
@@ -26,10 +44,15 @@ export class AppUpdateService {
 
     constructor(private readonly ngZone: NgZone) { }
 
+    /** True when this app can update itself (not in a browser). */
+    get available(): boolean {
+        return !!appUpdatesApi();
+    }
+
     init(): void {
         if (this.started) return;
         this.started = true;
-        const api = (globalThis as any).electron?.updates;
+        const api = appUpdatesApi();
         if (!api) return;
         this.unsubscribe = api.onEvent((status: AppUpdateStatus) => {
             this.ngZone.run(() => this.applyStatus(status));
@@ -43,7 +66,7 @@ export class AppUpdateService {
     }
 
     async check(source: 'startup' | 'manual' = 'manual'): Promise<AppUpdateStatus> {
-        const api = (globalThis as any).electron?.updates;
+        const api = appUpdatesApi();
         if (!api) return this.status();
         const status = await api.check({ source });
         this.applyStatus(status);
@@ -51,7 +74,7 @@ export class AppUpdateService {
     }
 
     async updateNow(): Promise<void> {
-        const api = (globalThis as any).electron?.updates;
+        const api = appUpdatesApi();
         if (!api) return;
         const afterDownload = await api.download();
         this.applyStatus(afterDownload);
@@ -61,7 +84,7 @@ export class AppUpdateService {
     }
 
     async install(): Promise<void> {
-        const api = (globalThis as any).electron?.updates;
+        const api = appUpdatesApi();
         if (!api) return;
         const status = await api.install();
         this.applyStatus(status);
@@ -72,7 +95,7 @@ export class AppUpdateService {
     }
 
     async cancelDownload(): Promise<void> {
-        const api = (globalThis as any).electron?.updates;
+        const api = appUpdatesApi();
         if (!api) return;
         const status = await api.cancel();
         this.applyStatus(status);
@@ -80,7 +103,10 @@ export class AppUpdateService {
 
     private async checkStartup(): Promise<void> {
         try {
-            const info = await (globalThis as any).electron?.getAppVersion?.();
+            const electron = (globalThis as any).electron;
+            const info = electron?.getAppVersion
+                ? await electron.getAppVersion()
+                : await appUpdatesApi()?.getStatus();
             if (!info?.packaged) return;
             await this.check('startup');
         } catch {

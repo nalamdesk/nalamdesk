@@ -155,7 +155,7 @@
                 <p class="text-xs text-gray-400 mt-3">Exports to {{ profileService.exportLabel() }}. Identity prompts lead with {{ profileService.identifierLabel() }}.</p>
             </div>
 
-            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200" *ngIf="isElectron">
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200" *ngIf="canUpdateApp" data-testid="settings-updates">
                 <div class="flex items-center justify-between mb-4">
                     <div>
                         <h3 class="text-lg font-medium text-gray-800">Updates</h3>
@@ -603,6 +603,21 @@
                 <div *ngIf="!isElectron" class="flex items-center gap-2">
                     <button (click)="runLocalBackupNow()" [disabled]="isBackupLoading" class="btn btn-outline btn-sm">Back up now</button>
                     <span class="text-xs text-gray-400">Backups are written on the server. Copy them off the server regularly.</span>
+                </div>
+                <div *ngIf="!isElectron" class="mt-4" data-testid="server-backups">
+                    <h4 class="text-xs font-bold text-gray-500 uppercase mb-2">Backups on the server</h4>
+                    <ul *ngIf="serverBackups.length; else noServerBackups" class="divide-y border rounded text-xs">
+                        <li *ngFor="let b of serverBackups" class="flex items-center justify-between gap-3 px-3 py-2">
+                            <span class="font-mono truncate" [title]="b.name">{{ b.name }}</span>
+                            <span class="flex items-center gap-3 shrink-0 text-gray-500">
+                                <span>{{ b.createdTime | date:'medium' }}</span>
+                                <span>{{ formatBytes(b.size) }}</span>
+                                <span *ngIf="b.recoverable === false" class="text-amber-700" [title]="b.warning || ''">Not restorable</span>
+                            </span>
+                        </li>
+                    </ul>
+                    <ng-template #noServerBackups><p class="text-xs text-gray-400">No backups yet.</p></ng-template>
+                    <p class="text-xs text-gray-400 mt-2">To restore one, run <span class="font-mono">nalamdesk-server restore</span> on the server itself.</p>
                 </div>
                 <div *ngIf="isElectron" class="flex items-center gap-4 bg-gray-50 p-3 rounded border border-gray-200 mb-3">
                     <div class="flex-1 overflow-hidden">

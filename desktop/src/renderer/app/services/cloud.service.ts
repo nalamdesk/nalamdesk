@@ -1,5 +1,7 @@
-import { Injectable } from '@angular/core';
+import { Injectable, Optional } from '@angular/core';
 import { DataService } from './api.service';
+import { ServerConnectionService } from './server-connection.service';
+import type { ServerEventMessage } from '../../../shared/server-client';
 
 /**
  * NalamDesk Cloud pairing and online booking. In the desktop app these go
@@ -9,7 +11,7 @@ import { DataService } from './api.service';
     providedIn: 'root'
 })
 export class CloudService {
-    constructor(private readonly data: DataService) { }
+    constructor(private readonly data: DataService, @Optional() private readonly server?: ServerConnectionService) { }
 
     private get bridge(): any {
         return (window as any).electron?.cloud;
@@ -76,9 +78,30 @@ export class CloudService {
         return this.call('disableListing', 'cloudDisableListing');
     }
 
-    /** Subscribes to pairing changes pushed from main; returns the unsubscribe. */
-    onPairingChanged(callback: (status: CloudStatus) => void): () => void {
-        return this.bridge?.onPairingChanged?.(callback) ?? (() => undefined);
+    /**
+     * Subscribes to pairing and listing changes; returns the unsubscribe.
+     * The desktop app pushes the new status over IPC; server clients get a
+     * `cloud` event (#216) and refetch, so the callback has no status then.
+     */
+    onPairingChanged(callback: (status?: CloudStatus) => void): () => void {
+        const bridge = this.bridge;
+        if (bridge) return bridge.onPairingChanged?.(callback) ?? (() => undefined);
+        return this.onServerTopic('cloud', () => callback());
+    }
+
+    /** Subscribes to new or decided online booking requests; returns the unsubscribe. */
+    onRequestsChanged(callback: () => void): () => void {
+        const bridge = this.bridge;
+        if (bridge) return bridge.onNewRequests?.(() => callback()) ?? (() => undefined);
+        return this.onServerTopic('bookings', callback);
+    }
+
+    private onServerTopic(topic: ServerEventMessage['topic'], callback: () => void): () => void {
+        if (!this.server || (window as any).electron) return () => undefined;
+        const sub = this.server.events.subscribe((event) => {
+            if (event.topic === topic || event.topic === 'resync') callback();
+        });
+        return () => sub.unsubscribe();
     }
 
     /** Fetches the cloud mailbox now; resolves with new booking requests saved. */

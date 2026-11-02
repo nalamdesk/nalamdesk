@@ -82,8 +82,7 @@ describe('AbhaModalComponent', () => {
             return Promise.resolve(null);
         });
         component.step = 'enroll';
-        component.via = 'mobile';
-        component.identifier = '9876543210';
+        component.identifier = '123412341234';
         await component.requestOtp();
         expect(component.step).toBe('otp');
         expect(component.txnId).toBe('mock-txn-1');

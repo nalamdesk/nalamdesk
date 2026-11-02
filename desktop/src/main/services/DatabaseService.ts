@@ -873,9 +873,18 @@ export class DatabaseService {
                 throw new Error('Unknown facility.');
             }
             // One live pairing per HFR ID: the relay keeps one computer per HFR ID.
-            if (row.state !== 'revoked' && this.db.prepare(`SELECT 1 AS ok FROM cloud_device
-                WHERE hfr_id = ? AND facility_id <> ? AND state <> 'revoked'`).get(row.hfr_id, Number(facilityId))) {
-                throw new Error('Another facility is already paired with this HFR ID.');
+            // Another facility's expired request is dropped rather than blocking it.
+            if (row.state !== 'revoked') {
+                this.db.prepare(`DELETE FROM cloud_device WHERE hfr_id = ? AND facility_id <> ? AND state = 'requested'
+                    AND COALESCE(request_expires_at, 0) <= ?`).run(row.hfr_id, Number(facilityId), Date.now());
+                const holder = this.db.prepare(`SELECT f.name, f.code, d.state FROM cloud_device d
+                    LEFT JOIN facilities f ON f.id = d.facility_id
+                    WHERE d.hfr_id = ? AND d.facility_id <> ? AND d.state <> 'revoked'`).get(row.hfr_id, Number(facilityId)) as any;
+                if (holder) {
+                    const where = holder.name || holder.code || 'Another facility';
+                    const what = holder.state === 'requested' ? 'has a pairing request open for' : 'is already paired with';
+                    throw new Error(`${where} ${what} this HFR ID. Cancel or unpair it there first.`);
+                }
             }
             this.db.prepare(`INSERT OR REPLACE INTO cloud_device(facility_id, ${columns.join(', ')})
                 VALUES(@facility_id, ${placeholders})`).run(params);

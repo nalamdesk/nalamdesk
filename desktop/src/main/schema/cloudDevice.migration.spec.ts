@@ -77,12 +77,23 @@ describe('migration v54: cloud pairing per facility (#215)', () => {
 
     it('refuses a second live pairing for the same HFR ID or an unknown facility', () => {
         expect(() => service.saveCloudDevice(deviceRow({ state: 'requested' }), 2))
-            .toThrow('Another facility is already paired with this HFR ID.');
+            .toThrow('MAIN is already paired with this HFR ID. Cancel or unpair it there first.');
         expect(() => service.saveCloudDevice(deviceRow({ hfr_id: 'IN3310000009' }), 99)).toThrow('Unknown facility.');
         // Once facility 1's pairing is revoked, the HFR ID can move.
         service.saveCloudDevice(deviceRow({ state: 'revoked' }), 1);
         service.saveCloudDevice(deviceRow({ state: 'requested' }), 2);
         expect(service.getCloudDevice(2)?.state).toBe('requested');
+    });
+
+    it('names an open request elsewhere, and drops it once expired', () => {
+        const hfr = 'IN3310000005';
+        service.saveCloudDevice(deviceRow({ hfr_id: hfr, state: 'requested', request_expires_at: Date.now() + 60_000 }), 2);
+        expect(() => service.saveCloudDevice(deviceRow({ hfr_id: hfr, state: 'requested' }), 1))
+            .toThrow('Anna Nagar has a pairing request open for this HFR ID.');
+        service.saveCloudDevice(deviceRow({ hfr_id: hfr, state: 'requested', request_expires_at: Date.now() - 1 }), 2);
+        service.saveCloudDevice(deviceRow({ hfr_id: hfr, state: 'requested', request_expires_at: Date.now() + 60_000 }), 1);
+        expect(service.getCloudDevice(2)).toBeNull();
+        expect(service.getCloudDevice(1)?.hfr_id).toBe(hfr);
     });
 
     it('files mailbox items under the facility they came to and checks retries per facility', () => {

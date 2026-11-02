@@ -113,6 +113,26 @@ describe('sign-in per facility (#195)', () => {
         expect(missing.statusCode).toBe(400);
     });
 
+    it('serves organisation admin to organisation admins only, with readable refusals (#214)', async () => {
+        // Asha is admin at the branch but not an organisation admin.
+        const asha = (await post('/api/auth/login', { username: 'asha', password: PASSWORD, facilityId: 2 })).json();
+        const refused = await post('/api/ipc/getFacilityAdmin', [], asha.token);
+        expect(refused.statusCode).toBe(403);
+
+        const admin = (await post('/api/auth/login', { username: 'admin', password: PASSWORD })).json();
+        const view = await post('/api/ipc/getFacilityAdmin', [], admin.token);
+        expect(view.statusCode).toBe(200);
+        expect(view.json().facilities.map((f: any) => f.code)).toEqual(['MAIN', 'ANN']);
+
+        const granted = await post('/api/ipc/grantFacilityRole', [{ userId: 51, facilityId: 1, role: 'nurse' }], admin.token);
+        expect(granted.statusCode).toBe(200);
+        expect(service.getFacilityRole(51, 1)).toBe('nurse');
+
+        const clash = await post('/api/ipc/saveFacility', [{ code: 'ann', name: 'Duplicate' }], admin.token);
+        expect(clash.statusCode).toBe(400);
+        expect(clash.json()).toEqual({ error: 'That code is already in use.' });
+    });
+
     it('ends the session at refresh once access to its facility is removed', async () => {
         const login = (await post('/api/auth/login', { username: 'ravi', password: PASSWORD })).json();
         raw.prepare('DELETE FROM user_facility_roles WHERE user_id = 51').run();

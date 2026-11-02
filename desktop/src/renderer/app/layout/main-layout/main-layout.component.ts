@@ -10,11 +10,12 @@ import { RuntimeService } from '../../services/runtime.service';
 import { ServerConnectionService } from '../../services/server-connection.service';
 import { TourService } from '../../shared/services/tour.service';
 import { TourOverlayComponent } from '../../shared/components/tour-overlay/tour-overlay.component';
+import { FacilitySwitcherComponent } from '../../shared/components/facility-switcher/facility-switcher.component';
 
 @Component({
   selector: 'app-main-layout',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterModule, TourOverlayComponent],
+  imports: [CommonModule, RouterOutlet, RouterModule, TourOverlayComponent, FacilitySwitcherComponent],
   template: `
     <div class="drawer lg:drawer-open font-sans">
       <input #drawerCheckbox id="main-drawer" type="checkbox" class="drawer-toggle" />
@@ -42,7 +43,7 @@ import { TourOverlayComponent } from '../../shared/components/tour-overlay/tour-
             </div>
           </div>
           <div class="flex-none gap-4 px-4">
-             <!-- Theme Toggle (Simplified for now) -->
+             <app-facility-switcher></app-facility-switcher>
                 <!-- Local IP Indicator (Enterprise Style) -->
                  <div *ngIf="runtime.lanAccessUrl" class="hidden md:flex items-center gap-2 bg-blue-50/50 px-3 py-1.5 rounded-full border border-blue-100 hover:bg-blue-50 transition-colors group">
                     <span class="relative flex h-2 w-2">

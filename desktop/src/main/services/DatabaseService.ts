@@ -33,6 +33,7 @@ import { assertValidVitals, DEFAULT_VITAL_UNITS, evaluateVitalsAbnormalities } f
 import { validateAbhaNumber, validateIdentifier } from '../../shared/patient-identifiers';
 import { durationEndDate } from '../../shared/clinical-timing';
 import { currentAuditDeviceId } from './AuditContext';
+import { FacilityAdmin, assertAdminDemotionAllowed, grantNewUserRole } from './FacilityAdmin';
 import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder, type FinalRxLine } from '../../shared/prescription-order';
 
 export class DatabaseService {
@@ -44,6 +45,19 @@ export class DatabaseService {
     setDb(db: any) {
         this.db = db;
     }
+
+    // Organisation admin (#214): facilities, departments, per-facility roles.
+    private readonly facilityAdmin = new FacilityAdmin(() => this.db,
+        (action, table, recordId, userId, details) => this.logAudit(action, table, recordId, userId, details));
+
+    getFacilityAdmin(actingUserId?: number) { return this.facilityAdmin.getFacilityAdmin(actingUserId); }
+    saveFacility(input: unknown, actingUserId?: number) { return this.facilityAdmin.saveFacility(input, actingUserId); }
+    setFacilityActive(input: unknown, actingUserId?: number) { return this.facilityAdmin.setFacilityActive(input, actingUserId); }
+    saveDepartment(input: unknown, actingUserId?: number) { return this.facilityAdmin.saveDepartment(input, actingUserId); }
+    setDepartmentActive(input: unknown, actingUserId?: number) { return this.facilityAdmin.setDepartmentActive(input, actingUserId); }
+    grantFacilityRole(input: unknown, actingUserId?: number) { return this.facilityAdmin.grantFacilityRole(input, actingUserId); }
+    revokeFacilityRole(input: unknown, actingUserId?: number) { return this.facilityAdmin.revokeFacilityRole(input, actingUserId); }
+    setOrgAdmin(input: unknown, actingUserId?: number) { return this.facilityAdmin.setOrgAdmin(input, actingUserId); }
 
     /** The facility the current request runs in (#195). */
     private facilityId(): number {
@@ -340,7 +354,14 @@ export class DatabaseService {
             emergency_contact_name: safeUser.emergency_contact_name,
             emergency_contact_phone: safeUser.emergency_contact_phone
         };
+        const demoted = assertAdminDemotionAllowed(this.db, existing, safeUser.role, actingUserId);
         const result = this.db.prepare(query).run(params);
+        if (demoted) this.db.prepare('UPDATE users SET org_admin = 0 WHERE id = ?').run(Number(user.id));
+        // With several facilities, the edited role is the one held at this facility.
+        if (safeUser.role) {
+            this.db.prepare('UPDATE user_facility_roles SET role = ? WHERE user_id = ? AND facility_id = ?')
+                .run(String(safeUser.role).toLowerCase(), Number(user.id), this.facilityId());
+        }
 
         if (actingUserId) {
             this.logAudit('USER_UPDATE', 'users', user.id, actingUserId, `Updated user ${user.username}`);
@@ -382,6 +403,7 @@ export class DatabaseService {
                 @password_reset_required
             )
         `).run(safeUser);
+        grantNewUserRole(this.db, Number(result.lastInsertRowid), safeUser.role, this.facilityId(), actingUserId);
 
         if (actingUserId) {
             this.logAudit('USER_CREATE', 'users', result.lastInsertRowid, actingUserId, `Created user ${safeUser.username}`);

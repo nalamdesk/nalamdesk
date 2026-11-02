@@ -10,6 +10,8 @@ import { loadDevelopmentEnv, loadWorkingDirEnv } from '../shared/load-env';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { DEFAULT_FACILITY_ID, runWithContext } from '../shared/request-context';
 import { chooseFacility } from '../main/services/FacilitySession';
+import { FacilityAdminError } from '../main/services/FacilityAdmin';
+import { FACILITY_ADMIN_METHODS } from '../shared/access';
 import { hashUrlForPathname } from '../shared/hash-app-path';
 import { AbdmRelayService, abdmConfigView } from '../main/services/AbdmRelayService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
@@ -81,6 +83,7 @@ export const ALLOWED_IPC_METHODS = [
     'getSettings', 'getPublicSettings', 'saveSettings',
     'getDoctors',
     'getUsers', 'saveUser', 'deleteUser', 'updateUserPassword', 'getAllRoles',
+    ...FACILITY_ADMIN_METHODS,
     'saveRole', 'deleteRole', 'getDemoSeedState', 'seedDemoData', 'clearDemoData',
     'archivePatient', 'unarchivePatient', 'getArchivedPatients', 'markVisitEnteredInError', 'purgeUser',
     'getIdentifiers', 'saveIdentifier', 'deleteIdentifier',
@@ -1106,6 +1109,12 @@ export class ApiServer {
                     this.notifyDbMethod(method, args);
                     return result;
                 } catch (e: any) {
+                    // Organisation admin refusals carry a message the admin can act on (#214).
+                    if (e instanceof FacilityAdminError) return reply.code(400).send({ error: e.message });
+                    if (e?.message === 'Forbidden') {
+                        auditDenied(role);
+                        return reply.code(403).send({ error: 'Forbidden' });
+                    }
                     console.error(`[IPC Error] method: ${method}`, e);
                     return reply.code(500).send({ error: 'Internal server error' });
                 }

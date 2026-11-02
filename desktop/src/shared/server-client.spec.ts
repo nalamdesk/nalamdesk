@@ -75,6 +75,22 @@ describe('ServerClient', () => {
         expect(tokens.get()).toEqual({ token: 'a1', refreshToken: 'r1', expiresAt: now + 900_000 });
     });
 
+    it('returns the facilities a sign-in offers (#195)', async () => {
+        const facilities = [{ id: 1, code: 'MAIN', name: 'Main', kind: 'clinic', role: 'doctor' }];
+        const transport = fakeTransport(() => json(200, { token: 'a1', expiresIn: 900, facilityId: 1, facilities, user: { id: 2, username: 'asha', role: 'doctor' } }));
+        const client = new ServerClient({ transport, tokens: memoryTokens(), now: () => now });
+        expect(await client.login('asha', 'pw')).toEqual({ ok: true, user: { id: 2, username: 'asha', role: 'doctor' }, facilityId: 1, facilities });
+    });
+
+    it('switches facility with a new access token and keeps the refresh token', async () => {
+        const tokens = memoryTokens({ token: 'a1', refreshToken: 'r1', expiresAt: now + 600_000 });
+        const transport = fakeTransport(() => json(200, { token: 'a2', expiresIn: 900, facilityId: 2, role: 'admin' }));
+        const client = new ServerClient({ transport, tokens, now: () => now });
+        await expect(client.switchFacility(2)).resolves.toEqual({ facilityId: 2, role: 'admin' });
+        expect(transport.calls[0]).toMatchObject({ method: 'POST', path: '/api/auth/facility', body: '{"facilityId":2}' });
+        expect(tokens.get()).toEqual({ token: 'a2', refreshToken: 'r1', expiresAt: now + 900_000 });
+    });
+
     it('reports a locked sign-in with its wait', async () => {
         const transport = fakeTransport(() => json(429, { error: 'TOO_MANY_ATTEMPTS' }, { 'retry-after': '60' }));
         const client = new ServerClient({ transport, tokens: memoryTokens(), now: () => now });

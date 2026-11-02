@@ -6,6 +6,7 @@ import { AuthService } from '../services/auth.service';
 import { RuntimeService } from '../services/runtime.service';
 import { ServerConnectionService } from '../services/server-connection.service';
 import { DialogService } from '../shared/services/dialog.service';
+import { FacilityService, roleLabel } from '../services/facility.service';
 
 const JOIN_ERRORS: Record<string, string> = {
   INVALID_CODE: 'That join code is not valid or has expired. Ask an admin for a new one.',
@@ -13,6 +14,9 @@ const JOIN_ERRORS: Record<string, string> = {
   TOO_MANY_ATTEMPTS: 'Too many wrong codes. Wait a few minutes and try again.',
   UNREACHABLE: 'Cannot reach the NalamDesk Server.'
 };
+
+export const NO_FACILITY_ACCESS_MESSAGE =
+  'Your account is not set up for any facility yet. Ask an administrator to give you a role at a facility.';
 
 export function joinErrorMessage(error: string): string {
   return JOIN_ERRORS[error] ?? 'Could not join this browser. Try again or ask an admin for a new code.';
@@ -72,7 +76,29 @@ function defaultBrowserName(): string {
           </button>
         </form>
 
-        <form (ngSubmit)="onLogin()" *ngIf="!pendingRecoveryCode && !needsJoin">
+        <form *ngIf="choosingFacility" (ngSubmit)="confirmFacility()" data-testid="facility-picker">
+          <p class="text-sm text-gray-300 mb-4">Which facility are you working in?</p>
+          <fieldset class="space-y-2 mb-4">
+            <legend class="sr-only">Facility</legend>
+            <label *ngFor="let f of facilities.facilities()"
+                   class="flex items-center gap-3 px-3 py-2 rounded border cursor-pointer transition-colors"
+                   [class.border-blue-500]="selectedFacilityId === f.id" [class.bg-gray-700]="selectedFacilityId === f.id"
+                   [class.border-gray-600]="selectedFacilityId !== f.id">
+              <input type="radio" name="facility" class="radio radio-sm radio-primary" [value]="f.id"
+                     [(ngModel)]="selectedFacilityId" [disabled]="isLoading">
+              <span class="flex-1">
+                <span class="block font-medium">{{ f.name || f.code }}</span>
+                <span class="block text-xs text-gray-400">{{ f.kind === 'hospital' ? 'Hospital' : 'Clinic' }} · {{ label(f.role) }}</span>
+              </span>
+            </label>
+          </fieldset>
+          <button type="submit" [disabled]="isLoading || !selectedFacilityId"
+            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ isLoading ? 'Opening...' : 'Continue' }}
+          </button>
+        </form>
+
+        <form (ngSubmit)="onLogin()" *ngIf="!pendingRecoveryCode && !needsJoin && !choosingFacility">
           <div class="mb-4">
             <label class="block text-gray-400 text-sm font-bold mb-2" for="username">
               Username
@@ -153,6 +179,9 @@ export class LoginComponent implements OnInit {
   deviceName = '';
   serverLabel = '';
   deviceLabel = '';
+  /** Signed in with access to several facilities: pick one before going in (#211). */
+  choosingFacility = false;
+  selectedFacilityId: number | null = null;
 
   constructor(
     private router: Router,
@@ -160,7 +189,8 @@ export class LoginComponent implements OnInit {
     private authService: AuthService,
     public runtime: RuntimeService,
     public server: ServerConnectionService,
-    private dialog: DialogService
+    private dialog: DialogService,
+    public facilities: FacilityService = new FacilityService(authService, server)
   ) { }
 
   async ngOnInit() {
@@ -248,10 +278,11 @@ export class LoginComponent implements OnInit {
           this.password = ''; // Clear sensitive data
 
           this.pendingRoute = user && user.password_reset_required ? '/change-password' : '/dashboard';
+          this.facilities.seed(result.facilityId, result.facilities);
           if (result.pendingRecoveryCode) {
             this.pendingRecoveryCode = result.pendingRecoveryCode;
           } else {
-            this.router.navigate([this.pendingRoute]);
+            this.proceed();
           }
         } else {
           this.password = ''; // Clear sensitive data on failure too
@@ -267,7 +298,47 @@ export class LoginComponent implements OnInit {
     }
   }
 
+  label(role: string): string {
+    return roleLabel(role);
+  }
+
+  /** Goes in, or first asks which facility when the user works at several. */
+  private proceed() {
+    if (this.facilities.canSwitch()) {
+      this.selectedFacilityId = this.facilities.lastUsed() ?? this.facilities.currentId();
+      this.choosingFacility = true;
+      return;
+    }
+    this.router.navigate([this.pendingRoute]);
+  }
+
+  async confirmFacility() {
+    const chosen = Number(this.selectedFacilityId);
+    if (!chosen) return;
+    this.error = '';
+    if (chosen !== this.facilities.currentId()) {
+      this.isLoading = true;
+      const result = await this.facilities.switchTo(chosen);
+      if (!result.ok) {
+        this.ngZone.run(() => {
+          this.isLoading = false;
+          this.selectedFacilityId = this.facilities.currentId();
+          this.error = 'Could not open that facility. You may no longer have access to it.';
+        });
+        return;
+      }
+    } else {
+      this.facilities.remember(chosen);
+    }
+    this.ngZone.run(() => {
+      this.isLoading = false;
+      this.choosingFacility = false;
+      this.router.navigate([this.pendingRoute]);
+    });
+  }
+
   private loginErrorMessage(error?: string): string {
+    if (error === 'NO_FACILITY_ACCESS') return NO_FACILITY_ACCESS_MESSAGE;
     if (this.isElectron) {
       return 'Sign-in failed. Check your credentials or use Recover Device if access is unavailable.';
     }
@@ -294,7 +365,7 @@ export class LoginComponent implements OnInit {
         return;
       }
       this.pendingRecoveryCode = '';
-      this.router.navigate([this.pendingRoute]);
+      this.proceed();
     } catch (error) {
       this.error = 'Could not confirm the recovery code. Please try again.';
       console.error(error);

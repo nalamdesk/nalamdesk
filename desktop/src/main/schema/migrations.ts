@@ -1970,6 +1970,10 @@ export const MIGRATIONS = [
             // The audit trail names the computer as well as the user.
             try { db.exec(`ALTER TABLE audit_logs ADD COLUMN device_id TEXT`); } catch (e) { }
         }
+    },
+    {
+        version: 53,
+        up: (db: any) => keepOrgAdminOnRoleEdits(db)
     }
 ];
 
@@ -2165,6 +2169,29 @@ function migrateOrganisationsAndFacilities(db: any) {
             END;
         `);
     }
+}
+
+/**
+ * Migration v53 (#214): organisation admin is now set explicitly (Settings →
+ * Facilities), so a role edit must not recompute it. In a one-facility vault
+ * the mirror still copies users.role into the facility-1 grant, and promoting
+ * someone to admin still makes them an organisation admin, but a role edit
+ * never removes organisation admin (only Settings → Facilities does, with its
+ * last-admin guard).
+ */
+function keepOrgAdminOnRoleEdits(db: any) {
+    if (!tableExists(db, 'users') || !tableExists(db, 'user_facility_roles')) return;
+    db.exec('DROP TRIGGER IF EXISTS trg_users_role_mirror_update');
+    db.exec(`
+        CREATE TRIGGER trg_users_role_mirror_update
+        AFTER UPDATE OF role ON users
+        WHEN NEW.role IS NOT NULL AND NEW.role <> '' AND (SELECT COUNT(*) FROM facilities) = 1
+        BEGIN
+            INSERT OR REPLACE INTO user_facility_roles (user_id, facility_id, role) VALUES (NEW.id, 1, NEW.role);
+            UPDATE users SET org_admin = 1
+                WHERE id = NEW.id AND NEW.role = 'admin' AND COALESCE(OLD.role, '') <> 'admin';
+        END;
+    `);
 }
 
 /**

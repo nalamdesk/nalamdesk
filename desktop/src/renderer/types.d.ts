@@ -19,10 +19,26 @@ declare global {
         mailbox?: { doorbell: 'off' | 'connecting' | 'live'; lastCheckedAt: number | null };
     }
 
+    /** A facility the signed-in user can work in, with their role there (#195). */
+    interface FacilityGrant {
+        id: number;
+        code: string;
+        name: string;
+        kind: 'clinic' | 'hospital' | string;
+        role: string;
+    }
+
     interface Window {
         electron: {
-            login: (credentials: { username: string, password: string }) => Promise<{ success: boolean; user?: any; error?: string; pendingRecoveryCode?: string }>;
+            login: (credentials: { username: string, password: string, facilityId?: number }) => Promise<{
+                success: boolean; user?: any; error?: string; pendingRecoveryCode?: string;
+                facilityId?: number; facilities?: FacilityGrant[];
+            }>;
             logout: () => Promise<{ success: boolean }>;
+            /** Facilities the signed-in user can work in, and the current one (#195). */
+            getFacilities: () => Promise<{ facilityId: number; facilities: FacilityGrant[] }>;
+            /** Moves the desktop session to another facility; the role changes with it. */
+            switchFacility: (facilityId: number) => Promise<{ success: boolean; facilityId?: number; user?: any; error?: string }>;
             getAppVersion: () => Promise<{
                 version: string;
                 commit: string | null;
@@ -71,6 +87,15 @@ declare global {
                 getUsers: () => Promise<any[]>;
                 saveUser: (user: any) => Promise<any>;
                 deleteUser: (id: number) => Promise<any>;
+                // Organisation admin (#214)
+                getFacilityAdmin: () => Promise<any>;
+                saveFacility: (input: any) => Promise<{ id: number }>;
+                setFacilityActive: (input: { id: number; active: boolean }) => Promise<any>;
+                saveDepartment: (input: any) => Promise<{ id: number }>;
+                setDepartmentActive: (input: { id: number; active: boolean }) => Promise<any>;
+                grantFacilityRole: (input: { userId: number; facilityId: number; role: string }) => Promise<any>;
+                revokeFacilityRole: (input: { userId: number; facilityId: number }) => Promise<any>;
+                setOrgAdmin: (input: { userId: number; orgAdmin: boolean }) => Promise<any>;
                 // Queue
                 getQueue: () => Promise<any[]>;
                 addToQueue: (data: { patientId: number, priority?: number, urgency?: string, triage_notes?: string }) => Promise<any>;

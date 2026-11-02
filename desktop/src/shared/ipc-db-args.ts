@@ -122,6 +122,16 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['userId'] ?? args[0])];
         }
+        case 'getFacilityAdmin':
+            return [actingUserId];
+        case 'saveFacility':
+        case 'setFacilityActive':
+        case 'saveDepartment':
+        case 'setDepartmentActive':
+        case 'grantFacilityRole':
+        case 'revokeFacilityRole':
+        case 'setOrgAdmin':
+            return [args[0], actingUserId];
         case 'seedDemoData':
         case 'clearDemoData':
             return [actingUserId];

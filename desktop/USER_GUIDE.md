@@ -101,6 +101,12 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
 *   **Updates:** Packaged desktops check for a newer approved build on launch and from **Settings → Check for updates**. If one is available you see the current and new version, optional notes, and **Update now** / **Later**. Later keeps the running app. A failed check or download shows a plain error and does not touch the vault. Unsigned or checksum-only feeds do **not** claim full signature verification.
 *   **Catalogs:** Administrators maintain diagnosis and medicine inventories (and condition→medicine presets) under **Settings → Catalogs**. Soft-retire hides a term from typeahead; past visit text is unchanged.
 
+### Facilities
+*   **Several clinics or a hospital:** Organisation admins manage branches under **Settings → Facilities**. Each facility has a code, a name, a type (clinic or hospital), its own letterhead details and its own ABDM HFR and HIP IDs. Closing a facility stops staff signing in or working there; its records are kept and it can be reopened.
+*   **Departments:** Clinics work as one General OPD. Set a facility's type to Hospital to add departments such as Orthopaedics or Emergency.
+*   **Staff access:** The Staff access table sets each person's role at each facility, or **No access**. Organisation admins are admins at every facility. A new staff member gets their role at the facility they were created in.
+*   **Signing in and switching:** Staff who work at more than one facility pick one after signing in (the last one they used is preselected) and can switch from the top bar at any time. Switching reloads the app in the new facility with the role held there. Someone with no role at any open facility cannot sign in and is told to ask an administrator.
+
 ### Data Management
 *   **Backup:** Automated daily backups are saved locally (Settings → Data & Backup). Retention is 30 days.
 *   **Restore (after first run):** Settings → **Data & Backup** → **Restore from Backup File**. Choose a `.ndbackup`, enter the Recovery Code and the current administrator password. This is the same gated restore as the Welcome screen; the app restarts after a successful restore.

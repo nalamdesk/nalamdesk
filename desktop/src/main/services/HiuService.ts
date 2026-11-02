@@ -92,6 +92,10 @@ export const HI_TYPES = [
 // With no dates given, a request covers the last five years.
 const DEFAULT_RANGE_YEARS = 5;
 
+// Consent-level status for an on-status callback; a revocation ends the
+// consent, as the consent rows have no separate revoked state.
+const CONSENT_ON_STATUS: Record<string, string> = { GRANTED: 'granted', DENIED: 'denied', EXPIRED: 'expired', REVOKED: 'expired' };
+
 const ARTEFACT_STATUS: Record<string, string> = {
     GRANTED: 'granted',
     REVOKED: 'revoked',
@@ -473,13 +477,12 @@ export class HiuService {
         return { followUp: () => this.fetchArtefactDetails(Number(consent.id)) };
     }
 
-private applyOnStatus(body: any): { followUp?: () => Promise<void> } | null {
+    private applyOnStatus(body: any): { followUp?: () => Promise<void> } | null {
         const store = this.liveStore();
         const abdmId = String(body?.consentRequest?.id ?? '').trim();
         const existing = abdmId ? store.getConsentByRequestId(abdmId) : null;
         if (!existing) throw new Error('Consent request not found for this on-status.');
         const status = String(body?.consentRequest?.status ?? '').toUpperCase();
-        const CONSENT_ON_STATUS: Record<string, string> = { GRANTED: 'granted', DENIED: 'denied', EXPIRED: 'expired', REVOKED: 'expired' };
         const next = CONSENT_ON_STATUS[status];
         if (!next) return {};
         store.updateConsentStatus(Number(existing.id), next, null);

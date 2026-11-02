@@ -60,6 +60,15 @@ type Snapshot = { mock: boolean };
 // Gateway certificates rotate infrequently; refetch at most daily.
 const CERT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+// The first array found under one of `keys`, else the body itself when it is
+// an array, else an empty list. ABDM answers some lists in either shape.
+function firstArray(json: any, keys: readonly string[]): any[] {
+    for (const key of keys) {
+        if (Array.isArray(json?.[key])) return json[key];
+    }
+    return Array.isArray(json) ? json : [];
+}
+
 const MOCK_OTP_HINT = 'Mock gateway: any 6-digit code is accepted.';
 
 /**
@@ -237,9 +246,7 @@ export class AbdmAbhaService {
     /** Fetches the address suggestions offered during enrollment (v3 suggestion). */
     async suggestAbhaAddresses(): Promise<{ suggestions: string[]; mock: boolean }> {
         const { json, mock } = await this.authorized(PATHS.enrolSuggestion, null, 'GET');
-        const list = Array.isArray(json?.abhaAddresses) ? json.abhaAddresses
-            : Array.isArray(json?.suggestions) ? json.suggestions
-            : Array.isArray(json) ? json : [];
+        const list = firstArray(json, ['abhaAddresses', 'suggestions']);
         return { suggestions: list.map((s: unknown) => String(s ?? '').trim()).filter(Boolean), mock };
     }
 
@@ -255,9 +262,7 @@ export class AbdmAbhaService {
     /** Finds ABHA records matching the given identifiers (v3 abha/search). */
     async searchAbha(criteria: Record<string, string>): Promise<{ results: any[]; mock: boolean }> {
         const { json, mock } = await this.authorized(PATHS.abhaSearch, criteria || {});
-        const results = Array.isArray(json?.results) ? json.results
-            : Array.isArray(json?.abhaProfiles) ? json.abhaProfiles
-            : Array.isArray(json) ? json : [];
+        const results = firstArray(json, ['results', 'abhaProfiles']);
         return { results, mock };
     }
 

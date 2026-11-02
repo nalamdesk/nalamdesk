@@ -58,7 +58,8 @@ export class FolderTarget implements OffsiteTarget {
         const partial = `${destination}.partial`;
         try {
             await pipeline(fs.createReadStream(filePath), fs.createWriteStream(partial, { flags: 'w' }));
-            const fd = fs.openSync(partial, 'r');
+            // fsync needs a writable handle on Windows (FlushFileBuffers).
+            const fd = fs.openSync(partial, 'r+');
             try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
             fs.renameSync(partial, destination);
         } catch (error) {

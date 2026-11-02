@@ -232,6 +232,54 @@ describe('SettingsComponent Validation', () => {
         expect(component.appVersion).not.toBe('v0.0.0');
     });
 
+    it('shows the client app version and the update panel in client mode (#211)', async () => {
+        component.isElectron = false;
+        delete (window as any).electron;
+        (component as any).server = { bridge: { info: vi.fn(async () => ({ appVersion: '0.0.13' })) } };
+        (component as any).updates = { available: true, check: vi.fn().mockResolvedValue({ state: 'up-to-date' }) };
+        await component.loadAppVersion();
+        expect(component.appVersion).toBe('0.0.13');
+        expect(component.canUpdateApp).toBe(true);
+        await component.checkForUpdates();
+        expect((component as any).updates.check).toHaveBeenCalledWith('manual');
+    });
+
+    it('hides the update panel in a browser', () => {
+        component.isElectron = false;
+        (component as any).updates = { available: false };
+        expect(component.canUpdateApp).toBe(false);
+    });
+
+    it('lists the server backups for an admin on a server client (#211)', async () => {
+        const list = [{ name: 'nalamdesk-auto-backup-1.ndbackup', createdTime: '2026-11-01T13:00:00.000Z', size: 2048, recoverable: true }];
+        mockData.invoke.mockImplementation(async (method: string) => method === 'backupList' ? list : null);
+        await component.loadServerBackups();
+        expect(mockData.invoke).toHaveBeenCalledWith('backupList');
+        expect(component.serverBackups).toEqual(list);
+        mockData.invoke.mockResolvedValue({ unexpected: true });
+        await component.loadServerBackups();
+        expect(component.serverBackups).toEqual([]);
+    });
+
+    it('refreshes the ABDM inbox on abdm.inbox events while that tab is open (#216)', async () => {
+        const { Subject } = await import('rxjs');
+        const events = new Subject<{ id: number | null; topic: string }>();
+        (component as any).server = { events };
+        mockData.invoke.mockResolvedValue([]);
+        component.ngOnInit();
+        const loadInbox = vi.spyOn(component, 'loadInbox').mockResolvedValue(undefined);
+        events.next({ id: 1, topic: 'abdm.inbox' });
+        expect(loadInbox).not.toHaveBeenCalled();
+        component.activeTab = 'abdm';
+        events.next({ id: 2, topic: 'abdm.inbox' });
+        events.next({ id: 3, topic: 'queue' });
+        events.next({ id: null, topic: 'resync' });
+        expect(loadInbox).toHaveBeenCalledTimes(2);
+        component.ngOnDestroy();
+        events.next({ id: 4, topic: 'abdm.inbox' });
+        expect(loadInbox).toHaveBeenCalledTimes(2);
+    });
+
     it('leaves the footer empty when version IPC is unavailable', async () => {
         component.isElectron = false;
         delete (window as any).electron;

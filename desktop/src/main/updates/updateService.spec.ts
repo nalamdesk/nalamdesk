@@ -155,6 +155,26 @@ describe('DesktopUpdateService', () => {
         expect(handle).toHaveBeenCalledWith('updates:status', expect.any(Function));
     });
 
+    it('answers only the allowed window when a guard is given (client mode)', async () => {
+        const updater = mockUpdater({
+            checkForUpdates: vi.fn().mockResolvedValue({ updateInfo: { version: '0.0.8' } })
+        });
+        const { service } = createService(updater);
+        const handlers = new Map<string, (event: unknown, opts?: unknown) => any>();
+        const handle = vi.fn((channel: string, fn: any) => { handlers.set(channel, fn); });
+        const own = { sender: 'own' };
+        bindUpdateIpc({ handle } as any, service, (event) => event === own);
+
+        const refused = await handlers.get('updates:check')!({ sender: 'other' }, { source: 'manual' });
+        expect(refused.state).toBe('idle');
+        expect(updater.checkForUpdates).not.toHaveBeenCalled();
+
+        const allowed = await handlers.get('updates:check')!(own, { source: 'manual' });
+        expect(allowed.state).toBe('up-to-date');
+        expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+        expect((await handlers.get('updates:status')!(own)).state).toBe('up-to-date');
+    });
+
     it('refuses download when the app is already up to date', async () => {
         const updater = mockUpdater({
             checkForUpdates: vi.fn().mockResolvedValue({ updateInfo: { version: '0.0.8' } })

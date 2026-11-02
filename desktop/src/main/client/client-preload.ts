@@ -23,5 +23,18 @@ contextBridge.exposeInMainWorld('nalamdeskClient', {
         return () => ipcRenderer.removeListener('client:streamEnd', handler);
     },
     disconnect: () => ipcRenderer.invoke('client:disconnect'),
+    // The in-app update panel (#211): the same updater the single-PC app uses.
+    updates: {
+        check: (opts?: { source?: 'startup' | 'manual' }) => ipcRenderer.invoke('updates:check', opts),
+        download: () => ipcRenderer.invoke('updates:download'),
+        install: () => ipcRenderer.invoke('updates:install'),
+        cancel: () => ipcRenderer.invoke('updates:cancel'),
+        getStatus: () => ipcRenderer.invoke('updates:status'),
+        onEvent: (callback: (status: unknown) => void) => {
+            const listener = (_event: unknown, status: unknown) => callback(status);
+            ipcRenderer.on('updates:event', listener);
+            return () => ipcRenderer.removeListener('updates:event', listener);
+        }
+    },
     openExternal: (url: string) => ipcRenderer.invoke('client:openExternal', url)
 });

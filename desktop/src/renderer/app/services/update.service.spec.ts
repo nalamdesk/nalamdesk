@@ -95,4 +95,47 @@ describe('AppUpdateService', () => {
         expect(service.promptOpen()).toBe(true);
         expect(service.status().error).toMatch(/network/i);
     });
+
+    describe('in client mode (#211)', () => {
+        let clientUpdates: any;
+
+        beforeEach(() => {
+            delete (globalThis as any).electron;
+            clientUpdates = {
+                check: vi.fn().mockResolvedValue({ state: 'available', source: 'startup', availableVersion: '0.0.9' }),
+                download: vi.fn(),
+                install: vi.fn(),
+                cancel: vi.fn(),
+                getStatus: vi.fn().mockResolvedValue({ state: 'idle', packaged: true }),
+                onEvent: vi.fn().mockReturnValue(() => undefined)
+            };
+            (globalThis as any).nalamdeskClient = { updates: clientUpdates };
+            service = new AppUpdateService({ run: (fn: () => void) => fn() } as any);
+        });
+
+        afterEach(() => {
+            delete (globalThis as any).nalamdeskClient;
+        });
+
+        it('uses the client preload updater and checks at launch when packaged', async () => {
+            expect(service.available).toBe(true);
+            service.init();
+            await vi.waitFor(() => expect(clientUpdates.check).toHaveBeenCalledWith({ source: 'startup' }));
+            expect(clientUpdates.onEvent).toHaveBeenCalled();
+            expect(service.promptOpen()).toBe(true);
+        });
+
+        it('skips the launch check in an unpackaged client', async () => {
+            clientUpdates.getStatus.mockResolvedValue({ state: 'idle', packaged: false });
+            service.init();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(clientUpdates.check).not.toHaveBeenCalled();
+        });
+
+        it('has no updater in a browser', () => {
+            delete (globalThis as any).nalamdeskClient;
+            expect(service.available).toBe(false);
+        });
+    });
 });

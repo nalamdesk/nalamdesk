@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { Subject } from 'rxjs';
 import { CloudService } from './cloud.service';
 
 describe('CloudService', () => {
@@ -96,6 +97,20 @@ describe('CloudService', () => {
         });
     });
 
+    it('uses the desktop push for booking requests, not the server stream', () => {
+        const off = vi.fn();
+        const onNewRequests = vi.fn((cb: (data: { count: number }) => void) => { cb({ count: 2 }); return off; });
+        (window as any).electron = { cloud: { onNewRequests } };
+        const events = new Subject<{ id: number | null; topic: string }>();
+        const client = new CloudService(data as any, { events } as any);
+        const requests = vi.fn();
+        const stop = client.onRequestsChanged(requests);
+        events.next({ id: 1, topic: 'bookings' });
+        expect(requests).toHaveBeenCalledTimes(1);
+        stop();
+        expect(off).toHaveBeenCalled();
+    });
+
     describe('without electron bridge (browser on NalamDesk Server)', () => {
         it('calls the server method for each cloud action', async () => {
             await service.publishSlots([{ date: '2026-01-01', time: '10:00' }], ['2026-01-01']);
@@ -134,6 +149,33 @@ describe('CloudService', () => {
         it('has no pairing push without the desktop bridge', () => {
             const unsubscribe = service.onPairingChanged(() => undefined);
             expect(unsubscribe()).toBeUndefined();
+        });
+
+        it('follows the cloud and bookings events from the server (#216)', () => {
+            const events = new Subject<{ id: number | null; topic: string }>();
+            const client = new CloudService(data as any, { events } as any);
+            const pairing = vi.fn();
+            const requests = vi.fn();
+            const stopPairing = client.onPairingChanged(pairing);
+            const stopRequests = client.onRequestsChanged(requests);
+
+            events.next({ id: 1, topic: 'cloud' });
+            events.next({ id: 2, topic: 'bookings' });
+            events.next({ id: 3, topic: 'queue' });
+            expect(pairing).toHaveBeenCalledTimes(1);
+            expect(pairing).toHaveBeenCalledWith();
+            expect(requests).toHaveBeenCalledTimes(1);
+
+            events.next({ id: null, topic: 'resync' });
+            expect(pairing).toHaveBeenCalledTimes(2);
+            expect(requests).toHaveBeenCalledTimes(2);
+
+            stopPairing();
+            stopRequests();
+            events.next({ id: 4, topic: 'cloud' });
+            events.next({ id: 5, topic: 'bookings' });
+            expect(pairing).toHaveBeenCalledTimes(2);
+            expect(requests).toHaveBeenCalledTimes(2);
         });
     });
 });

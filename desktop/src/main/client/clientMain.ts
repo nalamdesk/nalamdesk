@@ -12,6 +12,7 @@ import { configureUserDataPath, safeStorageCipher } from './electron-env';
 import { forgetServerConnection, loadServerConnection, type ServerConnection } from './connection-store';
 import { createPinnedTransport } from './pinned-transport';
 import { ClientStreams, sanitizeRendererRequest } from './client-bridge';
+import { bindUpdateIpc, createUpdateService, type UpdaterPort } from '../updates/updateService';
 
 const isDev = isDevRuntime(app.isPackaged);
 const userDataPath = configureUserDataPath();
@@ -87,6 +88,23 @@ ipcMain.handle('client:disconnect', (event) => {
     return true;
 });
 
+// Updates (#211): the same feed and in-app panel as the single-PC app.
+// The server is upgraded by its operator.
+const updateService = createUpdateService({
+    updater: autoUpdater as unknown as UpdaterPort,
+    isPackaged: app.isPackaged,
+    env: process.env,
+    platform: process.platform,
+    isAppImage: Boolean(process.env['APPIMAGE']),
+    getVersion: () => app.getVersion(),
+    send: (channel, payload) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+    },
+    openExternal: (url) => (url.startsWith('https://') ? shell.openExternal(url) : undefined)
+});
+bindUpdateIpc(ipcMain, updateService, (event) => isOwnWindow(event as Electron.IpcMainInvokeEvent));
+autoUpdater.logger = log;
+
 ipcMain.handle('client:openExternal', async (event, url: string) => {
     if (!isOwnWindow(event)) return;
     if (typeof url === 'string' && url.startsWith('https://')) await shell.openExternal(url);
@@ -149,13 +167,8 @@ if (app.requestSingleInstanceLock()) {
     });
     void app.whenReady().then(async () => {
         applySecurityPolicy();
+        // The UI checks for updates at launch and offers the update.
         await createWindow();
-        // Client computers keep updating themselves; the server is upgraded
-        // by its operator.
-        if (!isDev) {
-            autoUpdater.logger = log;
-            autoUpdater.checkForUpdatesAndNotify().catch((e) => log.warn(`[Client] Update check failed: ${(e as Error).message}`));
-        }
     });
     app.on('window-all-closed', () => app.quit());
     app.on('activate', () => {

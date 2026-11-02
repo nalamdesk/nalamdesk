@@ -277,10 +277,20 @@ export function createUpdateService(deps: UpdateServiceDeps): DesktopUpdateServi
     return new DesktopUpdateService(deps);
 }
 
-export function bindUpdateIpc(ipcMain: Pick<IpcMain, 'handle'>, service: DesktopUpdateService): void {
-    ipcMain.handle('updates:check', (_event, opts) => service.check(opts));
-    ipcMain.handle('updates:download', () => service.download());
-    ipcMain.handle('updates:install', () => service.install());
-    ipcMain.handle('updates:cancel', () => service.cancel());
-    ipcMain.handle('updates:status', () => service.getStatus());
+/**
+ * Binds the renderer's update calls. `allow` rejects calls from any page
+ * other than the app's own window (client mode passes one, #211).
+ */
+export function bindUpdateIpc(
+    ipcMain: Pick<IpcMain, 'handle'>,
+    service: DesktopUpdateService,
+    allow: (event: unknown) => boolean = () => true
+): void {
+    const guard = <T>(run: (opts?: unknown) => T) => (event: unknown, opts?: unknown): T | UpdateStatus =>
+        allow(event) ? run(opts) : service.getStatus();
+    ipcMain.handle('updates:check', guard((opts) => service.check(opts as { source?: UpdateCheckSource } | undefined)));
+    ipcMain.handle('updates:download', guard(() => service.download()));
+    ipcMain.handle('updates:install', guard(() => service.install()));
+    ipcMain.handle('updates:cancel', guard(() => service.cancel()));
+    ipcMain.handle('updates:status', guard(() => service.getStatus()));
 }

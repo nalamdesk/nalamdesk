@@ -147,7 +147,8 @@ pins exactly what the running server serves.
 
 `nalamdesk-server devices list` shows the joined computers.
 `nalamdesk-server devices revoke <id>` removes a lost or retired computer
-and signs out its sessions.
+and signs out its sessions. An admin can do the same from any joined
+computer in Settings → Computers.
 
 ## Move a desktop clinic onto the server
 

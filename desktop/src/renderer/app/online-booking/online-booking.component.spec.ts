@@ -10,8 +10,11 @@ describe('OnlineBookingComponent', () => {
     let fixture: ComponentFixture<OnlineBookingComponent>;
     let mockCloudService: any;
     let mockPatientService: any;
+    let requestsChanged: () => void;
+    let stopListening: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
+        stopListening = vi.fn();
         mockCloudService = {
             getPublishedSlots: vi.fn().mockReturnValue(Promise.resolve([])),
             publishSlots: vi.fn().mockReturnValue(Promise.resolve()),
@@ -20,7 +23,8 @@ describe('OnlineBookingComponent', () => {
                 { id: 1, patient_name: 'John', status: 'pending', date: '2025-01-01', time: '10:00' }
             ])),
             decide: vi.fn().mockReturnValue(Promise.resolve({ success: true })),
-            saveAppointment: vi.fn().mockReturnValue(Promise.resolve())
+            saveAppointment: vi.fn().mockReturnValue(Promise.resolve()),
+            onRequestsChanged: vi.fn((listener: () => void) => { requestsChanged = listener; return stopListening; })
         };
 
         mockPatientService = {
@@ -55,6 +59,37 @@ describe('OnlineBookingComponent', () => {
         component.isRefreshing = false;
         await component.loadRequests();
         expect(component.requests.length).toBe(1);
+    });
+
+    it('reloads saved requests without asking the cloud when a change is announced', async () => {
+        await fixture.whenStable();
+        component.isRefreshing = false;
+        mockCloudService.syncNow.mockClear();
+        mockCloudService.getAppointmentRequests.mockClear();
+        mockCloudService.getAppointmentRequests.mockReturnValueOnce(Promise.resolve([
+            { id: 1, status: 'pending' }, { id: 2, status: 'pending' }
+        ]));
+        requestsChanged();
+        await vi.waitFor(() => expect(component.requests.length).toBe(2));
+        expect(mockCloudService.syncNow).not.toHaveBeenCalled();
+        fixture.destroy();
+        expect(stopListening).toHaveBeenCalled();
+    });
+
+    it('reloads once a refresh in progress ends when a change arrives mid-refresh', async () => {
+        vi.useFakeTimers();
+        try {
+            component.isRefreshing = true;
+            mockCloudService.getAppointmentRequests.mockClear();
+            await component.loadRequests({ sync: false });
+            expect(mockCloudService.getAppointmentRequests).not.toHaveBeenCalled();
+            component.isRefreshing = false;
+            await component.loadRequests({ sync: false });
+            await vi.advanceTimersByTimeAsync(600);
+            expect(mockCloudService.getAppointmentRequests).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('should toggle time slots', () => {

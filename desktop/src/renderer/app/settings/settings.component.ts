@@ -1,4 +1,5 @@
-import { Component, inject, NgZone, OnInit } from '@angular/core';
+import { Component, inject, NgZone, OnDestroy, OnInit } from '@angular/core';
+import { Subscription } from 'rxjs';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DataService } from '../services/api.service';
@@ -17,6 +18,16 @@ import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 import { METHOD_CATALOG, ROLE_TEMPLATES, HANDLER_GATED_ACTIONS } from '../../../shared/access';
 import { AppUpdateService } from '../services/update.service';
+import { ServerConnectionService } from '../services/server-connection.service';
+
+/** A backup file on the NalamDesk Server, as `backupList` describes it. */
+export interface ServerBackup {
+  name: string;
+  createdTime: string;
+  size: number;
+  recoverable?: boolean;
+  warning?: string;
+}
 
 @Component({
   selector: 'app-settings',
@@ -28,7 +39,7 @@ import { AppUpdateService } from '../services/update.service';
     .ng-dirty.ng-invalid { border-color: #ef4444; }
   `]
 })
-export class SettingsComponent implements OnInit {
+export class SettingsComponent implements OnInit, OnDestroy {
   activeTab = 'users'; // users | audit
   currentUser: any = null;
   users: any[] = [];
@@ -167,6 +178,7 @@ export class SettingsComponent implements OnInit {
       else await this.dataService.invoke('backupRunNow');
       this.toastService?.success('Local backup finished.', 'Backup Complete');
       await this.loadBackupHealth();
+      if (!this.isElectron) await this.loadServerBackups();
     } catch (e) {
       await this.dialogService?.open({
         title: 'Backup failed',
@@ -377,6 +389,10 @@ export class SettingsComponent implements OnInit {
   private authService = inject(AuthService);
   private router = inject(Router);
   private updates = inject(AppUpdateService, { optional: true });
+  private server = inject(ServerConnectionService, { optional: true });
+  private serverEvents: Subscription | null = null;
+  /** Backup files on the server (browser and client mode, #211). */
+  serverBackups: ServerBackup[] = [];
   readonly profileService = inject(PracticeProfileService);
   constructor(private ngZone: NgZone, private dialogService?: DialogService, private toastService?: ToastService) { }
 
@@ -390,16 +406,43 @@ export class SettingsComponent implements OnInit {
       this.checkDriveStatus();
     }
     if (this.canManageBackups) void this.loadBackupHealth();
+    if (!this.isElectron && this.currentUser?.role === 'admin') this.loadServerBackups().catch(() => undefined);
     if (this.currentUser?.role === 'admin') {
       this.loadUsers();
       this.loadRoles();
     }
+    // Server clients (#216): the ABDM inbox follows the live events stream.
+    if (!this.isElectron && this.server?.events) {
+      this.serverEvents = this.server.events.subscribe((event) => {
+        if (this.activeTab === 'abdm' && (event.topic === 'abdm.inbox' || event.topic === 'resync')) this.loadInbox().catch(() => undefined);
+      });
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.serverEvents?.unsubscribe();
+  }
+
+  async loadServerBackups(): Promise<void> {
+    try {
+      const list = await this.dataService.invoke<ServerBackup[]>('backupList');
+      this.ngZone.run(() => { this.serverBackups = Array.isArray(list) ? list : []; });
+    } catch (e) {
+      console.error('[Settings] Failed to list server backups', e);
+    }
+  }
+
+  /** The in-app update panel: single-PC app and client mode, not browsers (#211). */
+  get canUpdateApp(): boolean {
+    return this.isElectron || !!this.updates?.available;
   }
 
   async loadAppVersion() {
-    if (!this.isElectron) return;
+    if (!this.isElectron && !this.server?.bridge) return;
     try {
-      const info = await window.electron.getAppVersion();
+      const info: { display?: string; version?: string } | null = this.isElectron
+        ? await window.electron.getAppVersion()
+        : { version: (await this.server?.bridge?.info())?.appVersion };
       this.ngZone.run(() => {
         this.appVersion = info?.display || info?.version || '';
       });
@@ -409,7 +452,7 @@ export class SettingsComponent implements OnInit {
   }
 
   async checkForUpdates(): Promise<void> {
-    if (!this.isElectron || this.updateBusy) return;
+    if (!this.canUpdateApp || this.updateBusy) return;
     this.updateBusy = true;
     try {
       if (this.updates) {

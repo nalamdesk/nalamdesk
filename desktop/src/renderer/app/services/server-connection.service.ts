@@ -120,6 +120,10 @@ export class ServerConnectionService {
         return result;
     }
 
+    switchFacility(facilityId: number): Promise<{ facilityId: number; role: string }> {
+        return this.client.switchFacility(facilityId);
+    }
+
     async logout(): Promise<void> {
         this.stopEvents();
         await this.client.logout();

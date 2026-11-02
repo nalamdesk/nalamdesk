@@ -52,6 +52,12 @@
                     <span>Users</span>
                 </button>
 
+                <button (click)="switchTab('facilities')" data-testid="settings-tab-facilities"
+                    [class]="activeTab === 'facilities' ? 'bg-blue-50 text-blue-700 border-blue-500' : 'text-gray-600 hover:bg-gray-50 border-transparent'"
+                    class="w-full text-left px-3 py-2 rounded-md transition-colors font-medium flex items-center gap-3 border-l-4">
+                    <span>Facilities</span>
+                </button>
+
                 <button (click)="switchTab('security')"
                     [class]="activeTab === 'security' ? 'bg-blue-50 text-blue-700 border-blue-500' : 'text-gray-600 hover:bg-gray-50 border-transparent'"
                     class="w-full text-left px-3 py-2 rounded-md transition-colors font-medium flex items-center gap-3 border-l-4">
@@ -101,6 +107,11 @@
         <!-- Joined computers (server clients, #194) -->
         <div *ngIf="activeTab === 'computers' && !isElectron" class="h-full overflow-y-auto p-4 md:p-8">
             <app-joined-computers></app-joined-computers>
+        </div>
+
+        <!-- Facilities, departments and staff access (#214) -->
+        <div *ngIf="activeTab === 'facilities'" class="h-full overflow-y-auto p-4 md:p-8">
+            <app-facilities-admin></app-facilities-admin>
         </div>
 
         <!-- 1. GENERAL TAB -->

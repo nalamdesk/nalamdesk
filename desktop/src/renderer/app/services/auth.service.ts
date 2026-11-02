@@ -2,6 +2,15 @@ import { Injectable, Optional } from '@angular/core';
 import { ServerConnectionService } from './server-connection.service';
 import { logoutLandingHref } from '../../../shared/hash-app-path';
 
+export interface LoginOutcome {
+    success: boolean;
+    error?: string;
+    pendingRecoveryCode?: string;
+    /** The facility the session started in, and every facility the user may switch to (#195). */
+    facilityId?: number;
+    facilities?: FacilityGrant[];
+}
+
 @Injectable({
     providedIn: 'root'
 })
@@ -20,13 +29,18 @@ export class AuthService {
 
     constructor(@Optional() private server?: ServerConnectionService) { }
 
-    async login(username: string, password: string): Promise<{ success: boolean; error?: string; pendingRecoveryCode?: string }> {
+    async login(username: string, password: string): Promise<LoginOutcome> {
         if (window.electron) {
             try {
                 const result = await window.electron.login({ username, password });
                 if (result.success) {
-                    this.setUser(result.user);
-                    return { success: true, pendingRecoveryCode: result.pendingRecoveryCode };
+                    this.setUser({ ...result.user, facilityId: result.facilityId });
+                    return {
+                        success: true,
+                        pendingRecoveryCode: result.pendingRecoveryCode,
+                        facilityId: result.facilityId,
+                        facilities: result.facilities ?? []
+                    };
                 } else {
                     return { success: false, error: result.error };
                 }
@@ -38,8 +52,8 @@ export class AuthService {
         try {
             const result = await this.server.login(username, password);
             if (!result.ok) return { success: false, error: result.error };
-            this.setUser(result.user);
-            return { success: true };
+            this.setUser({ ...result.user, facilityId: result.facilityId });
+            return { success: true, facilityId: result.facilityId, facilities: result.facilities ?? [] };
         } catch (e: any) {
             return { success: false, error: e?.message === 'SERVER_UNREACHABLE' ? 'Network Error' : e?.message };
         }
@@ -122,12 +136,20 @@ export class AuthService {
         return u ? JSON.parse(u) : null;
     }
 
+    /** The session moved to another facility: the role there replaces the old one (#195). */
+    applyFacility(facilityId: number, role: string): void {
+        const user = this.getUser();
+        if (!user) return;
+        this.setUser({ ...user, facilityId, role });
+    }
+
     private setUser(user: any) {
         const safeUser = {
             id: user?.id,
             username: user?.username,
             role: user?.role,
             name: user?.name,
+            ...(Number(user?.facilityId) > 0 ? { facilityId: Number(user.facilityId) } : {}),
             ...(user?.specialty ? { specialty: user.specialty } : {}),
             ...(user?.license_number ? { license_number: user.license_number } : {}),
             ...(user?.password_reset_required !== undefined

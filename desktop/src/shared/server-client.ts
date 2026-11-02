@@ -69,8 +69,17 @@ export interface SignedInUser {
     name?: string;
 }
 
+/** A facility the user can work in, with their role there (#195). */
+export interface FacilityChoice {
+    id: number;
+    code: string;
+    name: string;
+    kind: string;
+    role: string;
+}
+
 export type LoginResult =
-    | { ok: true; user: SignedInUser }
+    | { ok: true; user: SignedInUser; facilityId?: number; facilities?: FacilityChoice[] }
     | { ok: false; error: string; retryAfterSec?: number };
 
 export interface ServerEventMessage {
@@ -228,7 +237,23 @@ export class ServerClient {
         }
         this.storeTokens(body);
         this.setState({ kind: 'connected', serverVersion: res.headers['x-nalamdesk-server-version'] });
-        return { ok: true, user: body.user };
+        return {
+            ok: true,
+            user: body.user,
+            ...(Number(body.facilityId) > 0 ? { facilityId: Number(body.facilityId) } : {}),
+            ...(Array.isArray(body.facilities) ? { facilities: body.facilities } : {})
+        };
+    }
+
+    /**
+     * Moves this session to another facility (#195). The server reissues the
+     * access token; the refresh token stays the same.
+     */
+    async switchFacility(facilityId: number): Promise<{ facilityId: number; role: string }> {
+        const body = await this.call<any>('POST', '/api/auth/facility', { facilityId });
+        const refreshToken = this.options.tokens.get()?.refreshToken;
+        this.storeTokens({ ...body, ...(refreshToken ? { refreshToken } : {}) });
+        return { facilityId: Number(body.facilityId), role: String(body.role) };
     }
 
     async logout(): Promise<void> {

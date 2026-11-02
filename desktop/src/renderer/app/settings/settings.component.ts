@@ -13,6 +13,7 @@ import { DatePickerComponent } from '../shared/components/date-picker/date-picke
 import { CloudLinkComponent } from './cloud-link.component';
 import { CatalogSettingsComponent } from './catalog-settings.component';
 import { JoinedComputersComponent } from './joined-computers.component';
+import { FacilitiesAdminComponent } from './facilities-admin.component';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 import { METHOD_CATALOG, ROLE_TEMPLATES, HANDLER_GATED_ACTIONS } from '../../../shared/access';
@@ -21,7 +22,7 @@ import { AppUpdateService } from '../services/update.service';
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, SharedTableComponent, ActionRendererComponent, DatePickerComponent, CatalogSettingsComponent, CloudLinkComponent, JoinedComputersComponent],
+  imports: [CommonModule, FormsModule, SharedTableComponent, ActionRendererComponent, DatePickerComponent, CatalogSettingsComponent, CloudLinkComponent, JoinedComputersComponent, FacilitiesAdminComponent],
   templateUrl: './settings.component.html',
   styles: [`
     :host { display: block; height: 100%; }

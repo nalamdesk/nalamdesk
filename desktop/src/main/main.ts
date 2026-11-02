@@ -31,6 +31,7 @@ import { verifyPersistedActiveAdmin } from './services/AdminCredentialVerifier';
 import { acknowledgeRecoveryCodeForActiveAdmin } from './services/RecoveryCodeAcknowledgement';
 import { ApiServer } from '../server/app';
 import { invokeDbMethod } from '../shared/ipc-db-args';
+import { FACILITY_ADMIN_METHODS } from '../shared/access';
 import { registerJoinIpc } from './client/join-ipc';
 import { safeStorageCipher } from './client/electron-env';
 import { DEFAULT_FACILITY_ID, setFallbackFacility } from '../shared/request-context';
@@ -1201,6 +1202,15 @@ handleGuardedDb('db:deleteUserOverride', (_, input) => {
     refreshAccessPolicy();
     return result;
 });
+// Organisation admin (#214): the data layer also requires an organisation admin.
+for (const method of FACILITY_ADMIN_METHODS) {
+    handleGuardedDb(`db:${method}`, (_, input) => {
+        const user = sessionService.getUser();
+        if (!user) throw new Error('Unauthorized');
+        if (user.role !== 'admin') throw new Error('Forbidden');
+        return invokeDbMethod(databaseService, method, [input], user.id);
+    });
+}
 handleGuardedDb('db:getDoctors', () => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');

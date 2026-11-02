@@ -13,6 +13,13 @@ export interface CatalogGroup {
 
 export const BUILTIN_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'] as const;
 
+/** Organisation administration (#214): facilities, departments, per-facility roles. */
+export const FACILITY_ADMIN_METHODS = [
+    'getFacilityAdmin', 'saveFacility', 'setFacilityActive',
+    'saveDepartment', 'setDepartmentActive',
+    'grantFacilityRole', 'revokeFacilityRole', 'setOrgAdmin'
+] as const;
+
 export const METHOD_CATALOG: CatalogGroup[] = [
     {
         label: 'Queue & triage',
@@ -86,7 +93,8 @@ export const METHOD_CATALOG: CatalogGroup[] = [
             'getDemoSeedState', 'seedDemoData', 'clearDemoData',
             'getSettings', 'saveSettings', 'getAuditLogs',
             'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
-            'abdmSaveConfig', 'abdmTestConnectivity', 'abdmSimulateShare'
+            'abdmSaveConfig', 'abdmTestConnectivity', 'abdmSimulateShare',
+            ...FACILITY_ADMIN_METHODS
         ]
     }
 ];
@@ -127,7 +135,9 @@ export const HANDLER_GATED_ACTIONS: ReadonlySet<string> = new Set([
     'getDemoSeedState', 'seedDemoData', 'clearDemoData',
     'getUserOverrides', 'saveUserOverride', 'deleteUserOverride',
     'saveSettings', 'abdmSaveConfig',
-    'abdmTestConnectivity', 'abdmSimulateShare'
+    'abdmTestConnectivity', 'abdmSimulateShare',
+    // Organisation admins only, checked in the data layer (#214).
+    ...FACILITY_ADMIN_METHODS
 ]);
 
 export interface RoleTemplate {

@@ -142,4 +142,80 @@ describe('LoginComponent', () => {
         expect(component.error).toBe('Sign-in failed. Check your credentials or use Recover Device if access is unavailable.');
         expect(mockRouter.navigate).not.toHaveBeenCalled();
     });
+
+    describe('facilities at sign-in (#211)', () => {
+        const facilities = [
+            { id: 1, code: 'MAIN', name: 'Main', kind: 'clinic', role: 'doctor' },
+            { id: 2, code: 'ANN', name: 'Anna Nagar', kind: 'hospital', role: 'admin' }
+        ];
+        let facilityService: any;
+
+        beforeEach(() => {
+            localStorage.clear();
+            mockAuthService.getUser.mockReturnValue({ username: 'asha' });
+            mockAuthService.applyFacility = vi.fn();
+            (window as any).electron.switchFacility = vi.fn().mockResolvedValue({ success: true, facilityId: 2, user: { role: 'admin' } });
+            component.username = 'asha';
+            component.password = 'pw';
+            facilityService = component.facilities;
+        });
+
+        it('explains a sign-in refused for having no facility', async () => {
+            mockAuthService.login.mockResolvedValue({ success: false, error: 'NO_FACILITY_ACCESS' });
+            await component.onLogin();
+            expect(component.error).toContain('not set up for any facility');
+        });
+
+        it('goes straight in with one facility', async () => {
+            mockAuthService.login.mockResolvedValue({ success: true, facilityId: 1, facilities: [facilities[0]] });
+            await component.onLogin();
+            expect(component.choosingFacility).toBe(false);
+            expect(mockRouter.navigate).toHaveBeenCalledWith(['/dashboard']);
+        });
+
+        it('asks which facility, preselecting the last one used here, then switches to it', async () => {
+            localStorage.setItem('nalamdesk_last_facility:asha', '2');
+            mockAuthService.login.mockResolvedValue({ success: true, facilityId: 1, facilities });
+            await component.onLogin();
+            expect(component.choosingFacility).toBe(true);
+            expect(component.selectedFacilityId).toBe(2);
+            expect(mockRouter.navigate).not.toHaveBeenCalled();
+
+            await component.confirmFacility();
+            expect((window as any).electron.switchFacility).toHaveBeenCalledWith(2);
+            expect(mockAuthService.applyFacility).toHaveBeenCalledWith(2, 'admin');
+            expect(facilityService.currentId()).toBe(2);
+            expect(mockRouter.navigate).toHaveBeenCalledWith(['/dashboard']);
+        });
+
+        it('keeps the sign-in facility without a switch, and remembers it', async () => {
+            mockAuthService.login.mockResolvedValue({ success: true, facilityId: 1, facilities });
+            await component.onLogin();
+            expect(component.selectedFacilityId).toBe(1);
+            await component.confirmFacility();
+            expect((window as any).electron.switchFacility).not.toHaveBeenCalled();
+            expect(localStorage.getItem('nalamdesk_last_facility:asha')).toBe('1');
+            expect(mockRouter.navigate).toHaveBeenCalledWith(['/dashboard']);
+        });
+
+        it('stays on the picker when the switch is refused', async () => {
+            (window as any).electron.switchFacility.mockResolvedValue({ success: false, error: 'NO_FACILITY_ACCESS' });
+            mockAuthService.login.mockResolvedValue({ success: true, facilityId: 1, facilities });
+            await component.onLogin();
+            component.selectedFacilityId = 2;
+            await component.confirmFacility();
+            expect(component.choosingFacility).toBe(true);
+            expect(component.selectedFacilityId).toBe(1);
+            expect(component.error).toContain('Could not open that facility');
+            expect(mockRouter.navigate).not.toHaveBeenCalled();
+        });
+
+        it('asks for the facility after the recovery code is acknowledged', async () => {
+            mockAuthService.login.mockResolvedValue({ success: true, pendingRecoveryCode: 'AAAA', facilityId: 1, facilities });
+            await component.onLogin();
+            expect(component.choosingFacility).toBe(false);
+            await component.acknowledgeMigration();
+            expect(component.choosingFacility).toBe(true);
+        });
+    });
 });

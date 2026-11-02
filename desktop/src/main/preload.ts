@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 console.log('Preload script loaded!');
 contextBridge.exposeInMainWorld('electron', {
-    login: (credentials: { username: string; password: string }) => ipcRenderer.invoke('auth:login', credentials),
+    login: (credentials: { username: string; password: string; facilityId?: number }) => ipcRenderer.invoke('auth:login', credentials),
     logout: () => ipcRenderer.invoke('auth:logout'),
     getFacilities: () => ipcRenderer.invoke('auth:getFacilities'),
     switchFacility: (facilityId: number) => ipcRenderer.invoke('auth:switchFacility', facilityId),
@@ -134,6 +134,14 @@ contextBridge.exposeInMainWorld('electron', {
         getUserOverrides: (userId: number) => ipcRenderer.invoke('db:getUserOverrides', userId),
         saveUserOverride: (input: any) => ipcRenderer.invoke('db:saveUserOverride', input),
         deleteUserOverride: (input: any) => ipcRenderer.invoke('db:deleteUserOverride', input),
+        getFacilityAdmin: () => ipcRenderer.invoke('db:getFacilityAdmin'),
+        saveFacility: (input: any) => ipcRenderer.invoke('db:saveFacility', input),
+        setFacilityActive: (input: any) => ipcRenderer.invoke('db:setFacilityActive', input),
+        saveDepartment: (input: any) => ipcRenderer.invoke('db:saveDepartment', input),
+        setDepartmentActive: (input: any) => ipcRenderer.invoke('db:setDepartmentActive', input),
+        grantFacilityRole: (input: any) => ipcRenderer.invoke('db:grantFacilityRole', input),
+        revokeFacilityRole: (input: any) => ipcRenderer.invoke('db:revokeFacilityRole', input),
+        setOrgAdmin: (input: any) => ipcRenderer.invoke('db:setOrgAdmin', input),
         getAllRoles: () => ipcRenderer.invoke('db:getAllRoles'),
         saveRole: (input: any) => ipcRenderer.invoke('db:saveRole', input),
         deleteRole: (name: string) => ipcRenderer.invoke('db:deleteRole', name),

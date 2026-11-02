@@ -194,6 +194,74 @@ describe('BackupService recoverable bundles', () => {
         await service.performBackupOnQuit();
         expect(cloud.uploadFile).toHaveBeenCalledOnce();
     });
+    describe('off-site copy', () => {
+        it('copies each new bundle to the off-site target and records it', async () => {
+            const db = database(sourceDb);
+            const uploadFile = vi.fn(async (_file: string, _name: string) => {
+                expect(fs.existsSync(_file)).toBe(true);
+            });
+            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+                { offsite: { description: 'folder /mnt/usb', uploadFile } });
+            await service.performBackup();
+            expect(uploadFile).toHaveBeenCalledOnce();
+            const [file, name] = uploadFile.mock.calls[0];
+            expect(name).toMatch(/^nalamdesk-auto-backup-.+\.ndbackup$/);
+            expect(file).toBe(path.join(sourceUserData, 'backups', name));
+            // The bundle as written, not the raw database file.
+            expect(fs.readFileSync(file).subarray(0, 17).toString('ascii')).toBe('NALAMDESK-BACKUP\n');
+            expect(db.logAudit).toHaveBeenCalledWith('BACKUP_OFFSITE', 'system', 0, 0, `Copied ${name} to folder /mnt/usb`);
+        });
+
+        it('keeps the local backup and records the failure when the copy fails', async () => {
+            const db = database(sourceDb);
+            const uploadFile = vi.fn(async () => { throw new Error('share not mounted'); });
+            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+                { offsite: { description: 'folder /mnt/nas', uploadFile } });
+            await expect(service.performBackup()).resolves.toBeUndefined();
+            expect(db.logAudit).toHaveBeenCalledWith('BACKUP_LOCAL', 'system', 0, 0, expect.any(String));
+            expect(db.logAudit).toHaveBeenCalledWith('BACKUP_OFFSITE_ERROR', 'system', 0, 0,
+                expect.stringContaining('to folder /mnt/nas failed: share not mounted'));
+            expect(db.logAudit).not.toHaveBeenCalledWith('BACKUP_ERROR', expect.anything(), 0, 0, expect.anything());
+        });
+
+        it('does not copy when the local backup fails', async () => {
+            const db = database(sourceDb);
+            (db.backupDatabase as any).mockRejectedValue(new Error('local disk full'));
+            const uploadFile = vi.fn(async () => undefined);
+            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+                { offsite: { description: 'folder /mnt/usb', uploadFile } });
+            await expect(service.performBackup()).rejects.toThrow('local disk full');
+            expect(uploadFile).not.toHaveBeenCalled();
+        });
+
+        it('reports the target, last copy and last failure in backup health', async () => {
+            const db = database(sourceDb);
+            (db.getSettings as any).mockReturnValue({ backup_schedule: '13:00' });
+            (db as any).getAuditLogs = vi.fn(() => [
+                { action: 'BACKUP_OFFSITE_ERROR', details: 'bucket refused', timestamp: '2026-03-11 13:00:00' },
+                { action: 'BACKUP_OFFSITE', details: 'copied', timestamp: '2026-03-10 13:00:00' }
+            ]);
+            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+                { offsite: { description: 'S3 bucket clinic at s3.example.com', uploadFile: vi.fn() } });
+            const health = await service.getLocalBackupHealth(new Date('2026-03-12T12:00:00'));
+            expect(health.offsite).toEqual({
+                target: 'S3 bucket clinic at s3.example.com',
+                lastCopyAt: '2026-03-10 13:00:00',
+                lastErrorAt: '2026-03-11 13:00:00',
+                lastError: 'bucket refused'
+            });
+            // An off-site failure is not a local backup failure.
+            expect(health.lastError).toBeNull();
+        });
+
+        it('reports no off-site section when none is configured', async () => {
+            const db = database(sourceDb);
+            (db as any).getAuditLogs = vi.fn(() => []);
+            const health = await new BackupService(db, drive(), sourceSecurity(), sourceUserData).getLocalBackupHealth();
+            expect(health.offsite).toBeNull();
+        });
+    });
+
     function database(snapshotSource: string): DatabaseService {
         return {
             backupDatabase: vi.fn(async (destination: string) => fs.copyFileSync(snapshotSource, destination)),

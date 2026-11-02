@@ -5,6 +5,7 @@ import {
     DEFAULT_CREDENTIAL_NAME, DEFAULT_CREDSTORE_DIR, DPAPI_PROVIDER, KMS_PROVIDER, SYSTEMD_CREDS_PROVIDER, TPM_PROVIDER
 } from '../../main/services/ExternalKeyStores';
 import { PROD_API_PORT } from '../../shared/runtime-config';
+import type { OffsiteTargetConfig } from './offsite';
 
 /**
  * NalamDesk Server configuration (ADR 0001). One optional JSON file, then
@@ -18,6 +19,8 @@ export interface ServerConfig {
     port: number;
     staticPath: string;
     keyProvider: KeyProviderConfig;
+    /** Second location for scheduled backups (#216). Null keeps them in `<dataDir>/backups` only. */
+    offsiteBackup?: OffsiteTargetConfig | null;
 }
 
 export type KeyProviderConfig =
@@ -43,6 +46,13 @@ export interface ConfigFile {
     credentialPath?: string;
     dpapiBlob?: string;
     keyCommand?: string;
+    offsiteTarget?: string;
+    offsitePath?: string;
+    offsiteS3Endpoint?: string;
+    offsiteS3Bucket?: string;
+    offsiteS3Region?: string;
+    offsiteS3Prefix?: string;
+    offsiteS3AccessKeyId?: string;
 }
 
 export const DEFAULT_DATA_DIR = process.platform === 'win32'
@@ -50,7 +60,8 @@ export const DEFAULT_DATA_DIR = process.platform === 'win32'
     : '/var/lib/nalamdesk';
 
 const CONFIG_KEYS = new Set([
-    'dataDir', 'host', 'port', 'staticPath', 'keyProvider', 'keyFile', 'credentialName', 'credentialPath', 'dpapiBlob', 'keyCommand'
+    'dataDir', 'host', 'port', 'staticPath', 'keyProvider', 'keyFile', 'credentialName', 'credentialPath', 'dpapiBlob', 'keyCommand',
+    'offsiteTarget', 'offsitePath', 'offsiteS3Endpoint', 'offsiteS3Bucket', 'offsiteS3Region', 'offsiteS3Prefix', 'offsiteS3AccessKeyId'
 ]);
 const SECRET_KEYS = /pass(word|phrase)?|secret|token/i;
 
@@ -113,6 +124,7 @@ export function loadServerConfig(options: LoadConfigOptions = {}): ServerConfig 
 
     const providerName = env['NALAMDESK_KEY_PROVIDER'] || file.keyProvider || KEY_FILE_PROVIDER;
     const keyProvider = resolveKeyProvider(providerName, { env, file, cwd, dataDir, resolve });
+    const offsiteBackup = resolveOffsiteBackup({ env, file, cwd, dataDir, resolve }, options.readFile);
 
     return {
         dataDir,
@@ -120,7 +132,8 @@ export function loadServerConfig(options: LoadConfigOptions = {}): ServerConfig 
         host,
         port,
         staticPath,
-        keyProvider
+        keyProvider,
+        offsiteBackup
     };
 }
 
@@ -158,6 +171,78 @@ function resolveKeyProvider(providerName: string, { env, file, cwd, dataDir, res
         default:
             throw new Error(`CONFIG_INVALID: unknown key provider "${providerName}". Use one of: ${KEY_PROVIDERS.join(', ')}.`);
     }
+}
+
+export const OFFSITE_TARGETS = ['none', 'folder', 's3'] as const;
+
+function resolveOffsiteBackup(
+    { env, file, cwd, dataDir, resolve }: ProviderContext,
+    readFile?: (file: string) => string
+): OffsiteTargetConfig | null {
+    const setting = (envName: string, fileValue: string | undefined) => (env[envName] || fileValue || '').trim();
+    const kind = setting('NALAMDESK_OFFSITE_TARGET', file.offsiteTarget) || 'none';
+    switch (kind) {
+        case 'none':
+            return null;
+        case 'folder': {
+            let folder = '';
+            if (env['NALAMDESK_OFFSITE_PATH']) folder = path.resolve(cwd, env['NALAMDESK_OFFSITE_PATH']);
+            else if (file.offsitePath) folder = resolve(file.offsitePath);
+            if (!folder) throw new Error('CONFIG_INVALID: the folder off-site target needs a path. Set NALAMDESK_OFFSITE_PATH or offsitePath.');
+            if (isInside(folder, dataDir)) {
+                throw new Error('CONFIG_INVALID: the off-site folder must be outside the data directory, on another disk or share.');
+            }
+            return { kind: 'folder', path: folder };
+        }
+        case 's3':
+            return resolveS3Target(setting, file, env, readFile);
+        default:
+            throw new Error(`CONFIG_INVALID: unknown off-site target "${kind}". Use one of: ${OFFSITE_TARGETS.join(', ')}.`);
+    }
+}
+
+function resolveS3Target(
+    setting: (envName: string, fileValue: string | undefined) => string,
+    file: ConfigFile,
+    env: NodeJS.ProcessEnv,
+    readFile?: (file: string) => string
+): OffsiteTargetConfig {
+    const required = (envName: string, key: string, value: string | undefined) => {
+        if (!value) throw new Error(`CONFIG_INVALID: the s3 off-site target needs ${envName} or ${key}.`);
+        return value;
+    };
+    const endpoint = required('NALAMDESK_OFFSITE_S3_ENDPOINT', 'offsiteS3Endpoint', setting('NALAMDESK_OFFSITE_S3_ENDPOINT', file.offsiteS3Endpoint));
+    let parsed: URL;
+    try {
+        parsed = new URL(endpoint);
+    } catch {
+        throw new Error(`CONFIG_INVALID: ${endpoint} is not a valid S3 endpoint URL.`);
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        throw new Error('CONFIG_INVALID: the S3 endpoint must be an https:// (or http://) URL.');
+    }
+    if (parsed.username || parsed.password || parsed.search) {
+        throw new Error('CONFIG_INVALID: put S3 credentials in NALAMDESK_OFFSITE_S3_ACCESS_KEY_ID and the secret, not in the endpoint URL.');
+    }
+    const bucket = required('NALAMDESK_OFFSITE_S3_BUCKET', 'offsiteS3Bucket', setting('NALAMDESK_OFFSITE_S3_BUCKET', file.offsiteS3Bucket));
+    const prefix = setting('NALAMDESK_OFFSITE_S3_PREFIX', file.offsiteS3Prefix).replace(/^\/+/, '');
+    return {
+        kind: 's3',
+        endpoint,
+        bucket,
+        region: setting('NALAMDESK_OFFSITE_S3_REGION', file.offsiteS3Region) || 'us-east-1',
+        prefix: prefix && !prefix.endsWith('/') ? `${prefix}/` : prefix,
+        accessKeyId: required('NALAMDESK_OFFSITE_S3_ACCESS_KEY_ID', 'offsiteS3AccessKeyId',
+            setting('NALAMDESK_OFFSITE_S3_ACCESS_KEY_ID', file.offsiteS3AccessKeyId)),
+        // The secret only ever comes from the environment or a file it names.
+        secretAccessKey: required('NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY_FILE', 'NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY',
+            readSecretFromEnv('NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY', env, readFile)?.trim())
+    };
+}
+
+function isInside(child: string, parent: string): boolean {
+    const relative = path.relative(parent, child);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 /**

@@ -121,8 +121,17 @@ export class SettingsComponent implements OnInit, OnDestroy {
     const errAt = SettingsComponent.toEpoch(h.lastErrorAt);
     const okAt = SettingsComponent.toEpoch(h.lastBackupAt);
     if (errAt != null && (okAt == null || errAt > okAt)) return 'error';
-    if (h.missed) return 'attention';
+    if (h.missed || this.offsiteCopyFailing) return 'attention';
     return 'healthy';
+  }
+
+  /** The newest off-site copy attempt failed (NalamDesk Server, #216). */
+  get offsiteCopyFailing(): boolean {
+    const offsite = this.backupHealth?.offsite;
+    if (!offsite) return false;
+    const errAt = SettingsComponent.toEpoch(offsite.lastErrorAt);
+    const okAt = SettingsComponent.toEpoch(offsite.lastCopyAt);
+    return errAt != null && (okAt == null || errAt > okAt);
   }
 
   /** Parses SQLite UTC timestamps and ISO strings to epoch millis. */

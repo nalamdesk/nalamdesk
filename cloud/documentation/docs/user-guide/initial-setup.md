@@ -6,6 +6,8 @@ sidebar_position: 2
 
 When you launch NalamDesk for the first time, you will be greeted by the **Setup Wizard**. This process initializes your local secure database (the "Vault") where all patient data is stored encrypted.
 
+> **Clinic runs a NalamDesk Server?** Do not set up a new vault. On the welcome screen choose **Connect this computer to it** and follow [Connect computers](../server/connect-computers.md). This page is for a clinic that works on one computer.
+
 On Linux, install the `.deb` clinic package (`sudo apt install ./nalamdesk-desktop_*_amd64.deb`). First-run encryption uses the system keyring (`gnome-libsecret`). If setup reports `ENCRYPTION_UNAVAILABLE`, install `libsecret-1-0` and `gnome-keyring` and restart — do not use `--password-store=basic`.
 
 ## Step 1: Welcome Screen
@@ -28,7 +30,7 @@ Create the primary Administrator account. This account has full access to all se
 
 **Fields:**
 - **Username**: Choose a unique username (e.g., `admin`).
-- **Password**: Must be at least 4 characters long.
+- **Password**: Must be at least 6 characters long.
 - **Confirm Password**: Re-enter to verify.
 
 > **Important**: If you lose this password, you cannot recover the encrypted data easily without the Recovery Key.

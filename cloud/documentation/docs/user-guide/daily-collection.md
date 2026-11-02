@@ -48,7 +48,8 @@ field, and is visible to admins, doctors, and receptionists.
 - **Create invoice**: allowed only after the encounter is finished.
   The invoice starts with the clinic's configured consultation fee
   (when non-zero) plus the visit's charge lines. Totals are computed
-  from the lines; every invoice gets a unique number.
+  from the lines; every invoice gets a unique number from its facility's
+  series (see [Numbering per Facility](./facilities.md#numbering-per-facility)).
 - **Record payment**: cash, UPI, or card. Amounts must be positive and
   cannot exceed the balance. Each payment is idempotent and gets a
   unique receipt number.
@@ -76,3 +77,5 @@ modal verifies exactly that.
   silently edited or deleted.
 - Days follow the **clinic-local timezone**, so a payment near midnight
   counts toward the right clinic day.
+- Collection and day close are **per facility**: each branch closes its
+  own day.

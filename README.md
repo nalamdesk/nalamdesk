@@ -77,9 +77,9 @@ Run the clinic's server with Docker, a Debian/Ubuntu package or a Windows
 service. See the **[self-hosting guide](./docs/self-hosting.md)**.
 
 ## Documentation
-See `cloud/documentation` for full architectural details.
 See **[Testing Strategy](./cloud/documentation/docs/developer-guide/testing-strategy.md)** for detailed Testing Architecture.
-See **[ADR 0001: NalamDesk Server](./docs/architecture/0001-headless-server.md)** for the planned headless server and client model.
+The user and operator docs are published at **https://docs.nalamdesk.com** (source in `cloud/documentation`).
+See **[ADR 0001: NalamDesk Server](./docs/architecture/0001-headless-server.md)** for the headless server and client model, with [server-network](./docs/architecture/server-network.md) and [server-clients](./docs/architecture/server-clients.md) for how it is built.
 
 ## License
 

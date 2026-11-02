@@ -6,6 +6,12 @@ sidebar_position: 4
 
 NalamDesk takes data security seriously. We employ a **Privacy-First, Local-First** architecture. This means your patient data resides on your device, encrypted, and is never sent to our servers.
 
+:::note Using NalamDesk Server?
+This page is for a single-computer clinic. A server keeps its own daily
+backups, can copy them off-site, and restores from its command line. See
+[Server backups and restore](./server/backups-and-restore.md).
+:::
+
 ## Local Backups
 NalamDesk automatically creates an encrypted backup of your database every
 day at the time configured under **Settings > Data & Backup > Local Backup

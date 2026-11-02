@@ -395,8 +395,25 @@ your provider offers it, so a compromised server cannot erase its history.
 `nalamdesk-server status` shows the configured target. Restart the server
 after changing it.
 
-**Test a restore.** Copy a backup to a spare machine, start the server
-against it, and sign in.
+### Restore
+
+Stop the server, then replace the vault with a backup:
+
+```sh
+sudo systemctl stop nalamdesk-server
+sudo nalamdesk-server restore /path/to/nalamdesk-backup.ndbackup
+sudo systemctl start nalamdesk-server
+```
+
+`restore` asks for the backup's recovery code (or reads
+`NALAMDESK_RECOVERY_CODE_FILE`), saves a snapshot of the current vault, and
+refuses while the server is running. Afterwards the vault opens with the
+server's key provider and the backup's recovery code; add other slots again
+with `nalamdesk-server key add`. Restore is not offered in the app, even to
+admins: it runs on the server only.
+
+**Test a restore.** Install the server on a spare machine, restore a backup
+there, start it and sign in.
 
 ## Upgrades
 

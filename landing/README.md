@@ -21,10 +21,12 @@ fontsource); no third-party requests on the page.
 
 ## Scope
 
-Desktop only. No cloud features, no placeholders: every section renders
-finished copy and demonstration content drawn from the shipped desktop
-workflows (queue and triage, consult guardrails, vitals, print, receipts and
-day close, vault, backups, roles).
+The desktop app and the self-hosted NalamDesk Server (app and browser
+clients, facilities and departments, per-facility roles, vault key
+providers, off-site backups). No hosted-cloud features, no placeholders:
+every section renders finished copy drawn from shipped workflows (queue and
+triage, consult guardrails, vitals, print, receipts and day close, vault,
+backups, roles, server). Server setup links to the docs, not to a download.
 
 ## Landing vs docs split
 

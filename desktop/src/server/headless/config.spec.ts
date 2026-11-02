@@ -16,7 +16,68 @@ describe('loadServerConfig', () => {
             host: '0.0.0.0',
             port: 3000,
             staticPath: '/ui',
-            keyProvider: { provider: 'key-file', keyPath: path.join('/srv/nd', 'vault.key') }
+            keyProvider: { provider: 'key-file', keyPath: path.join('/srv/nd', 'vault.key') },
+            offsiteBackup: null
+        });
+    });
+
+    describe('off-site backup target', () => {
+        const base = { NALAMDESK_DATA_DIR: '/srv/nd' };
+
+        it('reads a folder target from the environment or next to the config file', () => {
+            const fromEnv = loadServerConfig({ env: { ...base, NALAMDESK_OFFSITE_TARGET: 'folder', NALAMDESK_OFFSITE_PATH: 'mnt/nas' }, cwd: '/' });
+            expect(fromEnv.offsiteBackup).toEqual({ kind: 'folder', path: path.resolve('/', 'mnt/nas') });
+
+            const readFile = files({ '/etc/nd/server.json': JSON.stringify({ offsiteTarget: 'folder', offsitePath: '../../media/usb' }) });
+            const fromFile = loadServerConfig({ env: base, configPath: '/etc/nd/server.json', readFile, cwd: '/' });
+            expect(fromFile.offsiteBackup).toEqual({ kind: 'folder', path: path.resolve('/media/usb') });
+        });
+
+        it('rejects a folder target without a path or inside the data directory', () => {
+            expect(() => loadServerConfig({ env: { ...base, NALAMDESK_OFFSITE_TARGET: 'folder' }, cwd: '/' }))
+                .toThrow('needs a path');
+            expect(() => loadServerConfig({ env: { ...base, NALAMDESK_OFFSITE_TARGET: 'folder', NALAMDESK_OFFSITE_PATH: '/srv/nd/backups2' }, cwd: '/' }))
+                .toThrow('outside the data directory');
+        });
+
+        it('reads an S3 target with the secret from a file only', () => {
+            const readFile = files({
+                '/etc/nd/server.json': JSON.stringify({
+                    offsiteTarget: 's3', offsiteS3Endpoint: 'https://s3.example.com', offsiteS3Bucket: 'clinic',
+                    offsiteS3Prefix: '/nalamdesk', offsiteS3AccessKeyId: 'AKID'
+                }),
+                '/run/secrets/s3': 'top-secret\n'
+            });
+            const config = loadServerConfig({
+                env: { ...base, NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY_FILE: '/run/secrets/s3' },
+                configPath: '/etc/nd/server.json', readFile, cwd: '/'
+            });
+            expect(config.offsiteBackup).toEqual({
+                kind: 's3', endpoint: 'https://s3.example.com', bucket: 'clinic', region: 'us-east-1',
+                prefix: 'nalamdesk/', accessKeyId: 'AKID', secretAccessKey: 'top-secret'
+            });
+        });
+
+        it('refuses the S3 secret in the config file and incomplete or unsafe S3 settings', () => {
+            const s3 = {
+                ...base, NALAMDESK_OFFSITE_TARGET: 's3', NALAMDESK_OFFSITE_S3_ENDPOINT: 'https://s3.example.com',
+                NALAMDESK_OFFSITE_S3_BUCKET: 'clinic', NALAMDESK_OFFSITE_S3_ACCESS_KEY_ID: 'AKID'
+            };
+            expect(() => loadServerConfig({ env: s3, cwd: '/' })).toThrow('NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY');
+            const withSecret = { ...s3, NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY: 'shh' };
+            expect(loadServerConfig({ env: withSecret, cwd: '/' }).offsiteBackup).toMatchObject({ kind: 's3', secretAccessKey: 'shh', prefix: '' });
+            expect(() => loadServerConfig({ env: { ...withSecret, NALAMDESK_OFFSITE_S3_BUCKET: '' }, cwd: '/' })).toThrow('NALAMDESK_OFFSITE_S3_BUCKET');
+            expect(() => loadServerConfig({ env: { ...withSecret, NALAMDESK_OFFSITE_S3_ENDPOINT: 'ftp://x' }, cwd: '/' })).toThrow('https://');
+            expect(() => loadServerConfig({ env: { ...withSecret, NALAMDESK_OFFSITE_S3_ENDPOINT: 'not a url' }, cwd: '/' })).toThrow('not a valid');
+            expect(() => loadServerConfig({ env: { ...withSecret, NALAMDESK_OFFSITE_S3_ENDPOINT: 'https://a:b@s3.example.com' }, cwd: '/' }))
+                .toThrow('not in the endpoint URL');
+
+            const readFile = files({ '/etc/nd/server.json': JSON.stringify({ offsiteS3SecretAccessKey: 'x' }) });
+            expect(() => loadServerConfig({ env: base, configPath: '/etc/nd/server.json', readFile, cwd: '/' })).toThrow('is a secret');
+        });
+
+        it('rejects an unknown target', () => {
+            expect(() => loadServerConfig({ env: { ...base, NALAMDESK_OFFSITE_TARGET: 'ftp' }, cwd: '/' })).toThrow('unknown off-site target');
         });
     });
 

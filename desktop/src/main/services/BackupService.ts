@@ -62,6 +62,21 @@ export interface BackupServiceOptions {
     onRestoreCommitted?: () => void;
     /** Test seam: how long fence() waits for in-flight API/IPC DB work. */
     drainTimeoutMs?: number;
+    /** Second location that receives a copy of each scheduled bundle (NalamDesk Server, #216). */
+    offsite?: OffsiteCopyTarget | null;
+}
+
+/** Receives the encrypted `.ndbackup` bundle as written; never plaintext. */
+export interface OffsiteCopyTarget {
+    readonly description: string;
+    uploadFile(filePath: string, name: string): Promise<void>;
+}
+
+export interface OffsiteBackupHealth {
+    target: string;
+    lastCopyAt: string | null;
+    lastErrorAt: string | null;
+    lastError: string | null;
 }
 
 /** Offline bundle checksums detect corruption. Authenticity/recoverability is
@@ -188,9 +203,10 @@ export class BackupService {
 
         let lastErrorAt: string | null = null;
         let lastError: string | null = null;
+        let audits: any[] = [];
         try {
-            const audits = this.dbService.getAuditLogs(100) as any[];
-            const failure = (audits || []).find((a) => a?.action === 'BACKUP_ERROR');
+            audits = (this.dbService.getAuditLogs(100) as any[]) || [];
+            const failure = audits.find((a) => a?.action === 'BACKUP_ERROR');
             if (failure) {
                 lastErrorAt = failure.created_at || failure.timestamp || null;
                 lastError = String(failure.details || 'Backup failed.');
@@ -205,6 +221,7 @@ export class BackupService {
             lastBackupAt, lastBackupName,
             backupAgeHours: ageHours == null ? null : Math.round(ageHours * 10) / 10,
             lastErrorAt, lastError, nextRunAt,
+            offsite: this.offsiteHealth(audits),
             // A schedule that never produced a backup within ~2 daily windows
             // is either failing silently or never firing: surface, don't guess.
             missed: lastBackupAt == null || (ageHours != null && ageHours > 49)
@@ -272,18 +289,48 @@ export class BackupService {
     }
 
     private async performLocalBackup(): Promise<void> {
+        let bundle: { written: string; name: string };
         try {
             fs.mkdirSync(this.localBackupPath, { recursive: true });
             const stamp = new Date().toISOString().replace(/[:.]/g, '-');
             const name = `nalamdesk-auto-backup-${stamp}.ndbackup`;
-            await this.createBackupBundle(path.join(this.localBackupPath, name));
+            const written = await this.createBackupBundle(path.join(this.localBackupPath, name));
             this.pruneLocalBackups();
             this.dbService.logAudit('BACKUP_LOCAL', 'system', 0, 0, `Created recoverable local backup: ${name}`);
+            bundle = { written, name };
         } catch (error: any) {
             console.error('[Backup] Local backup failed:', error);
             this.dbService.logAudit('BACKUP_ERROR', 'system', 0, 0, `Local backup failed: ${error.message}`);
             throw error;
         }
+        await this.copyOffsite(bundle.written, bundle.name);
+    }
+
+    /** A failed copy is recorded for the health card; the local backup still stands. */
+    private async copyOffsite(filePath: string, name: string): Promise<void> {
+        const target = this.options.offsite;
+        if (!target) return;
+        try {
+            await target.uploadFile(filePath, name);
+            this.dbService.logAudit('BACKUP_OFFSITE', 'system', 0, 0, `Copied ${name} to ${target.description}`);
+        } catch (error: any) {
+            console.error('[Backup] Off-site copy failed:', error);
+            this.dbService.logAudit('BACKUP_OFFSITE_ERROR', 'system', 0, 0,
+                `Off-site copy of ${name} to ${target.description} failed: ${error?.message ?? error}`);
+        }
+    }
+
+    private offsiteHealth(audits: any[]): OffsiteBackupHealth | null {
+        const target = this.options.offsite;
+        if (!target) return null;
+        const copied = audits.find((a) => a?.action === 'BACKUP_OFFSITE');
+        const failed = audits.find((a) => a?.action === 'BACKUP_OFFSITE_ERROR');
+        return {
+            target: target.description,
+            lastCopyAt: copied?.created_at || copied?.timestamp || null,
+            lastErrorAt: failed?.created_at || failed?.timestamp || null,
+            lastError: failed ? String(failed.details || 'Off-site copy failed.') : null
+        };
     }
     private pruneLocalBackups() {
         try {

@@ -22,6 +22,7 @@ import {
     type KeyExec
 } from '../../main/services/ExternalKeyStores';
 import type { KeySlotSummary } from '../../main/services/SecurityService';
+import { createOffsiteTarget } from './offsite';
 import { KEY_PROVIDERS, loadServerConfig, readSecretFromEnv, type KeyProviderConfig, type ServerConfig } from './config';
 
 /**
@@ -649,6 +650,7 @@ async function cmdStatus(config: ServerConfig, io: CliIO, deps: CliDeps): Promis
     io.out(`Vault: ${state.isSetup ? 'set up' : 'not set up'}`);
     io.out(`Key provider: ${config.keyProvider.provider}`);
     io.out(`Listen: ${config.host}:${config.port}`);
+    io.out(`Off-site backups: ${config.offsiteBackup ? createOffsiteTarget(config.offsiteBackup).description : 'off'}`);
     return 0;
 }
 

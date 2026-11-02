@@ -207,6 +207,7 @@ Settings come from an optional JSON file, `--config <file>` or
 | `port` | `NALAMDESK_PORT` | `3000` |
 | `keyProvider` | `NALAMDESK_KEY_PROVIDER` | `key-file` |
 | `keyFile` | `NALAMDESK_KEY_FILE` | `<dataDir>/vault.key` |
+| `offsiteTarget` | `NALAMDESK_OFFSITE_TARGET` | `none`; see [Off-site copies](#off-site-copies) |
 
 The server refuses secrets in the JSON file. Pass passphrases, the admin
 password and the recovery code as `NAME_FILE` (a path, which suits Docker
@@ -215,6 +216,8 @@ secrets and systemd credentials) or as `NAME`:
 - `NALAMDESK_PASSPHRASE_FILE`: vault passphrase, for the passphrase provider.
 - `NALAMDESK_ADMIN_PASSWORD_FILE`: admin password, for `init` only.
 - `NALAMDESK_RECOVERY_CODE_FILE`: recovery code, for `import` only.
+- `NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY_FILE`: S3 secret key, for the `s3`
+  off-site target.
 
 The server creates its files owner-only (umask 077).
 
@@ -343,10 +346,55 @@ Back up the data directory (`/var/lib/nalamdesk`, the Docker volume, or
 - Before each upgrade's migrations, the server keeps a copy of the database
   as `nalamdesk.db.bak`.
 
-Scheduled backups in the clinic's portable backup format move into the
-server with Cloud and backups (#196). Until then, schedule the copy above
-with your usual tools (a systemd timer, cron, Windows Task Scheduler, or
-volume snapshots).
+The server also writes a backup every day at the time set in **Settings >
+Backup** (13:00 by default) to `<dataDir>/backups`, in the clinic's portable
+`.ndbackup` format, and keeps 30 days of them. Admins can run one from
+Settings at any time, or with `nalamdesk-server backup`. A backup restores
+with the recovery code alone, on this server or a new one.
+
+### Off-site copies
+
+A backup on the server's own disk is lost with the disk. Set an off-site
+target and the server copies each scheduled backup there as soon as it is
+written. The copy is the `.ndbackup` file unchanged: the database inside is
+encrypted and its key is wrapped with the recovery code, so the target never
+sees readable records. A failed copy does not undo the local backup; it shows
+as **Attention needed** on the backup card in Settings, and the next backup
+tries again.
+
+**A network share, USB drive or second disk** (`folder`):
+
+| Setting | Variable |
+|---|---|
+| `offsiteTarget: "folder"` | `NALAMDESK_OFFSITE_TARGET=folder` |
+| `offsitePath` | `NALAMDESK_OFFSITE_PATH` |
+
+The folder must already exist and sit outside the data directory. The server
+never creates it, so an unplugged drive or an unmounted share fails loudly
+instead of filling the server's own disk. Copies older than 30 days are
+removed from the folder. In Docker, mount the share or drive into the
+container and point `NALAMDESK_OFFSITE_PATH` at the mount.
+
+**S3-compatible storage** (`s3`), such as Amazon S3, Cloudflare R2,
+Backblaze B2, Wasabi or MinIO:
+
+| Setting | Variable | Notes |
+|---|---|---|
+| `offsiteTarget: "s3"` | `NALAMDESK_OFFSITE_TARGET=s3` | |
+| `offsiteS3Endpoint` | `NALAMDESK_OFFSITE_S3_ENDPOINT` | e.g. `https://s3.ap-south-1.amazonaws.com` |
+| `offsiteS3Bucket` | `NALAMDESK_OFFSITE_S3_BUCKET` | |
+| `offsiteS3Region` | `NALAMDESK_OFFSITE_S3_REGION` | default `us-east-1`; R2 uses `auto` |
+| `offsiteS3Prefix` | `NALAMDESK_OFFSITE_S3_PREFIX` | optional folder inside the bucket |
+| `offsiteS3AccessKeyId` | `NALAMDESK_OFFSITE_S3_ACCESS_KEY_ID` | |
+| (environment only) | `NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY_FILE` | or `NALAMDESK_OFFSITE_S3_SECRET_ACCESS_KEY` |
+
+Give the key permission to upload objects to that bucket and nothing else
+(`s3:PutObject` on AWS). The server does not delete from the bucket: set a
+lifecycle rule to expire old copies, and turn on object lock or versioning if
+your provider offers it, so a compromised server cannot erase its history.
+
+`nalamdesk-server status` shows the configured target. Restart the server
+after changing it.
 
 **Test a restore.** Copy a backup to a spare machine, start the server
 against it, and sign in.
@@ -375,7 +423,8 @@ computers.
 - **Logs:** `journalctl -u nalamdesk-server`, `docker logs nalamdesk`, or
   `C:\ProgramData\NalamDesk\server\logs`.
 - **Vault:** `nalamdesk-server status` shows the data directory, whether the
-  vault is set up, the key provider and the listen address.
+  vault is set up, the key provider, the listen address and the off-site
+  backup target.
 - Watch free disk space on the data directory, and check that your backup
   job ran.
 - Look for the recovery-code warning in the logs after a fresh install.

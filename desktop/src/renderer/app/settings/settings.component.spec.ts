@@ -717,6 +717,22 @@ describe('SettingsComponent Validation', () => {
             expect(component.backupHealthStatus).toBe('attention');
         });
 
+        it('flags a failing off-site copy as needing attention', () => {
+            const offsite = { target: 'folder /mnt/nas', lastCopyAt: '2026-03-10 13:00:00', lastErrorAt: null, lastError: null };
+            component.backupHealth = { ...healthy, offsite };
+            expect(component.offsiteCopyFailing).toBe(false);
+            expect(component.backupHealthStatus).toBe('healthy');
+            component.backupHealth = { ...healthy, offsite: { ...offsite, lastErrorAt: '2026-03-11T13:00:00Z', lastError: 'not mounted' } };
+            expect(component.offsiteCopyFailing).toBe(true);
+            expect(component.backupHealthStatus).toBe('attention');
+            component.backupHealth = { ...healthy, offsite: { ...offsite, lastCopyAt: null, lastErrorAt: '2026-03-11 13:00:00' } };
+            expect(component.offsiteCopyFailing).toBe(true);
+            component.backupHealth = { ...healthy, offsite: { ...offsite, lastErrorAt: '2026-03-09 13:00:00' } };
+            expect(component.offsiteCopyFailing).toBe(false);
+            component.backupHealth = null;
+            expect(component.offsiteCopyFailing).toBe(false);
+        });
+
         it('tolerates health load failures', async () => {
             (window as any).electron.backup.getLocalBackupHealth = vi.fn(async () => { throw new Error('ipc down'); });
             await component.loadBackupHealth();

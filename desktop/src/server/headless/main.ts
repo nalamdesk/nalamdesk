@@ -15,6 +15,7 @@ import { buildNetworkOptions, issueJoinCode } from '../network';
 import { describeServingState, pinOptions, readServingState, servingStateFrom, writeServingState } from './serving-state';
 import { runCli, type CliDeps, type CliIO } from './cli';
 import type { ServerConfig } from './config';
+import { createOffsiteTarget } from './offsite';
 
 // Vault files, backups and logs are readable by the service account only.
 if (process.platform !== 'win32') process.umask(0o077);
@@ -50,9 +51,10 @@ const buildIdentity = readBuildIdentityFile(buildIdentityPath(packageRoot));
 const appVersion = buildIdentity?.version ?? process.env['npm_package_version'] ?? 'unknown';
 
 function createBackups(vault: SecurityService, database: DatabaseService, store: DeviceKeyStore, config: ServerConfig): BackupService {
-    // Backups live in the data directory; operators copy them off the machine.
+    // Backups live in the data directory, with an optional off-site copy (#216).
     return new BackupService(database, NO_UPLOADER, vault, config.dataDir, {
         appVersion,
+        offsite: config.offsiteBackup ? createOffsiteTarget(config.offsiteBackup) : null,
         // Restore validation must not reconfigure or close the live vault.
         createIsolatedSecurityService: () => new SecurityService(store),
         onRestoreCommitted: () => undefined

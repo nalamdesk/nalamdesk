@@ -608,6 +608,13 @@
                         <div *ngIf="backupHealth.lastErrorAt" class="md:col-span-2 text-red-600">
                             Last failure ({{ backupHealth.lastErrorAt | date:'medium' }}): {{ backupHealth.lastError }}
                         </div>
+                        <ng-container *ngIf="backupHealth.offsite as offsite">
+                            <div class="truncate">Off-site copy: <span class="font-mono" [title]="offsite.target">{{ offsite.target }}</span></div>
+                            <div>Last copy: <span class="font-medium text-gray-800">{{ offsite.lastCopyAt ? (offsite.lastCopyAt | date:'medium') : 'None yet' }}</span></div>
+                            <div *ngIf="offsiteCopyFailing" class="md:col-span-2 text-amber-700">
+                                Off-site copy failed ({{ offsite.lastErrorAt | date:'medium' }}): {{ offsite.lastError }}
+                            </div>
+                        </ng-container>
                     </div>
                 </div>
 

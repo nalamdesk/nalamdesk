@@ -74,39 +74,42 @@ export function backupScheduleFollower(backups: BackupOperations): (method: stri
 }
 
 export function createCloudMethods(db: DatabaseService, services: ClinicServices): Record<string, ClinicMethod> {
-    const { cloudLink } = services;
+    // Each call acts on the caller's facility (#215): the request's on the
+    // server, the signed-in session's on the desktop.
+    const link = () => services.cloudLink;
     const status = () => services.cloudStatus();
     const requirePaired = () => {
-        if (!cloudLink.pairing.isPaired()) throw new Error('This clinic is not paired with NalamDesk Cloud.');
+        if (!link().pairing.isPaired()) throw new Error('This facility is not paired with NalamDesk Cloud.');
     };
     return {
         cloudGetStatus: { access: 'user', run: () => status() },
+        cloudListFacilities: { access: 'admin', run: () => services.cloudFacilities() },
         cloudRequestPairing: {
             access: 'admin',
             async run(args) {
                 const body = input(args);
-                await cloudLink.pairing.request({ hfrId: text(body['hfrId']), label: text(body['label']) });
+                await link().pairing.request({ hfrId: text(body['hfrId']), label: text(body['label']) });
                 return status();
             }
         },
         cloudCancelPairing: {
             access: 'admin',
             async run() {
-                await cloudLink.pairing.cancel();
+                await link().pairing.cancel();
                 return status();
             }
         },
         cloudActivatePairing: {
             access: 'admin',
             async run(args) {
-                await cloudLink.pairing.activate({ code: text(input(args)['code']) });
+                await link().pairing.activate({ code: text(input(args)['code']) });
                 return status();
             }
         },
         cloudForgetPairing: {
             access: 'admin',
             run() {
-                cloudLink.pairing.forget();
+                link().pairing.forget();
                 db.saveSettings({ cloud_enabled: 0, cloud_clinic_id: null });
                 return status();
             }
@@ -119,15 +122,15 @@ export function createCloudMethods(db: DatabaseService, services: ClinicServices
                 const name = text(body['name']).trim();
                 const city = text(body['city']).trim();
                 if (!name || !city) throw new Error('Clinic name and city are required.');
-                await cloudLink.booking.enableListing({ name, city, specialty: text(body['specialty']).trim() || undefined });
-                db.saveSettings({ cloud_enabled: 1, cloud_clinic_id: cloudLink.pairing.status().clinicId ?? null });
+                await link().booking.enableListing({ name, city, specialty: text(body['specialty']).trim() || undefined });
+                db.saveSettings({ cloud_enabled: 1, cloud_clinic_id: link().pairing.status().clinicId ?? null });
                 return status();
             }
         },
         cloudDisableListing: {
             access: 'admin',
             async run() {
-                if (cloudLink.pairing.isPaired()) await cloudLink.booking.disableListing();
+                if (link().pairing.isPaired()) await link().booking.disableListing();
                 db.saveSettings({ cloud_enabled: 0 });
                 return status();
             }
@@ -137,7 +140,7 @@ export function createCloudMethods(db: DatabaseService, services: ClinicServices
             async run(args) {
                 requirePaired();
                 const [slots, dates] = args;
-                const published = await cloudLink.booking.publishSlots(
+                const published = await link().booking.publishSlots(
                     Array.isArray(dates) ? dates : [], Array.isArray(slots) ? slots : []);
                 return { published };
             }
@@ -146,17 +149,17 @@ export function createCloudMethods(db: DatabaseService, services: ClinicServices
             access: 'user',
             selfFenced: true,
             async run() {
-                if (!cloudLink.pairing.isPaired()) return { success: false, paired: false, saved: 0 };
-                const saved = await cloudLink.checkMailbox();
+                if (!link().pairing.isPaired()) return { success: false, paired: false, saved: 0 };
+                const saved = await link().checkMailbox();
                 return { success: true, paired: true, saved };
             }
         },
         cloudGetPublishedSlots: {
             access: 'user',
             run(args) {
-                if (!cloudLink.pairing.isPaired()) return [];
+                if (!link().pairing.isPaired()) return [];
                 const day = text(args[0]);
-                return cloudLink.booking.publishedSlots(day, day);
+                return link().booking.publishedSlots(day, day);
             }
         },
         // Accept or decline an online booking request: the cloud first (it
@@ -178,7 +181,7 @@ export function createCloudMethods(db: DatabaseService, services: ClinicServices
                 }
                 const slot = decision === 'accepted' ? { date, time } : undefined;
                 try {
-                    await cloudLink.booking.decide(ref, decision, slot);
+                    await link().booking.decide(ref, decision, slot);
                 } catch (error) {
                     // Requests left over from the retired cloud sync have no
                     // online reference; they are decided locally only.
@@ -220,6 +223,7 @@ export const BACKUP_IPC_CHANNELS: ReadonlyArray<readonly [channel: string, metho
 /** Desktop IPC channel for each shared cloud method. */
 export const CLOUD_IPC_CHANNELS: ReadonlyArray<readonly [channel: string, method: string]> = [
     ['cloud:getStatus', 'cloudGetStatus'],
+    ['cloud:listFacilities', 'cloudListFacilities'],
     ['cloud:requestPairing', 'cloudRequestPairing'],
     ['cloud:cancelPairing', 'cloudCancelPairing'],
     ['cloud:activatePairing', 'cloudActivatePairing'],

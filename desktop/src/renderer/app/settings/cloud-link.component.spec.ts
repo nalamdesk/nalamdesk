@@ -141,6 +141,32 @@ describe('CloudLinkComponent', () => {
         expect(component.error).toBe('offline');
     });
 
+    it('shows an admin every facility\'s pairing, and nobody else (#215)', async () => {
+        const facility = (patch: Partial<FacilityCloudStatus>): FacilityCloudStatus => ({
+            facilityId: 1, code: 'MAIN', name: 'Main', state: 'unpaired', hfrId: null, label: null, listingEnabled: false, ...patch
+        });
+        cloud.listFacilities = vi.fn(async () => [
+            facility({ state: 'paired', hfrId: 'IN3310000001', listingEnabled: true }),
+            facility({ facilityId: 2, code: 'ANN', name: 'Anna Nagar' })
+        ]);
+        component.ngOnInit();
+        await settle();
+        expect(cloud.listFacilities).not.toHaveBeenCalled();
+        expect(component.facilities).toEqual([]);
+
+        component.isAdmin = true;
+        await component.refresh();
+        expect(component.facilities.map((f) => component.stateLabel(f))).toEqual(['Paired, listed for booking', 'Not paired']);
+        expect(component.stateLabel(facility({ state: 'requested' }))).toBe('Waiting for code');
+
+        // Pairing refreshes the list; a server without the list shows none.
+        await component.activate();
+        expect(cloud.listFacilities).toHaveBeenCalledTimes(2);
+        cloud.listFacilities.mockRejectedValueOnce(new Error('Unknown method'));
+        await component.refresh();
+        expect(component.facilities).toEqual([]);
+    });
+
     it('strips the IPC wrapper from main\'s errors', () => {
         expect(messageOf(new Error("Error invoking remote method 'cloud:x': Error: Forbidden"))).toBe('Forbidden');
         expect(messageOf('plain')).toBe('plain');

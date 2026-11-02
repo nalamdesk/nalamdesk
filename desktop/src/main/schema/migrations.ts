@@ -1974,6 +1974,10 @@ export const MIGRATIONS = [
     {
         version: 53,
         up: (db: any) => keepOrgAdminOnRoleEdits(db)
+    },
+    {
+        version: 54,
+        up: (db: any) => migrateCloudDevicePerFacility(db)
     }
 ];
 
@@ -1986,12 +1990,8 @@ export const FACILITY_SCOPED_TABLES = [
     'cloud_device'
 ];
 
-/**
- * Settings columns that belong to a facility rather than the organisation.
- * `settings` stays the organisation row; these now live on `facilities`.
- * Keys are the settings names callers use; values are facility columns.
- */
-export const FACILITY_SETTING_COLUMNS: Record<string, string> = {
+/** The facility settings columns as migration v51 created them. */
+const V51_FACILITY_SETTING_COLUMNS: Readonly<Record<string, string>> = {
     clinic_name: 'name',
     doctor_name: 'doctor_name',
     logo_path: 'logo_path',
@@ -2002,6 +2002,18 @@ export const FACILITY_SETTING_COLUMNS: Record<string, string> = {
     abdm_hpr_id: 'abdm_hpr_id',
     abdm_hip_endpoint: 'abdm_hip_endpoint',
     abdm_recipient_key: 'abdm_recipient_key'
+};
+
+/**
+ * Settings columns that belong to a facility rather than the organisation.
+ * `settings` stays the organisation row; these now live on `facilities`.
+ * Keys are the settings names callers use; values are facility columns.
+ * v54 (#215) adds the online-booking listing, which each paired facility has.
+ */
+export const FACILITY_SETTING_COLUMNS: Record<string, string> = {
+    ...V51_FACILITY_SETTING_COLUMNS,
+    cloud_enabled: 'cloud_enabled',
+    cloud_clinic_id: 'cloud_clinic_id'
 };
 
 function tableExists(db: any, name: string): boolean {
@@ -2117,8 +2129,8 @@ function migrateOrganisationsAndFacilities(db: any) {
 
     // Facility 1 takes the clinic's identity, letterhead and ABDM HIP fields.
     const settings = (hasSettings ? db.prepare('SELECT * FROM settings LIMIT 1').get() ?? {} : {}) as Record<string, any>;
-    const facilityColumns = Object.values(FACILITY_SETTING_COLUMNS);
-    const values = Object.keys(FACILITY_SETTING_COLUMNS).map(key => {
+    const facilityColumns = Object.values(V51_FACILITY_SETTING_COLUMNS);
+    const values = Object.keys(V51_FACILITY_SETTING_COLUMNS).map(key => {
         const value = settings[key];
         if (key === 'clinic_name') return value ?? '';
         if (key === 'consultation_fee') return Number(value || 0);
@@ -2192,6 +2204,81 @@ function keepOrgAdminOnRoleEdits(db: any) {
                 WHERE id = NEW.id AND NEW.role = 'admin' AND COALESCE(OLD.role, '') <> 'admin';
         END;
     `);
+}
+
+/** The `cloud_device` columns after v45, in table order, less v44's `id`. */
+const CLOUD_DEVICE_COLUMNS = [
+    'state', 'hfr_id', 'request_id', 'request_expires_at', 'device_id', 'clinic_id', 'data_push_url', 'label',
+    'signing_public', 'signing_private_protected', 'signing_created_at', 'previous_signing_public',
+    'previous_signing_private_protected', 'sealing_public', 'sealing_private_protected', 'paired_at',
+    'revoked_reason', 'updated_at', 'iot_private_protected', 'iot_public', 'iot_certificate_pem', 'iot_endpoint',
+    'iot_topic', 'iot_client_id'
+];
+
+/**
+ * Migration v54 (#215): each facility pairs with NalamDesk Cloud on its own
+ * HFR ID, so `cloud_device` is keyed by facility instead of the single
+ * `id = 1` row. The existing row (if any) is facility 1's, as v51 stamped
+ * it, and keeps its keys, device ID and mailbox, so a paired clinic stays
+ * paired. The online-booking listing moves from the organisation's settings
+ * to facility 1 in the same way.
+ */
+function migrateCloudDevicePerFacility(db: any) {
+    console.log('Running Migration v54 (cloud pairing per facility)...');
+    if (tableExists(db, 'facilities')) {
+        addColumn(db, 'facilities', 'cloud_enabled INTEGER NOT NULL DEFAULT 0');
+        addColumn(db, 'facilities', 'cloud_clinic_id TEXT');
+        if (tableExists(db, 'settings')) {
+            const settings = db.prepare('SELECT cloud_enabled, cloud_clinic_id FROM settings LIMIT 1').get() as any;
+            if (settings) {
+                db.prepare('UPDATE facilities SET cloud_enabled = ?, cloud_clinic_id = ? WHERE id = 1')
+                    .run(settings.cloud_enabled ? 1 : 0, settings.cloud_clinic_id ?? null);
+            }
+        }
+    }
+    if (!tableExists(db, 'cloud_device')) return;
+    const existing = new Set((db.prepare('PRAGMA table_info(cloud_device)').all() as any[]).map(c => c.name));
+    const copied = CLOUD_DEVICE_COLUMNS.filter(column => existing.has(column));
+    const facility = existing.has('facility_id') ? 'COALESCE(facility_id, 1)' : '1';
+    // Copy out, recreate, copy back: no ALTER TABLE RENAME, which re-checks
+    // every trigger in the schema and fails on old vaults with a stale one.
+    db.exec(`CREATE TEMP TABLE cloud_device_v54 AS SELECT ${facility} AS facility_id, ${copied.join(', ')} FROM cloud_device`);
+    db.exec('DROP TABLE cloud_device');
+    db.exec(`
+        CREATE TABLE cloud_device (
+            facility_id INTEGER PRIMARY KEY,
+            state TEXT NOT NULL CHECK (state IN ('requested', 'paired', 'revoked')),
+            hfr_id TEXT NOT NULL,
+            request_id TEXT,
+            request_expires_at INTEGER,
+            device_id TEXT,
+            clinic_id TEXT,
+            data_push_url TEXT,
+            label TEXT NOT NULL,
+            signing_public TEXT NOT NULL,
+            signing_private_protected TEXT NOT NULL,
+            signing_created_at INTEGER NOT NULL,
+            previous_signing_public TEXT,
+            previous_signing_private_protected TEXT,
+            sealing_public TEXT NOT NULL,
+            sealing_private_protected TEXT NOT NULL,
+            paired_at INTEGER,
+            revoked_reason TEXT,
+            updated_at INTEGER NOT NULL,
+            iot_private_protected TEXT,
+            iot_public TEXT,
+            iot_certificate_pem TEXT,
+            iot_endpoint TEXT,
+            iot_topic TEXT,
+            iot_client_id TEXT
+        )
+    `);
+    db.exec(`INSERT INTO cloud_device (facility_id, ${copied.join(', ')})
+        SELECT facility_id, ${copied.join(', ')} FROM temp.cloud_device_v54`);
+    db.exec('DROP TABLE temp.cloud_device_v54');
+    // One live pairing per HFR ID across facilities; the relay keeps one
+    // computer per HFR ID, so a second would revoke the first.
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_device_hfr ON cloud_device(hfr_id) WHERE state <> 'revoked'`);
 }
 
 /**

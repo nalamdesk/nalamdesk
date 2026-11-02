@@ -22,7 +22,11 @@ function fakeServices(paired = true) {
         decide: vi.fn(async () => undefined)
     };
     const cloudLink = { pairing, booking, checkMailbox: vi.fn(async () => 2) };
-    const services = { cloudLink, cloudStatus: vi.fn(() => ({ state: 'paired', listingEnabled: true })) };
+    const services = {
+        cloudLink,
+        cloudStatus: vi.fn(() => ({ state: 'paired', listingEnabled: true })),
+        cloudFacilities: vi.fn(() => [{ facilityId: 1, state: 'paired' }])
+    };
     const db = {
         saveSettings: vi.fn(),
         acceptAppointmentRequest: vi.fn(),
@@ -66,6 +70,27 @@ describe('cloud methods', () => {
         expect(methods['cloudSyncNow']!.access).toBe('user');
         expect(methods['cloudSyncNow']!.selfFenced).toBe(true);
         expect(methods['cloudDecide']!.access).toBe('desk');
+    });
+
+    it('lists every facility\'s pairing for admins only', async () => {
+        const { methods } = fakeServices();
+        expect(methods['cloudListFacilities']!.access).toBe('admin');
+        expect(await methods['cloudListFacilities']!.run([], admin)).toEqual([{ facilityId: 1, state: 'paired' }]);
+    });
+
+    it('acts on the caller\'s facility link at each call, not one fixed at setup (#215)', async () => {
+        const make = (clinicId: string) => ({
+            pairing: { isPaired: () => true, status: () => ({ clinicId }) },
+            booking: { enableListing: vi.fn(async () => undefined) }
+        });
+        let current = make('clinic-1');
+        const services = { get cloudLink() { return current; }, cloudStatus: vi.fn(() => ({})) };
+        const db = { saveSettings: vi.fn() };
+        const methods = createCloudMethods(db as any, services as any);
+        current = make('clinic-2');
+        await methods['cloudEnableListing']!.run([{ name: 'Branch', city: 'Chennai' }], admin);
+        expect(current.booking.enableListing).toHaveBeenCalled();
+        expect(db.saveSettings).toHaveBeenCalledWith({ cloud_enabled: 1, cloud_clinic_id: 'clinic-2' });
     });
 
     it('passes pairing input through as strings and returns the status', async () => {

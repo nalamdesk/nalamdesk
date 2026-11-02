@@ -8,6 +8,7 @@ import { HipService } from '../../main/services/HipService';
 import { CloudLink } from '../../main/cloud/CloudLink';
 import { AbdmMailboxProcessor } from '../../main/cloud/AbdmMailboxProcessor';
 import type { Audience } from '../../main/cloud/SignedCloudClient';
+import { currentFacilityId, runWithContext } from '../../shared/request-context';
 
 import type { EventTopic } from '../events';
 
@@ -38,14 +39,19 @@ export interface ClinicServicesDeps {
  * NalamDesk Server build the same set, so there is one wiring for both.
  */
 export interface ClinicServices {
-    cloudLink: CloudLink;
+    /** The cloud link of the facility the caller acts in (the request's, or the desktop session's). */
+    readonly cloudLink: CloudLink;
+    /** Each facility pairs on its own HFR ID with its own keys and mailbox (#215). */
+    cloudLinkFor(facilityId: number): CloudLink;
     relay: AbdmRelayService;
     abha: AbdmAbhaService;
     hiu: HiuService;
     hip: HipService;
     mailbox: AbdmMailboxProcessor;
-    /** Pairing, listing and mailbox state for the admin screen. */
-    cloudStatus(): CloudStatusView;
+    /** Pairing, listing and mailbox state for the admin screen; the caller's facility by default. */
+    cloudStatus(facilityId?: number): CloudStatusView;
+    /** Pairing state of every active facility, for the admin screen. */
+    cloudFacilities(): FacilityCloudStatus[];
     /** Applies ABDM items saved by the mailbox reader. */
     drainAbdmMailbox(): void;
     /** Call once the database is open and migrated. */
@@ -54,9 +60,39 @@ export interface ClinicServices {
 }
 
 export type CloudStatusView = ReturnType<CloudLink['pairing']['status']> & {
+    facilityId: number;
     listingEnabled: boolean;
     mailbox: ReturnType<CloudLink['mailboxStatus']>;
 };
+
+export interface FacilityCloudStatus {
+    facilityId: number;
+    code: string;
+    name: string;
+    state: CloudStatusView['state'];
+    hfrId: string | null;
+    label: string | null;
+    listingEnabled: boolean;
+}
+
+/** Runs `run` as background work of `facilityId`: its reads and writes are that facility's. */
+export function inFacility<T>(facilityId: number, run: () => T): T {
+    return runWithContext({ userId: 0, facilityId }, run);
+}
+
+/**
+ * `target` with each method run as `facilityId`, for work that runs on
+ * timers and doorbell rings outside any request (#215).
+ */
+export function facilityScoped<T extends object>(target: T, facilityId: number): T {
+    return new Proxy(target, {
+        get(object, property) {
+            const value = Reflect.get(object, property, object);
+            if (typeof value !== 'function') return value;
+            return (...args: unknown[]) => inFacility(facilityId, () => value.apply(object, args));
+        }
+    });
+}
 
 export function createHiuService(
     db: DatabaseService,
@@ -112,53 +148,89 @@ export function createClinicServices(deps: ClinicServicesDeps): ClinicServices {
     const notify = deps.notify ?? (() => undefined);
     const runWork = <T>(work: () => Promise<T>) => db.runWork(work);
 
-    // ABDM goes through the relay as the paired facility (#160); this machine
-    // holds no ABDM credentials. Unpaired, the flows run against the mock gateway.
-    // The relay is wired before the link exists, so its getters read it lazily.
-    let cloudLink: CloudLink;
+    // One cloud link per facility (#215), made when a facility first needs
+    // it. Its store runs as that facility, so its pairing row, booking
+    // requests and mailbox items are the facility's own.
+    const links = new Map<number, CloudLink>();
+    let started = false;
+    const linkFor = (facilityId: number): CloudLink => {
+        let link = links.get(facilityId);
+        if (!link) {
+            link = createLink(facilityId);
+            links.set(facilityId, link);
+            if (started) link.start();
+        }
+        return link;
+    };
+    const currentLink = (): CloudLink => linkFor(currentFacilityId());
+
+    // ABDM goes through the relay as the paired facility of the request
+    // (#160, #215); this machine holds no ABDM credentials. Unpaired, the
+    // flows run against the mock gateway.
     const relay = new AbdmRelayService({
         getSettings: () => db.getSettings(),
-        relay: () => cloudLink.abdmRelay(),
-        pairedHfrId: () => cloudLink.pairing.status().hfrId ?? null
+        relay: () => currentLink().abdmRelay(),
+        pairedHfrId: () => currentLink().pairing.status().hfrId ?? null
     });
     const abha = new AbdmAbhaService({ relay });
-    const hiu = createHiuService(db, deps.keyStore, relay, () => db.getCloudDevice()?.data_push_url ?? null);
+    const hiu = createHiuService(db, deps.keyStore, relay, () => db.getCloudDevice(currentFacilityId())?.data_push_url ?? null);
     const hip = new HipService({ store: db as any, relay, hipId: () => relay.status().hfr_id });
     const mailbox = new AbdmMailboxProcessor({
         store: db as any,
         hiu,
         hip,
-        relay: () => cloudLink.abdmRelay(),
+        relay: () => currentLink().abdmRelay(),
         onShare: () => notify('abdm:shareReceived', {}),
-        runWork
+        runWork,
+        inFacility
     });
     const drainAbdmMailbox = (): void => {
         mailbox.drain().catch((error) => warn(`[ABDM mailbox] Pass failed: ${(error as Error).message}`));
     };
-    const cloudStatus = (): CloudStatusView => ({
-        ...cloudLink.pairing.status(),
-        listingEnabled: !!db.getSettings()?.cloud_enabled,
-        mailbox: cloudLink.mailboxStatus()
+    const cloudStatus = (facilityId: number = currentFacilityId()): CloudStatusView => {
+        const link = linkFor(facilityId);
+        return {
+            ...link.pairing.status(),
+            facilityId,
+            listingEnabled: !!db.getSettings(facilityId)?.cloud_enabled,
+            mailbox: link.mailboxStatus()
+        };
+    };
+    const cloudFacilities = (): FacilityCloudStatus[] => db.listFacilitiesForCloud().map((facility) => {
+        const status = cloudStatus(facility.id);
+        return {
+            facilityId: facility.id,
+            code: facility.code,
+            name: facility.name,
+            state: status.state,
+            hfrId: status.hfrId ?? null,
+            label: status.label ?? null,
+            listingEnabled: status.listingEnabled
+        };
     });
-    cloudLink = new CloudLink({
-        store: db as any,
-        keyStore: deps.keyStore,
-        appVersion: deps.appVersion,
-        baseUrl: deps.baseUrl,
-        onNewRequests: (count) => notify('cloud:newRequests', { count }),
-        onPairingChange: (status) => {
-            abha.invalidateCert();
-            notify('cloud:pairingChanged', status);
-        },
-        onMailboxChange: () => notify('cloud:pairingChanged', cloudStatus()),
-        onAbdmItems: () => drainAbdmMailbox(),
-        // A restore drains cloud work before replacing the database, and refuses it after.
-        runWork
-    });
+    function createLink(facilityId: number): CloudLink {
+        return new CloudLink({
+            store: facilityScoped(db, facilityId) as any,
+            keyStore: deps.keyStore,
+            appVersion: deps.appVersion,
+            baseUrl: deps.baseUrl,
+            onNewRequests: (count) => notify('cloud:newRequests', { count, facilityId }),
+            onPairingChange: (status) => {
+                abha.invalidateCert();
+                notify('cloud:pairingChanged', { ...status, facilityId });
+            },
+            onMailboxChange: () => notify('cloud:pairingChanged', cloudStatus(facilityId)),
+            onAbdmItems: () => drainAbdmMailbox(),
+            // A restore drains cloud work before replacing the database, and refuses it after.
+            runWork
+        });
+    }
 
     let retentionJob: CronJob | null = null;
     return {
-        cloudLink, relay, abha, hiu, hip, mailbox, cloudStatus, drainAbdmMailbox,
+        get cloudLink() { return currentLink(); },
+        cloudLinkFor: linkFor,
+        relay, abha, hiu, hip, mailbox, cloudStatus, cloudFacilities, drainAbdmMailbox,
         start() {
             sweepRetention(db, warn);
             if (!retentionJob) {
@@ -169,14 +241,18 @@ export function createClinicServices(deps: ClinicServicesDeps): ClinicServices {
                     warn(`[HIU] Could not schedule the retention sweep: ${(error as Error).message}`);
                 }
             }
-            cloudLink.start();
+            // Every facility with a cloud identity, and links already made.
+            for (const facilityId of db.listCloudDeviceFacilities()) linkFor(facilityId);
+            for (const link of links.values()) link.start();
+            started = true;
             // Items saved before the last shutdown.
             drainAbdmMailbox();
         },
         stop() {
             retentionJob?.stop();
             retentionJob = null;
-            cloudLink.stop();
+            started = false;
+            for (const link of links.values()) link.stop();
         }
     };
 }

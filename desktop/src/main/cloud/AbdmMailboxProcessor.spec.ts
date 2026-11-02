@@ -61,12 +61,39 @@ function setup(items: AbdmMailboxItem[], overrides: Record<string, any> = {}) {
     const onShare = vi.fn();
     const runWork = vi.fn(<T>(work: () => Promise<T>) => work());
     const processor = new AbdmMailboxProcessor({
-        store, hiu, relay: () => (overrides.unpaired ? null : send), onShare, runWork, nowMs: () => NOW
+        store, hiu, relay: () => (overrides.unpaired ? null : send), onShare, runWork, nowMs: () => NOW,
+        inFacility: overrides.inFacility
     });
     return { processor, store, hiu, send, onShare, runWork, statuses };
 }
 
 describe('AbdmMailboxProcessor', () => {
+    describe('per facility (#215)', () => {
+        it('applies each item and its gateway reply as the facility it was sent to', async () => {
+            let facility = 0;
+            const log: string[] = [];
+            const inFacility = vi.fn(<T>(facilityId: number, run: () => T): T => {
+                const before = facility;
+                facility = facilityId;
+                try { return run(); } finally { facility = before; }
+            });
+            const first = { ...callback('m1', SHARE_PATH, SHARE_BODY), facility_id: 2 };
+            const legacy = callback('m2', SHARE_PATH, SHARE_BODY);
+            const send = vi.fn(async () => { log.push(`reply@${facility}`); return { status: 202, body: null }; });
+            const { processor, store } = setup([first, legacy], {
+                send,
+                inFacility,
+                store: { receiveAbhaShare: vi.fn(() => { log.push(`share@${facility}`); return { token_no: 1 }; }) }
+            });
+
+            expect(await processor.drain()).toEqual({ processed: 2, failed: 0 });
+
+            expect(store.receiveAbhaShare).toHaveBeenCalledTimes(2);
+            // An item with no facility (saved before #215) runs in the caller's facility.
+            expect(log).toEqual(['share@2', 'share@0', 'reply@2', 'reply@0']);
+        });
+    });
+
     describe('scan and share', () => {
         it('queues a token, tells the desk at once, and answers the gateway with the token number', async () => {
             const { processor, store, send, onShare, statuses } = setup([callback('m1', SHARE_PATH, SHARE_BODY)]);

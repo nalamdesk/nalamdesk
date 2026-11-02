@@ -4,10 +4,11 @@ import { FormsModule } from '@angular/forms';
 import { CloudService } from '../services/cloud.service';
 
 /**
- * Pairing this computer with NalamDesk Cloud (#154), then listing the
- * clinic for online booking. Three steps for the admin: send a request with
- * the HFR ID, wait for NalamDesk to call the clinic's HFR-registered contact
- * with a code, type the code here.
+ * Pairing the current facility with NalamDesk Cloud (#154, #215), then
+ * listing it for online booking. Three steps for the admin: send a request
+ * with the facility's HFR ID, wait for NalamDesk to call the HFR-registered
+ * contact with a code, type the code here. Each facility pairs on its own
+ * HFR ID; with more than one, the admin sees every facility's state.
  */
 @Component({
     selector: 'app-cloud-link',
@@ -16,7 +17,7 @@ import { CloudService } from '../services/cloud.service';
     template: `
     <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm border border-gray-200 mt-6" data-testid="cloud-link">
       <h3 class="text-lg font-medium text-gray-800">NalamDesk Cloud</h3>
-      <p class="text-sm text-gray-500 mb-4">Pairs this computer with your clinic's HFR ID, for ABDM and online booking. One computer per clinic.</p>
+      <p class="text-sm text-gray-500 mb-4">Pairs this facility with its HFR ID, for ABDM and online booking. Each facility pairs on its own HFR ID; switch facility to pair another.</p>
 
       <p *ngIf="error" class="text-sm text-red-600 mb-3" role="alert">{{ error }}</p>
 
@@ -105,6 +106,22 @@ import { CloudService } from '../services/cloud.service';
         </ng-container>
       </ng-container>
 
+      <div *ngIf="isAdmin && facilities.length > 1" class="mt-4 pt-4 border-t border-gray-100" data-testid="cloud-facilities">
+        <h4 class="font-medium text-gray-800 mb-2">Pairing by facility</h4>
+        <ul class="divide-y divide-gray-100 text-sm">
+          <li *ngFor="let f of facilities" class="flex flex-wrap items-center justify-between gap-2 py-2">
+            <span>
+              <span class="font-medium text-gray-800">{{ f.name || f.code }}</span>
+              <span class="text-gray-500"> ({{ f.code }})</span>
+              <span *ngIf="f.facilityId === status?.facilityId" class="text-xs text-gray-500"> · current</span>
+            </span>
+            <span class="text-gray-600">
+              <span class="font-mono" *ngIf="f.hfrId">{{ f.hfrId }} · </span>{{ stateLabel(f) }}
+            </span>
+          </li>
+        </ul>
+      </div>
+
       <ng-template #adminOnly><p class="text-sm text-gray-500">Only an admin can change cloud pairing.</p></ng-template>
     </div>
   `
@@ -120,6 +137,7 @@ export class CloudLinkComponent implements OnInit, OnDestroy {
     checking = false;
     error = '';
     showListingForm = false;
+    facilities: FacilityCloudStatus[] = [];
     listing = { name: '', city: '', specialty: '' };
     private unsubscribe: () => void = () => undefined;
 
@@ -141,6 +159,29 @@ export class CloudLinkComponent implements OnInit, OnDestroy {
         } catch (e) {
             this.ngZone.run(() => { this.error = messageOf(e); });
         }
+        await this.refreshFacilities();
+    }
+
+    /** Every facility's pairing, for an admin; an older server without the list shows none. */
+    private async refreshFacilities() {
+        if (!this.isAdmin || !this.cloud.listFacilities) return;
+        try {
+            const facilities = await this.cloud.listFacilities();
+            this.ngZone.run(() => { this.facilities = Array.isArray(facilities) ? facilities : []; });
+        } catch {
+            this.ngZone.run(() => { this.facilities = []; });
+        }
+    }
+
+    stateLabel(facility: FacilityCloudStatus): string {
+        const labels: Record<CloudStatus['state'], string> = {
+            unpaired: 'Not paired',
+            requested: 'Waiting for code',
+            paired: facility.listingEnabled ? 'Paired, listed for booking' : 'Paired',
+            revoked: 'No longer paired',
+            keys_unavailable: 'Pair again'
+        };
+        return labels[facility.state] ?? facility.state;
     }
 
     request() {
@@ -199,6 +240,7 @@ export class CloudLinkComponent implements OnInit, OnDestroy {
         try {
             const status = await action();
             this.ngZone.run(() => { this.status = status; });
+            await this.refreshFacilities();
         } catch (e) {
             this.ngZone.run(() => { this.error = messageOf(e); });
             await this.refresh();

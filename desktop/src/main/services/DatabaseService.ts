@@ -8,6 +8,16 @@ export { DEFAULT_FACILITY_ID };
  * allowlist also guards the dynamic SQL. Keychain-protected blobs (the HIU
  * private key) are never in it.
  */
+/** Billing documents that draw numbers from facility_sequences (#213). */
+type DocumentKind = 'invoice' | 'receipt' | 'refund';
+/** The main facility's original series starts at INV-100001 / RCP-100001. */
+const LEGACY_NUMBER_BASE = 100000;
+/** Highest number already issued under a prefix: `:prefix` followed only by digits. */
+const SEED_INVOICE_SQL = `SELECT COALESCE(MAX(CAST(substr(number, :tail) AS INTEGER)), 0) AS top FROM invoices
+    WHERE substr(number, 1, :width) = :prefix AND substr(number, :tail) <> '' AND substr(number, :tail) NOT GLOB '*[^0-9]*'`;
+const SEED_RECEIPT_SQL = `SELECT COALESCE(MAX(CAST(substr(receipt_no, :tail) AS INTEGER)), 0) AS top FROM payments
+    WHERE substr(receipt_no, 1, :width) = :prefix AND substr(receipt_no, :tail) <> '' AND substr(receipt_no, :tail) NOT GLOB '*[^0-9]*'`;
+
 const SETTINGS_COLUMNS = ['clinic_name', 'doctor_name', 'logo_path', 'license_key',
     'drive_tokens', 'cloud_clinic_id', 'cloud_api_key', 'cloud_enabled',
     'drive_client_id', 'drive_client_secret', 'local_backup_path',
@@ -2111,12 +2121,54 @@ export class DatabaseService {
     static readonly PAYMENT_METHODS = ['cash', 'upi', 'card'];
     static readonly INVOICE_STATUSES = ['unpaid', 'partial', 'paid', 'voided', 'refunded'];
 
-    private invoiceNumber(rowId: number): string {
-        return `INV-${String(100000 + Number(rowId)).padStart(6, '0')}`;
+    private static readonly DOCUMENT_PREFIXES: Record<DocumentKind, string> = {
+        invoice: 'INV', receipt: 'RCP', refund: 'RFD'
+    };
+
+    /**
+     * Next invoice, receipt or refund number for a facility (#213), from the
+     * facility_sequences counter. Call it inside the transaction that inserts
+     * the row: a rolled-back insert rolls the counter back too, so a series
+     * never skips or repeats a number.
+     *
+     * The main facility keeps its original series (`INV-100042`, refunds on
+     * the receipt series), so numbering already printed on bills continues.
+     * Every other facility numbers per year: `{code}-INV-{year}-000001`.
+     */
+    private nextDocumentNumber(facilityId: number, kind: DocumentKind): string {
+        if (facilityId === DEFAULT_FACILITY_ID) {
+            const legacyKind = kind === 'refund' ? 'receipt' : kind;
+            const prefix = `${DatabaseService.DOCUMENT_PREFIXES[legacyKind]}-`;
+            const next = this.bumpSequence(facilityId, legacyKind, '', prefix, LEGACY_NUMBER_BASE);
+            return `${prefix}${String(LEGACY_NUMBER_BASE + next).padStart(6, '0')}`;
+        }
+        const facility = this.db.prepare('SELECT code FROM facilities WHERE id = ?').get(facilityId) as any;
+        if (!facility?.code) throw new Error(`Facility #${facilityId} not found.`);
+        const year = String(new Date().getFullYear());
+        const prefix = `${String(facility.code).toUpperCase()}-${DatabaseService.DOCUMENT_PREFIXES[kind]}-${year}-`;
+        const next = this.bumpSequence(facilityId, kind, year, prefix, 0);
+        return `${prefix}${String(next).padStart(6, '0')}`;
     }
 
-    private receiptNumber(rowId: number): string {
-        return `RCP-${String(100000 + Number(rowId)).padStart(6, '0')}`;
+    /**
+     * Increments one counter and returns the new value. A counter seen for
+     * the first time starts from the highest number already issued with its
+     * prefix, so numbers written before the counter existed are never reused.
+     */
+    private bumpSequence(facilityId: number, kind: DocumentKind, period: string, prefix: string, base: number): number {
+        const known = this.db.prepare(`SELECT 1 FROM facility_sequences
+            WHERE facility_id = ? AND kind = ? AND period = ?`).get(facilityId, kind, period);
+        if (!known) {
+            const tail = prefix.length + 1;
+            const seed = this.db.prepare(kind === 'invoice' ? SEED_INVOICE_SQL : SEED_RECEIPT_SQL)
+                .get({ tail, width: prefix.length, prefix }) as any;
+            this.db.prepare('INSERT INTO facility_sequences (facility_id, kind, period, last_no) VALUES (?, ?, ?, ?)')
+                .run(facilityId, kind, period, Math.max(0, Number(seed?.top || 0) - base));
+        }
+        const row = this.db.prepare(`UPDATE facility_sequences SET last_no = last_no + 1
+            WHERE facility_id = ? AND kind = ? AND period = ? RETURNING last_no`)
+            .get(facilityId, kind, period) as any;
+        return Number(row.last_no);
     }
 
     invoiceBalance(invoiceId: number): { total: number; paid: number; due: number } {
@@ -2230,23 +2282,23 @@ export class DatabaseService {
         const subtotal = Math.round(normalized.reduce((sum, line) => sum + line.amount, 0) * 100) / 100;
         const total = Math.round((subtotal - discount + tax) * 100) / 100;
         if (total < 0) throw new Error('Invoice total cannot be negative.');
+        const facilityId = Number(visit.facility_id ?? DEFAULT_FACILITY_ID);
         const create = this.db.transaction(() => {
+            const number = this.nextDocumentNumber(facilityId, 'invoice');
             const header = this.db.prepare(`INSERT INTO invoices
-                (visit_id, patient_id, status, subtotal, discount, tax, total, created_by, facility_id)
-                VALUES (?, ?, 'unpaid', ?, ?, ?, ?, ?, ?)`)
-                .run(visitId, visit.patient_id, subtotal, discount, tax, total, actingUserId ?? null,
-                    visit.facility_id ?? DEFAULT_FACILITY_ID) as any;
+                (number, visit_id, patient_id, status, subtotal, discount, tax, total, created_by, facility_id)
+                VALUES (?, ?, ?, 'unpaid', ?, ?, ?, ?, ?, ?)`)
+                .run(number, visitId, visit.patient_id, subtotal, discount, tax, total, actingUserId ?? null,
+                    facilityId) as any;
             const invoiceId = Number(header.lastInsertRowid);
             const addItem = this.db.prepare(`INSERT INTO invoice_items
                 (invoice_id, description, quantity, rate, amount) VALUES (?, ?, ?, ?, ?)`);
             for (const line of normalized) addItem.run(invoiceId, line.description, line.quantity, line.rate, line.amount);
-            this.db.prepare('UPDATE invoices SET number = ? WHERE id = ?')
-                .run(this.invoiceNumber(invoiceId), invoiceId);
-            return invoiceId;
+            return { invoiceId, number };
         });
-        const invoiceId = create();
+        const { invoiceId, number } = create();
         this.logAudit('CREATE', 'invoices', invoiceId, actingUserId,
-            `Created invoice ${this.invoiceNumber(invoiceId)} for visit #${visitId} (total ${total})`);
+            `Created invoice ${number} for visit #${visitId} (total ${total})`);
         return this.getInvoice(invoiceId);
     }
 
@@ -2290,15 +2342,15 @@ export class DatabaseService {
             if (amount > balance.due + 0.009) {
                 throw new Error(`Payment exceeds the amount due (${balance.due}).`);
             }
+            const facilityId = Number(invoice.facility_id ?? DEFAULT_FACILITY_ID);
             const row = this.db.prepare(`INSERT INTO payments
-                (invoice_id, kind, amount, method, reference, client_key, received_by, facility_id)
-                VALUES (?, 'payment', ?, ?, ?, ?, ?, ?)`)
+                (invoice_id, kind, amount, method, reference, client_key, received_by, facility_id, receipt_no)
+                VALUES (?, 'payment', ?, ?, ?, ?, ?, ?, ?)`)
                 .run(invoiceId, amount, method,
                     input?.reference != null ? String(input.reference).trim() || null : null,
-                    clientKey || null, actingUserId ?? null, invoice.facility_id ?? DEFAULT_FACILITY_ID) as any;
+                    clientKey || null, actingUserId ?? null, facilityId,
+                    this.nextDocumentNumber(facilityId, 'receipt')) as any;
             const paymentId = Number(row.lastInsertRowid);
-            this.db.prepare('UPDATE payments SET receipt_no = ? WHERE id = ?')
-                .run(this.receiptNumber(paymentId), paymentId);
             const next = this.invoiceBalance(invoiceId);
             this.db.prepare('UPDATE invoices SET status = ? WHERE id = ?')
                 .run(this.invoiceStatusFor(next), invoiceId);
@@ -2343,14 +2395,14 @@ export class DatabaseService {
             if (amount > maxRefundable + 0.009) {
                 throw new Error(`Refund exceeds the refundable amount (${maxRefundable}).`);
             }
+            const facilityId = Number(invoice.facility_id ?? DEFAULT_FACILITY_ID);
             const row = this.db.prepare(`INSERT INTO payments
-                (invoice_id, kind, amount, method, reference, reason, reversal_of, received_by, facility_id)
-                VALUES (?, 'reversal', ?, ?, ?, ?, ?, ?, ?)`)
+                (invoice_id, kind, amount, method, reference, reason, reversal_of, received_by, facility_id, receipt_no)
+                VALUES (?, 'reversal', ?, ?, ?, ?, ?, ?, ?, ?)`)
                 .run(original.invoice_id, amount, original.method, original.reference,
-                    reason, paymentId, actingUserId ?? null, invoice.facility_id ?? DEFAULT_FACILITY_ID) as any;
+                    reason, paymentId, actingUserId ?? null, facilityId,
+                    this.nextDocumentNumber(facilityId, 'refund')) as any;
             const reversalId = Number(row.lastInsertRowid);
-            this.db.prepare('UPDATE payments SET receipt_no = ? WHERE id = ?')
-                .run(this.receiptNumber(reversalId), reversalId);
             const next = this.invoiceBalance(original.invoice_id);
             const prior = this.db.prepare('SELECT status FROM invoices WHERE id = ?')
                 .get(original.invoice_id) as any;

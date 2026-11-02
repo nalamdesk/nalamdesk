@@ -4,8 +4,14 @@ const { DatabaseSync } = require('node:sqlite');
 
 /** Minimal better-sqlite3-compatible adapter backed by Node's real SQLite engine. */
 export class TestDatabase {
-    private readonly sqlite = new DatabaseSync(':memory:');
-    readonly name = ':memory:';
+    private readonly sqlite: any;
+    readonly name: string;
+
+    /** In memory by default; pass a file path to share one database between connections. */
+    constructor(filename = ':memory:') {
+        this.name = filename;
+        this.sqlite = new DatabaseSync(filename, filename === ':memory:' ? {} : { timeout: 5000 });
+    }
 
     exec(sql: string) { return this.sqlite.exec(sql); }
     prepare(sql: string) { return this.sqlite.prepare(sql); }

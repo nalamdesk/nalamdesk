@@ -14,6 +14,9 @@ const MAX_TEXT = 200;
 
 /** Facility fields an admin edits: identity, letterhead, ABDM registry IDs. */
 const FACILITY_TEXT_FIELDS = ['name', 'doctor_name', 'address', 'phone', 'abdm_hfr_id', 'abdm_hip_id'] as const;
+const FACILITY_COLUMNS = FACILITY_TEXT_FIELDS.join(', ');
+const FACILITY_PARAMS = FACILITY_TEXT_FIELDS.map(k => '@' + k).join(', ');
+const FACILITY_ASSIGNMENTS = FACILITY_TEXT_FIELDS.map(k => k + ' = @' + k).join(', ');
 
 export interface FacilityRow {
     id: number;
@@ -153,15 +156,15 @@ export class FacilityAdmin {
             if (data['id'] !== undefined && data['id'] !== null && data['id'] !== '') {
                 const id = positiveId(data['id'], 'Facility');
                 const result = db.prepare(`UPDATE facilities SET code = @code, kind = @kind,
-                    ${FACILITY_TEXT_FIELDS.map(k => `${k} = @${k}`).join(', ')} WHERE id = @id`)
+                    ${FACILITY_ASSIGNMENTS} WHERE id = @id`)
                     .run({ ...fields, code, kind, id });
                 if (Number(result.changes) === 0) fail('Unknown facility.');
                 this.audit('FACILITY_UPDATE', 'facilities', id, actor, `Updated facility ${code}`);
                 return { id };
             }
             const id = db.transaction(() => {
-                const created = Number(db.prepare(`INSERT INTO facilities (code, kind, ${FACILITY_TEXT_FIELDS.join(', ')})
-                    VALUES (@code, @kind, ${FACILITY_TEXT_FIELDS.map(k => `@${k}`).join(', ')})`)
+                const created = Number(db.prepare(`INSERT INTO facilities (code, kind, ${FACILITY_COLUMNS})
+                    VALUES (@code, @kind, ${FACILITY_PARAMS})`)
                     .run({ ...fields, code, kind }).lastInsertRowid);
                 db.prepare(`INSERT INTO departments (facility_id, code, name, kind) VALUES (?, 'OPD', 'General OPD', 'opd')`)
                     .run(created);

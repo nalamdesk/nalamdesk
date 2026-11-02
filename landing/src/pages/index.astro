@@ -3,12 +3,13 @@ import Base from '../layouts/Base.astro';
 
 const title = 'NalamDesk, the offline clinic desk that works without internet';
 const description =
-  'Practice desk for small clinics. Registration to printed prescription on one computer. Records stay encrypted on your disk.';
+  'Practice desk for clinics and small hospitals. Registration to printed prescription on one computer, or every computer on your own server. Records stay encrypted on hardware you control.';
 const docs = 'https://docs.nalamdesk.com/';
 // Streams the latest installer from nalamdesk.com (src/pages/download/[os].ts).
 const linuxDownload = '/download/linux';
 const windowsDownload = '/download/windows';
 const repo = 'https://github.com/nalamdesk/nalamdesk';
+const serverDocs = 'https://docs.nalamdesk.com/docs/server/overview';
 ---
 <Base title={title} description={description}>
   <div class="bg-cobalt text-center text-[13px] font-medium text-white">
@@ -22,6 +23,7 @@ const repo = 'https://github.com/nalamdesk/nalamdesk';
       </a>
       <nav class="hidden gap-5 md:flex" aria-label="Primary">
         <a class="text-sm text-slate2 hover:text-ink" href="#platform">Platform</a>
+        <a class="text-sm text-slate2 hover:text-ink" href="#server">Server</a>
         <a class="text-sm text-slate2 hover:text-ink" href="#security">Security</a>
         <a class="text-sm text-slate2 hover:text-ink" href={docs} target="_blank" rel="noopener">Docs</a>
       </nav>
@@ -38,7 +40,7 @@ const repo = 'https://github.com/nalamdesk/nalamdesk';
     <section class="mx-auto max-w-4xl px-5 pb-12 pt-14 md:pt-20" id="product">
       <h1 class="max-w-2xl font-display text-4xl font-bold leading-[1.1] tracking-[-0.02em] md:text-[44px]">The <span class="hl-wash">offline</span> clinic desk that works <span class="hl-line">without internet</span>.</h1>
       <p class="mt-4 max-w-xl text-[16px] leading-relaxed text-slate2">
-        Practice desk for small clinics. Registration to printed prescription on one computer. Records stay encrypted on your disk. Free, open source, and built for clinics where the internet drops.
+        Practice desk for clinics and small hospitals. Registration to printed prescription on one computer, or on every computer through your own NalamDesk Server. Records stay encrypted on hardware you control. Free, open source, and built for clinics where the internet drops.
       </p>
       <div class="mt-7 flex flex-wrap items-center gap-3">
         <a href="#get" class="rounded-md bg-cobalt px-5 py-2.5 text-sm font-semibold text-white">Download the beta</a>
@@ -121,25 +123,47 @@ const repo = 'https://github.com/nalamdesk/nalamdesk';
         </div>
         <div class="min-w-0">
           <div class="grid gap-8 md:grid-cols-2">
-            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Print, collect and close</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">Prescriptions print with clinic details. Receipts record every payment. <a href="https://docs.nalamdesk.com/docs/user-guide/daily-collection" class="font-semibold text-cobalt hover:underline">Day close</a> reconciles the collection by method and flags what needs review.</p></div>
+            <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Print, collect and close</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">Prescriptions print with clinic details. Invoices and receipts carry an unbroken number series per branch. <a href="https://docs.nalamdesk.com/docs/user-guide/daily-collection" class="font-semibold text-cobalt hover:underline">Day close</a> reconciles the collection by method and flags what needs review.</p></div>
             <div class="min-w-0"><h2 class="font-display text-[22px] font-bold leading-snug">Backup runs itself</h2><p class="mt-2 text-[15px] leading-relaxed text-slate2">A <a href="https://docs.nalamdesk.com/docs/backups" class="font-semibold text-cobalt hover:underline">local backup</a> every day, 30 days kept. Restore needs the recovery code plus the admin password. No reset path exists.</p></div>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="mx-auto max-w-4xl px-5 pb-12 md:pb-16" id="security">
+    <section class="border-y border-line bg-wash" id="server" aria-label="NalamDesk Server">
+      <div class="mx-auto max-w-4xl px-5 py-12 md:py-16">
+        <h2 class="max-w-2xl font-display text-[26px] font-bold leading-snug md:text-[30px]">One computer, or the whole clinic.</h2>
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">A clinic on one computer needs nothing else. When reception, consult rooms and the pharmacy all need the same queue, run NalamDesk Server on a machine you own and connect every computer to it.</p>
+        <div class="mt-7 grid gap-6 md:grid-cols-3">
+          <div class="min-w-0 rounded-lg border border-line bg-white p-6">
+            <h3 class="font-display text-lg font-bold">Your server, your records</h3>
+            <p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Docker, a Debian or Ubuntu package, or a Windows service, on amd64 or arm64. Put it on the clinic network and computers keep working through an internet outage.</p>
+          </div>
+          <div class="min-w-0 rounded-lg border border-line bg-white p-6">
+            <h3 class="font-display text-lg font-bold">App or browser</h3>
+            <p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Each computer joins once with a one-time code that pins the server's certificate. Staff then use the NalamDesk app or a browser. Joined computers hold no patient records.</p>
+          </div>
+          <div class="min-w-0 rounded-lg border border-line bg-white p-6">
+            <h3 class="font-display text-lg font-bold">Branches and departments</h3>
+            <p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Run several facilities from one server, with hospital departments, a role per person per facility, and a switcher in the top bar.</p>
+          </div>
+        </div>
+        <p class="mt-6 text-[14px] text-slate2"><a href={serverDocs} class="font-semibold text-cobalt hover:underline">Set up NalamDesk Server</a> · daily encrypted backups with off-site copies to a share or S3 storage.</p>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-4xl px-5 pb-12 pt-12 md:pb-16 md:pt-16" id="security">
       <div class="reveal border-t-2 border-ink py-9 transition-colors hover:bg-wash/60 md:px-2">
         <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">Safety you cannot bypass.</h2>
         <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Provenance, allergy checks and triage history stay mandatory. Duplicate records merge through a permissioned preview with rollback, never silently.</p>
       </div>
       <div class="reveal border-t border-line py-9 transition-colors hover:bg-wash/60 md:px-2">
-        <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">The vault lives on your computer.</h2>
-        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Full database encryption with the key in the system keyring. History, encounters and prescriptions never leave this device. No password reset, by design.</p>
+        <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">The vault lives on hardware you control.</h2>
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Full database encryption on your computer or your own server, never on ours. A server unlocks with a key file, systemd credentials, a TPM, Windows DPAPI, your KMS or a typed passphrase, plus an offline recovery code. No password reset, by design.</p>
       </div>
       <div class="reveal border-t border-line py-9 transition-colors hover:bg-wash/60 md:px-2">
         <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">Roles keep the floor calm.</h2>
-        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Doctors own the clinical work. Reception registers and manages the queue. Nurses record vitals. Admins own users, catalogs and backups.</p>
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-relaxed text-slate2">Doctors own the clinical work. Reception registers and manages the queue. Nurses record vitals. Admins own users, catalogs and backups. Roles are set per facility, so a doctor at one branch need not see another.</p>
       </div>
       <div class="reveal border-y border-line py-9 transition-colors hover:bg-wash/60 md:px-2">
         <h2 class="max-w-xl font-display text-[26px] font-bold leading-snug md:text-[30px]">Built for long shifts.</h2>
@@ -160,7 +184,7 @@ const repo = 'https://github.com/nalamdesk/nalamdesk';
           <div class="min-w-0 rounded-lg border border-line bg-white p-6">
             <p class="text-[12px] font-semibold uppercase tracking-[0.08em] text-cobalt">In progress</p>
             <h3 class="mt-2 font-display text-lg font-bold">ABHA and ABDM (India)</h3>
-            <p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">Health ID linking, scan-and-share counter check-in, and consent-based outside records. The gateway runs in mock mode until the clinic configures its facility credentials.</p>
+            <p class="mt-1.5 text-[14.5px] leading-relaxed text-slate2">ABDM v3: ABHA creation from Aadhaar, Health ID linking, scan-and-share counter check-in, and consent-based outside records. Each facility pairs through NalamDesk Cloud on its own HFR ID. The gateway runs in mock mode until a facility is paired.</p>
           </div>
         </div>
       </div>
@@ -174,12 +198,12 @@ const repo = 'https://github.com/nalamdesk/nalamdesk';
         {
           "@type": "Question",
           "name": "Is my data safe?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Records live encrypted on your own computer. Nothing clinical ever leaves the device." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Records live encrypted on your own computer or your own NalamDesk Server. Nothing clinical goes to NalamDesk Cloud." }
         },
         {
           "@type": "Question",
           "name": "Can I work without internet?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Queue, consult, print, billing and backup all run offline." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. On one computer, queue, consult, print, billing and backup all run offline. With NalamDesk Server on the clinic network, every computer keeps working through an internet outage." }
         },
         {
           "@type": "Question",
@@ -204,11 +228,11 @@ const repo = 'https://github.com/nalamdesk/nalamdesk';
       <div class="mt-2 divide-y divide-line border-y border-line">
         <details class="group py-4">
           <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">Is my data safe?</summary>
-          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">Records live encrypted on your own computer. Nothing clinical ever leaves the device.</p>
+          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">Records live encrypted on your own computer or your own NalamDesk Server. Nothing clinical goes to NalamDesk Cloud.</p>
         </details>
         <details class="group py-4">
           <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">Can I work without internet?</summary>
-          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">Yes. Queue, consult, print, billing and backup all run offline.</p>
+          <p class="mt-2 text-[14.5px] leading-relaxed text-slate2">Yes. On one computer, queue, consult, print, billing and backup all run offline. With <a href={serverDocs} class="font-semibold text-cobalt hover:underline">NalamDesk Server</a> on the clinic network, every computer keeps working through an internet outage.</p>
         </details>
         <details class="group py-4">
           <summary class="cursor-pointer list-none text-[15px] font-semibold before:mr-2 before:content-['+'] group-open:before:content-['–']">What if I forget the password?</summary>
@@ -230,7 +254,7 @@ const repo = 'https://github.com/nalamdesk/nalamdesk';
         <div class="min-w-0">
           <h2 class="font-display text-2xl font-bold">Download the beta.</h2>
           <p class="mt-2 max-w-xl text-[15px] leading-relaxed text-white/85">Evaluate with test data only. Windows and Linux builds are available now. macOS follows once the build is signed and notarized.</p>
-          <p class="mt-2 text-[13px] text-white/70">Updates install from inside the app. <a href={docs} target="_blank" rel="noopener" class="underline hover:text-white">Read the docs</a> · <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener" class="underline hover:text-white">AGPL-3.0</a> · <a href={repo} target="_blank" rel="noopener" class="underline hover:text-white">Source code</a></p>
+          <p class="mt-2 text-[13px] text-white/70">Updates install from inside the app. Several computers? <a href={serverDocs} class="underline hover:text-white">Set up NalamDesk Server</a>. <a href={docs} target="_blank" rel="noopener" class="underline hover:text-white">Read the docs</a> · <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener" class="underline hover:text-white">AGPL-3.0</a> · <a href={repo} target="_blank" rel="noopener" class="underline hover:text-white">Source code</a></p>
         </div>
         <div class="flex min-w-0 flex-none flex-wrap gap-3">
           <a href={windowsDownload} class="rounded-md bg-white px-5 py-3 text-[15px] font-bold text-cobalt">Windows (.exe)</a>

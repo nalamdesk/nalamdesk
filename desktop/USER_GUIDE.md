@@ -19,6 +19,10 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
     Then launch **NalamDesk** from the applications menu.
 *   An AppImage may be published as a secondary artifact. It requires FUSE 2 (`libfuse.so.2`). If it fails to start, install the `.deb` — do not extract the squashfs.
 
+### One computer, or a NalamDesk Server
+*   **One computer:** the app sets up its own encrypted vault (below).
+*   **Several computers:** run [NalamDesk Server](../docs/self-hosting.md) on one machine. On each computer, choose **Connect this computer to it** on the welcome screen and enter the server address, a join code from an admin, and a name for the computer. Joined computers keep no patient records and need to reach the server to work. Staff can also use a browser at the server's address.
+
 ### 2. First Run & Security
 *   **Create administrator password:** On first launch, the setup wizard creates the encrypted vault on this device and an administrator login.
 *   **Linux keyring:** Vault encryption uses the system keyring (`gnome-libsecret`). Install `libsecret-1-0` and `gnome-keyring` if setup reports `ENCRYPTION_UNAVAILABLE`. Do not use `--password-store=basic`.
@@ -70,10 +74,8 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
 ### 4. Online Booking (Cloud Sync) ☁️
 *   **Overview:** NalamDesk allows patients to book appointments online via a public link. These appointments automatically appear in your Desktop App.
 *   **How to Enable:**
-    1.  Go to **Settings > Cloud Sync**.
-    2.  Toggle **"Enable Online Booking"**.
-    3.  Enter your **Clinic Name** and **City**.
-    4.  Click **"Save"**.
+    1.  Pair the facility with NalamDesk Cloud in **Settings → General → NalamDesk Cloud** (HFR facility ID, then the code sent to the HFR contact).
+    2.  Turn on the **Online booking** toggle on the same card. Each facility has its own listing.
 *   **The Flow:**
     1.  **Patient Books:** Uses your public link to book a slot.
     2.  **Sync:** The appointment appears on your **Dashboard** under "Today's Appointments" in ~30 seconds.
@@ -84,6 +86,8 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
 
 ### 5. ABDM Integration (India)
 *   **One-time setup (Settings → ABDM):** Enter the facility IDs issued to the clinic — HIP ID, counter ID, HFR (facility) ID and the doctors' HPR (practitioner) IDs. Each doctor keeps their own HPR ID even when other profile fields are edited. ABDM is reached through NalamDesk Cloud, so no ABDM password is entered here: until this computer is paired (Settings → General) the gateway stays in mock mode and everything keeps working offline.
+*   **ABHA creation:** New ABHA numbers are created from an **Aadhaar number** only (ABDM v3), with an OTP to the Aadhaar-linked mobile. Existing ABHA numbers and addresses can be linked to a chart.
+*   **Per facility:** Each facility pairs with NalamDesk Cloud on its own HFR ID and acts with its own HIP ID, so ABDM requests go out as the facility you are working in.
 *   **Scan & Share counter:** The ABDM tab shows a counter QR encoding the clinic identity (no patient data). Print it and display it at reception. When a patient scans it at the counter, their token appears in the **Incoming Scans** dock on the Queue page — press Space or tap the token for 1-click check-in. If details are incomplete the patient chart opens to finish them and the token stays pending.
 *   **Care contexts:** Every completed encounter automatically gets a yearly reference like `OP-2026-0001`, visible on the visit. References never repeat, even if an encounter is deleted.
 *   **Callback inbox:** Messages from the ABDM gateway reach this computer through NalamDesk Cloud once this computer is paired (Settings → General), land in the inbox, and are acknowledged exactly once. A patient's scan shows in the Incoming Scans dock within seconds.
@@ -105,7 +109,12 @@ Welcome to **NalamDesk**, your secure, offline-first Clinic Management System. T
 *   **Several clinics or a hospital:** Organisation admins manage branches under **Settings → Facilities**. Each facility has a code, a name, a type (clinic or hospital), its own letterhead details and its own ABDM HFR and HIP IDs. Closing a facility stops staff signing in or working there; its records are kept and it can be reopened.
 *   **Departments:** Clinics work as one General OPD. Set a facility's type to Hospital to add departments such as Orthopaedics or Emergency.
 *   **Staff access:** The Staff access table sets each person's role at each facility, or **No access**. Organisation admins are admins at every facility. A new staff member gets their role at the facility they were created in.
+*   **Numbering:** Invoices, receipts and refunds are numbered per facility. The main facility keeps `INV-100001` / `RCP-100001`; a branch with code `ANN` numbers `ANN-INV-2026-000001`, `ANN-RCP-2026-000001` and `ANN-RFD-2026-000001`, restarting each year.
 *   **Signing in and switching:** Staff who work at more than one facility pick one after signing in (the last one they used is preselected) and can switch from the top bar at any time. Switching reloads the app in the new facility with the role held there. Someone with no role at any open facility cannot sign in and is told to ask an administrator.
+
+### Computers (NalamDesk Server)
+*   **Settings → Computers** (browser and joined computers) issues join codes, lists joined computers with when they were last seen, and removes a lost or retired one. **Disconnect this computer** on the sign-in screen takes a computer off the server.
+*   An admin on any joined computer can manage users, facilities, Cloud pairing and ABDM, and see and run server backups. Restore happens on the server with `nalamdesk-server restore`.
 
 ### Data Management
 *   **Backup:** Automated daily backups are saved locally (Settings → Data & Backup). Retention is 30 days.

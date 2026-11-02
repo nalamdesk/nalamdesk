@@ -6,8 +6,10 @@ sidebar_position: 3
 
 **Settings** is admin-only: the route itself refuses non-admin users, so
 everything below requires an Administrator login. Tabs: **General**,
-**Users**, **Security**, **Data & Backup**, **Audit Logs**,
-**Catalogs**, **ABDM**. The footer shows the packaged version
+**Users**, **Facilities**, **Security**, **Data & Backup**, **Computers**
+(on a [NalamDesk Server](../server/overview.md) only), **Audit Logs**,
+**Catalogs**, **ABDM**. On a server, an admin can use all of them from any
+joined computer or browser. The footer shows the packaged version
 (`NalamDesk v0.0.13 (abc1234)` style, `(development)` for dev builds);
 quote it when reporting defects. Logout clears the session.
 
@@ -19,7 +21,10 @@ quote it when reporting defects. Logout clears the session.
 - **Updates**: installed version plus **Check for updates**. Packaged
   apps check an approved feed; a failed check shows a plain error and
   never touches the vault. Unsigned or checksum-only feeds do not claim
-  full signature verification.
+  full signature verification. Computers joined to a NalamDesk Server
+  update the same way; the server itself is upgraded by whoever runs it
+  (see [Install the server](../server/install.md#upgrade)). Browsers have
+  no updater.
 
 ## User Management (Users tab)
 
@@ -48,6 +53,16 @@ doctors and admins merge charts.
   owns clinical history is blocked; history is deactivated, never
   silently deleted.
 
+## Facilities Tab
+
+Branches, departments, and each person's role at each facility. See
+[Facilities, Departments & Staff Access](./facilities.md).
+
+## Computers Tab (NalamDesk Server)
+
+Issue join codes, see joined computers, and remove one. See
+[Connect computers](../server/connect-computers.md).
+
 ## Security Tab
 
 - **Change Login Password**: changes only the sign-in credential.
@@ -67,8 +82,12 @@ condition is diagnosed.
 
 ## NalamDesk Cloud (General tab, optional)
 
-Pairing this computer with NalamDesk Cloud is required for ABDM and online
-booking. One computer per clinic.
+Pairing with NalamDesk Cloud is required for ABDM and online booking.
+Each **facility** pairs once, on its own HFR facility ID: on a single
+computer that computer pairs, and on a NalamDesk Server the server pairs
+for the facility (from any admin's computer). When the organisation has more
+than one facility, the card shows **Pairing by facility**; switch to a
+facility to pair it.
 
 1. Go to **Settings > General** and scroll to **NalamDesk Cloud**.
 2. Enter the clinic's **HFR facility ID** and a **name for this computer**
@@ -77,7 +96,7 @@ booking. One computer per clinic.
    contact registered in HFR with an 8-character code.
 4. Enter the code in the **Pairing code** field and click **Pair**.
 5. Once paired, the card shows the pairing state, mailbox status, and an
-   **Online booking** toggle.
+   **Online booking** toggle for this facility's listing.
 
 Until paired, the ABDM gateway stays in mock mode and everything keeps
 working offline. Pairing uses the NalamDesk Cloud relay, which holds the
@@ -92,12 +111,19 @@ One-time facility setup:
 
 1. Enter the facility IDs issued to the clinic: **HIP ID**, **counter ID**,
    **HFR facility ID**, and each doctor's **HPR ID** (on the user record).
-   Each doctor keeps their own HPR ID across profile edits.
+   Each doctor keeps their own HPR ID across profile edits. With several
+   facilities, each one's HFR and HIP IDs are set in **Settings >
+   Facilities**, and ABDM requests go out as the facility you are working in.
 2. **Secure transfer**: set a receiving system address (https) and the
    recipient's key material for encrypted record pushes. With no address,
    transfers loop back on this device for testing.
 3. **Connection test**: checks the route to ABDM through NalamDesk Cloud
    without touching patient data.
+
+**ABHA (Health ID) creation** follows the ABDM v3 APIs and takes an
+**Aadhaar number** only: the patient receives an OTP on their
+Aadhaar-linked mobile. Mobile-only enrolment is not offered. Existing ABHA
+numbers or addresses can still be linked to a chart.
 
 Until credentials are configured the gateway stays in mock mode and
 everything works offline: the counter QR, scan check-in, callback inbox,
@@ -114,4 +140,5 @@ and restores all leave entries here.
 ## Data & Backup
 
 Local backups, restore, and backup health live under **Settings > Data &
-Backup**. See [Data & Backups](../backups.md) for the full guide.
+Backup**. See [Data & Backups](../backups.md) for the full guide. On a
+NalamDesk Server, see [Server backups and restore](../server/backups-and-restore.md).

@@ -101,6 +101,21 @@ describe('organisation admin (#214)', () => {
         expect(() => call('setOrgAdmin', { userId: RAVI, orgAdmin: true }, ASHA)).toThrow('Reactivate');
     });
 
+    it('keeps organisation admin when a user is edited in a one-facility vault', async () => {
+        call('setOrgAdmin', { userId: ASHA, orgAdmin: true });
+        await service.saveUser({ id: ASHA, username: 'asha', role: 'doctor', name: 'Dr. Asha', license_number: 'TN-1', mobile: '9', active: 1 }, BOSS);
+        expect((db.prepare('SELECT org_admin FROM users WHERE id = ?').get(ASHA) as any).org_admin).toBe(1);
+        // The last organisation admin cannot be dropped by a role edit either.
+        call('setOrgAdmin', { userId: ASHA, orgAdmin: false });
+        await service.saveUser({ id: BOSS, username: 'boss', role: 'doctor', name: 'Boss', license_number: 'TN-2', active: 1 }, BOSS);
+        expect((db.prepare('SELECT org_admin FROM users WHERE id = ?').get(BOSS) as any).org_admin).toBe(1);
+        expect(service.getFacilityRole(BOSS, 1)).toBe('admin');
+
+        // Promoting someone to admin in Users still makes them an organisation admin.
+        await service.saveUser({ id: RAVI, username: 'ravi', role: 'admin', name: 'Ravi', active: 1 }, BOSS);
+        expect((db.prepare('SELECT org_admin FROM users WHERE id = ?').get(RAVI) as any).org_admin).toBe(1);
+    });
+
     it('gives a new staff member their role at the facility they were created in', async () => {
         const { id } = call('saveFacility', { code: 'ANN', name: 'Anna Nagar' });
         const created = await runWithContext({ userId: BOSS, facilityId: id }, () =>

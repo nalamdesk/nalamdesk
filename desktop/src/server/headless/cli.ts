@@ -782,8 +782,9 @@ export async function runCli(argv: string[], io: CliIO, deps: CliDeps): Promise<
         io.out(USAGE);
         return 0;
     }
+    let config: ServerConfig | undefined;
     try {
-        const config = loadServerConfig({ env: io.env, configPath: flagString(args, 'config') });
+        config = loadServerConfig({ env: io.env, configPath: flagString(args, 'config') });
         switch (command) {
             case 'init': return await cmdInit(args, config, io, deps);
             case 'start': return await cmdStart(config, io, deps);
@@ -803,5 +804,33 @@ export async function runCli(argv: string[], io: CliIO, deps: CliDeps): Promise<
     } catch (error: any) {
         io.err(`Error: ${error?.message ?? error}`);
         return 1;
+    } finally {
+        if (config && command !== 'start') handDataDirToServiceOwner(config.dataDir, io);
+    }
+}
+
+/**
+ * The launcher keeps root for commands that create a systemd-creds or TPM
+ * credential, and sets NALAMDESK_SERVICE_OWNER to the service account's
+ * uid:gid. Everything written to the data directory then goes back to that
+ * account, so the service can still open the vault.
+ */
+export function handDataDirToServiceOwner(dataDir: string, io: Pick<CliIO, 'env' | 'err'>, os: {
+    getuid(): number | undefined;
+    chown(target: string, uid: number, gid: number): void;
+} = { getuid: () => process.getuid?.(), chown: fs.lchownSync }): void {
+    const owner = /^(\d+):(\d+)$/.exec(io.env['NALAMDESK_SERVICE_OWNER'] ?? '');
+    if (!owner || os.getuid() !== 0 || !fs.existsSync(dataDir)) return;
+    const uid = Number(owner[1]);
+    const gid = Number(owner[2]);
+    const chownTree = (target: string) => {
+        os.chown(target, uid, gid);
+        if (!fs.lstatSync(target).isDirectory()) return;
+        for (const entry of fs.readdirSync(target)) chownTree(path.join(target, entry));
+    };
+    try {
+        chownTree(dataDir);
+    } catch (error: any) {
+        io.err(`Could not give ${dataDir} back to the service account: ${error?.message ?? error}. Run \`chown -R nalamdesk:nalamdesk ${dataDir}\`.`);
     }
 }

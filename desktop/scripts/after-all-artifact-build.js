@@ -8,6 +8,12 @@ function loadMainModule(name) {
     return require(compiled);
 }
 
+/**
+ * Writes the Linux helper notes next to the build output, for local builds
+ * and support. It returns nothing to publish: the GitHub Release lists only
+ * installers and the files the in-app updater reads (#49), and the release
+ * notes carry the install guidance.
+ */
 async function afterAllArtifactBuild(buildResult) {
     const extra = [];
     const artifacts = buildResult.artifactPaths || [];
@@ -20,7 +26,7 @@ async function afterAllArtifactBuild(buildResult) {
         throw new Error('Linux AppImage was built without the primary .deb clinic artifact');
     }
     if (debs.length === 0 && appImages.length === 0) {
-        return extra;
+        return [];
     }
 
     const { linuxClinicInstallInstructions, appImageFuseGuardScript, formatMissingFuseMessage } =
@@ -44,7 +50,8 @@ async function afterAllArtifactBuild(buildResult) {
         extra.push(fuseNotePath);
     }
 
-    return extra;
+    console.log(`Wrote ${extra.map((file) => path.basename(file)).join(', ')} (not published)`);
+    return [];
 }
 
 module.exports = afterAllArtifactBuild;

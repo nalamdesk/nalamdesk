@@ -5,9 +5,8 @@ import * as jwt from 'jsonwebtoken';
 import { DatabaseService } from '../main/services/DatabaseService';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
-import * as dotenv from 'dotenv';
 import * as http from 'node:http';
-import { loadDevelopmentEnv } from '../shared/load-env';
+import { loadDevelopmentEnv, loadWorkingDirEnv } from '../shared/load-env';
 import { invokeDbMethod } from '../shared/ipc-db-args';
 import { DEFAULT_FACILITY_ID, runWithContext } from '../shared/request-context';
 import { chooseFacility } from '../main/services/FacilitySession';
@@ -33,7 +32,7 @@ import { serverReleaseVersion } from './release-version';
 import { assertMethodAccess, MethodAccessError, type ClinicMethod } from './runtime/clinicMethods';
 
 loadDevelopmentEnv();
-dotenv.config();
+loadWorkingDirEnv();
 
 /** Legacy in-app LAN server: a 12h token, since its browser UI never refreshes. */
 const LEGACY_ACCESS_TTL_SEC = 12 * 60 * 60;

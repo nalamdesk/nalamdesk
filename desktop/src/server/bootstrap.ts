@@ -1,7 +1,6 @@
-import * as dotenv from 'dotenv';
-import { loadDevelopmentEnv } from '../shared/load-env';
+import { loadDevelopmentEnv, loadWorkingDirEnv } from '../shared/load-env';
 
 loadDevelopmentEnv();
-dotenv.config();
+loadWorkingDirEnv();
 
 void import('./headless/main.js');

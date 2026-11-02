@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
 import type { KeySlotSummary } from '../../main/services/SecurityService';
-import { parseArgs, runCli, type CliDatabase, type CliDeps, type CliIO, type CliJoinedDevice, type CliVault } from './cli';
+import { handDataDirToServiceOwner, parseArgs, runCli, type CliDatabase, type CliDeps, type CliIO, type CliJoinedDevice, type CliVault } from './cli';
 
 /** A vault that records what the CLI asked of it; slots carry their store. */
 class FakeVault implements CliVault {
@@ -518,5 +518,47 @@ describe('nalamdesk-server CLI', () => {
         const empty = makeIo(env);
         expect(await runCli(['start'], empty.io, deps)).toBe(1);
         expect(empty.err.join()).toMatch(/already running/);
+    });
+});
+
+describe('handDataDirToServiceOwner', () => {
+    let dir: string;
+    beforeEach(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-owner-'));
+        fs.mkdirSync(path.join(dir, 'tls'));
+        fs.writeFileSync(path.join(dir, 'security.json'), '{}');
+        fs.writeFileSync(path.join(dir, 'tls', 'server.crt'), 'x');
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const recorder = (uid: number) => {
+        const calls: Array<[string, number, number]> = [];
+        return { calls, os: { getuid: () => uid, chown: (t: string, u: number, g: number) => { calls.push([path.relative(dir, t), u, g]); } } };
+    };
+
+    it('chowns the whole data directory to NALAMDESK_SERVICE_OWNER when root', () => {
+        const { calls, os: fakeOs } = recorder(0);
+        const err: string[] = [];
+        handDataDirToServiceOwner(dir, { env: { NALAMDESK_SERVICE_OWNER: '998:997' }, err: (l) => err.push(l) }, fakeOs);
+        expect(calls).toHaveLength(4);
+        expect(calls).toEqual(expect.arrayContaining([['', 998, 997], ['security.json', 998, 997], ['tls', 998, 997], [path.join('tls', 'server.crt'), 998, 997]]));
+        expect(err).toEqual([]);
+    });
+
+    it('does nothing without the variable, with a malformed one, or when not root', () => {
+        const io = (owner?: string) => ({ env: owner ? { NALAMDESK_SERVICE_OWNER: owner } : {}, err: () => undefined });
+        const root = recorder(0);
+        handDataDirToServiceOwner(dir, io(), root.os);
+        handDataDirToServiceOwner(dir, io('nalamdesk'), root.os);
+        const user = recorder(1000);
+        handDataDirToServiceOwner(dir, io('998:997'), user.os);
+        expect([...root.calls, ...user.calls]).toEqual([]);
+    });
+
+    it('tells the operator how to fix ownership when chown fails', () => {
+        const err: string[] = [];
+        handDataDirToServiceOwner(dir, { env: { NALAMDESK_SERVICE_OWNER: '998:997' }, err: (l) => err.push(l) },
+            { getuid: () => 0, chown: () => { throw new Error('EPERM'); } });
+        expect(err.join()).toMatch(/chown -R nalamdesk:nalamdesk/);
     });
 });

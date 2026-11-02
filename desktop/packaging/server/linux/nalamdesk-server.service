@@ -9,6 +9,7 @@ Type=simple
 User=nalamdesk
 Group=nalamdesk
 Environment=NALAMDESK_CONFIG=/etc/nalamdesk/server.json
+Environment=NALAMDESK_NO_DOTENV=1
 EnvironmentFile=-/etc/default/nalamdesk-server
 ExecStart=/opt/nalamdesk-server/runtime/node /opt/nalamdesk-server/app/dist/server/server/headless/main.js start
 Restart=on-failure

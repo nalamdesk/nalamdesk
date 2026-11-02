@@ -218,8 +218,12 @@ function buildWinZip(flags) {
     if (!winsw || !fs.existsSync(winsw)) throw new Error('Set WINSW_EXE to a verified WinSW-x64.exe.');
     fs.copyFileSync(winsw, path.join(service, 'nalamdesk-server-service.exe'));
     const name = `nalamdesk-server-${pkg.version}-windows-${process.arch}.zip`;
+    // Paths go through the environment, so a quote in a folder name cannot change the command.
     run('powershell', ['-NoProfile', '-Command',
-        `Compress-Archive -Path '${dir}' -DestinationPath '${path.join(flags.out, name)}' -Force`], { shell: false });
+        'Compress-Archive -LiteralPath $env:ND_ZIP_SOURCE -DestinationPath $env:ND_ZIP_DEST -Force'], {
+        shell: false,
+        env: { ...process.env, ND_ZIP_SOURCE: dir, ND_ZIP_DEST: path.join(flags.out, name) }
+    });
     console.log(`Wrote ${name}`);
 }
 

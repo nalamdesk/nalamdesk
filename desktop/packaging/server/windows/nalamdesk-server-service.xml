@@ -10,6 +10,7 @@
   <arguments>"%BASE%\..\app\dist\server\server\headless\main.js" start</arguments>
   <workingdirectory>%BASE%\..\app</workingdirectory>
   <env name="NALAMDESK_CONFIG" value="%ProgramData%\NalamDesk\server\server.json"/>
+  <env name="NALAMDESK_NO_DOTENV" value="1"/>
   <startmode>Automatic</startmode>
   <delayedAutoStart>true</delayedAutoStart>
   <!-- Ctrl+C first, so the server closes the database cleanly. -->

@@ -1272,7 +1272,12 @@ handleGuardedDb('db:saveSettings', async (_, settings) => {
     if (settings.backup_schedule && !BackupService.isValidScheduleTime(settings.backup_schedule)) {
         throw new Error('Invalid backup schedule time.');
     }
-    if ('local_backup_path' in settings) assertBackupFolder(settings.local_backup_path);
+    // Check the folder only when it changes, so an unplugged disk or an old
+    // placeholder value does not block saving the rest of Settings.
+    if ('local_backup_path' in settings
+        && settings.local_backup_path !== databaseService.getSettings()?.local_backup_path) {
+        assertBackupFolder(settings.local_backup_path);
+    }
 
     const result = databaseService.saveSettings(settings);
 
@@ -1735,10 +1740,9 @@ ipcMain.handle('backup:selectRestoreBundle', async () => {
 });
 
 ipcMain.handle('backup:useDefaultPath', async () => {
+    // Create the app's own backup folder so it passes the folder check on save.
     const defaultPath = path.join(app.getPath('userData'), 'backups');
-    // Ensure it exists?
-    // backupService sets this in constructor, so we just return the path string
-    // logic in frontend will save it to settings.
+    fs.mkdirSync(defaultPath, { recursive: true });
     return defaultPath;
 });
 

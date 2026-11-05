@@ -1,13 +1,15 @@
-name: Regression E2E (manual only)
+name: Regression E2E
 
 # Full-feature regression: real Electron + locally served renderer + transient
 # test DB (desktop/e2e/regression/, `npm run e2e:regression` in desktop/).
 #
-# MANUAL TRIGGER ONLY. This workflow has no push/pull_request/schedule
-# triggers by design: it never runs on branches, PRs, or commits. Launch it
-# from Actions → "Regression E2E (manual only)" → Run workflow, optionally
-# limiting the run to a single spec file.
+# Runs nightly on master and on demand. It never runs on branches, PRs or
+# commits: launch it by hand from Actions → "Regression E2E" → Run workflow,
+# optionally limiting the run to a single spec file.
 on:
+  # Nightly at 03:00 IST, on the default branch (the full suite).
+  schedule:
+    - cron: '30 21 * * *'
   workflow_dispatch:
     inputs:
       spec:

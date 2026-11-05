@@ -53,27 +53,41 @@ describe('DatabaseService', () => {
             expect(async () => await service.migrate()).not.toThrow();
         });
 
-        it('should perform VACUUM INTO backup for file-based databases', async () => {
-            mockDb.name = 'test.db'; // Simulate file-based DB
+        it('should snapshot with VACUUM INTO to a temp file, then rename it into place', async () => {
             const fs = require('node:fs');
-            vi.spyOn(fs, 'existsSync').mockReturnValue(false); // No existing backup
-
-            await service.migrate();
-
-            expect(mockDb.prepare).toHaveBeenCalledWith('VACUUM INTO ?');
-            expect(mockStatement.run).toHaveBeenCalledWith('test.db.bak');
+            const dir = fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nd-db-'));
+            mockDb.name = `${dir}/test.db`;
+            mockStatement.get.mockReturnValueOnce({ n: 3 }); // existing tables
+            mockStatement.run.mockImplementation((target: string) => {
+                if (typeof target === 'string' && target.endsWith('.bak.tmp')) fs.writeFileSync(target, 'snapshot');
+            });
+            try {
+                await service.migrate();
+                expect(mockDb.prepare).toHaveBeenCalledWith('VACUUM INTO ?');
+                expect(mockStatement.run).toHaveBeenCalledWith(`${dir}/test.db.bak.tmp`);
+                expect(fs.readFileSync(`${dir}/test.db.bak`, 'utf8')).toBe('snapshot');
+            } finally {
+                fs.rmSync(dir, { recursive: true, force: true });
+            }
         });
 
-        it('should fallback to .backup() if VACUUM INTO fails', async () => {
-            mockDb.name = 'test.db';
+        it('should fall back to .backup() if VACUUM INTO fails', async () => {
+            const fs = require('node:fs');
+            const dir = fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nd-db-'));
+            mockDb.name = `${dir}/test.db`;
+            mockStatement.get.mockReturnValueOnce({ n: 3 });
             mockDb.prepare.mockImplementation((sql: string) => {
                 if (sql.includes('VACUUM INTO')) throw new Error('VACUUM failed');
                 return mockStatement;
             });
-
-            await service.migrate();
-
-            expect(mockDb.backup).toHaveBeenCalledWith('test.db.bak');
+            mockDb.backup.mockImplementation(async (target: string) => fs.writeFileSync(target, 'snapshot'));
+            try {
+                await service.migrate();
+                expect(mockDb.backup).toHaveBeenCalledWith(`${dir}/test.db.bak.tmp`);
+                expect(fs.existsSync(`${dir}/test.db.bak`)).toBe(true);
+            } finally {
+                fs.rmSync(dir, { recursive: true, force: true });
+            }
         });
     });
 

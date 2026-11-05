@@ -93,6 +93,21 @@ export const ALLOWED_IPC_METHODS = [
     'replaceConditionMedPresets'
 ];
 
+/**
+ * The message of an error written for the person using the app, such as a
+ * validation refusal ("Payment exceeds the amount due") or an ABDM answer,
+ * so a client computer shows what the desktop app would. Anything else
+ * (database driver errors, system errors, programming errors) stays a
+ * generic message: those can carry SQL, paths or internals.
+ */
+export function readableError(error: unknown): string | null {
+    if (!(error instanceof Error) || Object.getPrototypeOf(error) !== Error.prototype) return null;
+    if ((error as any).code !== undefined) return null;
+    const message = String(error.message || '').trim();
+    if (!message || message.length > 500 || /\bSQLITE_|\bsql\b|no such (table|column)|constraint failed/i.test(message)) return null;
+    return message;
+}
+
 interface RequestAuth {
     session: ServerSession | null;
     device: JoinedDevice | null;
@@ -775,9 +790,25 @@ export class ApiServer {
         return ((request as any).auth as RequestAuth | undefined)?.device?.id ?? null;
     }
 
+    /**
+     * Joined computers belong to the whole server, so only an organisation
+     * admin manages them. Checked in the database on every call: the role in
+     * the token is the legacy global role, which removing organisation admin
+     * does not change.
+     */
     private adminOnly(handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) {
         return async (request: FastifyRequest, reply: FastifyReply) => {
-            if ((request as any).user?.role !== 'admin') {
+            const user = (request as any).user;
+            const db = this.dbService as any;
+            let allowed: boolean;
+            try {
+                allowed = typeof db.isOrgAdmin === 'function' ? db.isOrgAdmin(Number(user?.id)) : user?.role === 'admin';
+            } catch {
+                return reply.code(503).send({ error: 'SERVER_STARTING' });
+            }
+            if (!allowed) {
+                this.audit('ADMIN_ROUTE_DENIED', Number(user?.id) || null,
+                    `Refused ${request.method} ${request.routeOptions?.url ?? request.url}: not an organisation admin`, this.deviceIdOf(request));
                 return reply.code(403).send({ error: 'Forbidden' });
             }
             return handler(request, reply);
@@ -1095,7 +1126,7 @@ export class ApiServer {
                     return result;
                 } catch (e: any) {
                     console.error(`[IPC Error] method: ${method}`, e);
-                    return reply.code(500).send({ error: 'Internal server error' });
+                    return reply.code(500).send({ error: readableError(e) ?? 'Internal server error' });
                 }
             }
             if (typeof dbAny[method] === 'function') {
@@ -1116,7 +1147,7 @@ export class ApiServer {
                         return reply.code(403).send({ error: 'Forbidden' });
                     }
                     console.error(`[IPC Error] method: ${method}`, e);
-                    return reply.code(500).send({ error: 'Internal server error' });
+                    return reply.code(500).send({ error: readableError(e) ?? 'Internal server error' });
                 }
             } else {
                 return reply.code(404).send({ error: 'Method not implemented' });

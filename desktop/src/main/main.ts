@@ -429,7 +429,7 @@ ipcMain.handle('auth:recover', async (event, { recoveryCode }) => {
         const db = securityService.getDb();
         databaseService.setDb(db);
 
-        await databaseService.migrate();
+        await migrateOrDetach();
         credentialRotationService.setDb(db);
         credentialRotationService.reconcileInterruptedRotation();
         return {
@@ -516,10 +516,39 @@ ipcMain.handle('clipboard:writeText', (event, text) => {
     return true;
 });
 
+/**
+ * Brings the attached vault's schema up to date. When that fails (a newer
+ * schema, or no pre-migration backup) the vault is detached from the shared
+ * database service, so neither this app nor the LAN server works on a schema
+ * this build cannot use; the next sign-in attaches and tries again.
+ */
+async function migrateOrDetach(): Promise<void> {
+    try {
+        await databaseService.migrate();
+    } catch (error) {
+        databaseService.setDb(null);
+        throw error;
+    }
+}
+
+/** Sign-in error code for a schema that cannot be brought up to date, or null. */
+function schemaErrorCode(error: unknown): string | null {
+    const message = String((error as any)?.message ?? '');
+    return ['SCHEMA_TOO_NEW', 'MIGRATION_BACKUP_FAILED'].find((code) => message.startsWith(`${code}:`)) ?? null;
+}
+
 async function tryUnlockDatabase(legacySecret: string): Promise<{ error?: string; migrated?: boolean }> {
     if (securityService.getDb()) {
         const openDb = securityService.getDb();
         databaseService.setDb(openDb);
+        // A vault left open by an earlier attempt whose upgrade failed must
+        // not be used until its schema is current (a no-op when it is).
+        try {
+            await migrateOrDetach();
+        } catch (e: any) {
+            console.error('DB Init failed:', e);
+            return { error: schemaErrorCode(e) ?? 'SYSTEM_ERROR' };
+        }
         credentialRotationService.setDb(openDb);
         credentialRotationService.reconcileInterruptedRotation();
         return {};
@@ -543,7 +572,7 @@ async function tryUnlockDatabase(legacySecret: string): Promise<{ error?: string
         databaseService.setDb(db);
 
         // Ensure schema is up to date (safe idempotent)
-        await databaseService.migrate();
+        await migrateOrDetach();
         credentialRotationService.setDb(db);
         credentialRotationService.reconcileInterruptedRotation();
         return { migrated: result.migrated };
@@ -554,6 +583,12 @@ async function tryUnlockDatabase(legacySecret: string): Promise<{ error?: string
             return { error: 'RECOVERY_REQUIRED' };
         }
         if (e.message === 'VAULT_BINDING_MISMATCH') return { error: 'VAULT_BINDING_MISMATCH' };
+        // The vault is open but its schema cannot be brought up to date.
+        const schemaError = schemaErrorCode(e);
+        if (schemaError) {
+            console.error('DB Init failed:', e);
+            return { error: schemaError };
+        }
 
         console.error('DB Init failed:', e);
         return { error: 'SYSTEM_ERROR' };

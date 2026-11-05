@@ -265,6 +265,20 @@ describe('NalamDesk Server network and auth', () => {
         expect(res.statusCode).toBe(403);
     });
 
+    it('refuses admin routes once organisation admin is removed, whatever the token role says', async () => {
+        const device = await joinComputer();
+        await db.service.saveUser({ username: 'exadmin', password: PASSWORD, role: 'admin', name: 'Ex Admin' } as any, 1);
+        db.raw.prepare(`UPDATE users SET org_admin = 0 WHERE username = 'exadmin'`).run();
+        const login = await post('/api/auth/login', { username: 'exadmin', password: PASSWORD }, { [DEVICE_HEADER]: device.deviceToken });
+        expect(login.statusCode).toBe(200);
+        const headers = { authorization: `Bearer ${login.json().token}`, [DEVICE_HEADER]: device.deviceToken };
+        expect((await server.inject({ method: 'GET', url: '/api/admin/devices', headers })).statusCode).toBe(403);
+        expect((await post('/api/admin/join-codes', { deviceName: 'Rogue' }, headers)).statusCode).toBe(403);
+        expect((await server.inject({ method: 'DELETE', url: `/api/admin/devices/${device.deviceId}`, headers })).statusCode).toBe(403);
+        const denied = db.raw.prepare(`SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'ADMIN_ROUTE_DENIED'`).get() as any;
+        expect(Number(denied.n)).toBe(3);
+    });
+
     it('answers 503 until the vault is open', async () => {
         const locked = new DatabaseService();
         const early = new ApiServer(locked, os.tmpdir(), undefined, undefined, { requireDevice: true });

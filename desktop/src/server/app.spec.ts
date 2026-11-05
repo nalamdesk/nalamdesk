@@ -8,7 +8,7 @@ const JWT_SECRET = vi.hoisted(() => {
 
 import * as jwt from 'jsonwebtoken';
 import * as os from 'node:os';
-import { ApiServer } from './app';
+import { ApiServer, readableError } from './app';
 import { FideliusService } from '../main/services/FideliusService';
 import { AbdmRelayService } from '../main/services/AbdmRelayService';
 import { AbdmAbhaService } from '../main/services/AbdmAbhaService';
@@ -355,9 +355,10 @@ describe('HTTP /api/ipc ABDM flows for LAN clients', () => {
         const denied = await postIpc('abdmHipLinkVisit', [{ visitId: 3 }], 'receptionist');
         expect(denied.statusCode).toBe(403);
 
-        // Mock mode refuses; the LAN answer never carries the detail.
+        // Mock mode refuses, with the message the desktop app would show.
         const mock = await postIpc('abdmHipLinkVisit', [{ visitId: 3 }], 'doctor');
         expect(mock.statusCode).toBe(500);
+        expect(mock.json().error).not.toBe('Internal server error');
 
         const linkVisit = vi.fn().mockResolvedValue({ status: 'linking' });
         const relay = new AbdmRelayService({ getSettings: () => ({}) });
@@ -520,6 +521,34 @@ describe('HTTP /api/ipc billing ledger over LAN', () => {
         const denied = await postIpc('refundPayment', [{ paymentId: 3, reason: 'x' }], 'doctor');
         expect(denied.statusCode).toBe(403);
         expect(db.refundPayment).not.toHaveBeenCalled();
+    });
+
+    it('shows refusals written for people, and hides internal errors', async () => {
+        db.recordPayment.mockImplementationOnce(() => { throw new Error('Payment exceeds the amount due (300).'); });
+        const refused = await postIpc('recordPayment', [{ invoiceId: 2, amount: 900 }]);
+        expect(refused.statusCode).toBe(500);
+        expect(refused.json()).toEqual({ error: 'Payment exceeds the amount due (300).' });
+
+        db.recordPayment.mockImplementationOnce(() => { throw new TypeError("Cannot read properties of undefined (reading 'id')"); });
+        expect((await postIpc('recordPayment', [{ invoiceId: 2, amount: 1 }])).json()).toEqual({ error: 'Internal server error' });
+
+        db.recordPayment.mockImplementationOnce(() => {
+            throw Object.assign(new Error('UNIQUE constraint failed: payments.client_key'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+        });
+        expect((await postIpc('recordPayment', [{ invoiceId: 2, amount: 1 }])).json()).toEqual({ error: 'Internal server error' });
+    });
+});
+
+describe('readableError', () => {
+    it('passes plain messages and withholds driver, system and programming errors', () => {
+        expect(readableError(new Error('Transfer endpoint must be an https URL.'))).toBe('Transfer endpoint must be an https URL.');
+        expect(readableError(new TypeError('x is not a function'))).toBeNull();
+        expect(readableError(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }))).toBeNull();
+        expect(readableError(new Error('no such column: foo'))).toBeNull();
+        expect(readableError(new Error('x'.repeat(501)))).toBeNull();
+        expect(readableError('a string')).toBeNull();
+        class SqliteError extends Error { }
+        expect(readableError(new SqliteError('database is locked'))).toBeNull();
     });
 });
 

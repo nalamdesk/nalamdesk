@@ -91,7 +91,7 @@ describe.skipIf(!process.versions.electron)('CredentialRotationService SQLCipher
         expect(security.getDb().prepare('SELECT value FROM preserved_clinic_data').get())
             .toEqual({ value: 'preserved' });
         expect(await database.validateUser('admin', 'admin-current')).toMatchObject({ success: true });
-        expect(security.getDb().pragma('user_version', { simple: true })).toBe(11);
+        expect(security.getDb().pragma('user_version', { simple: true })).toBe(DatabaseService.latestSchemaVersion());
     });
 
     it.each(['after-prepare', 'after-apply'] as CredentialRotationStep[])(

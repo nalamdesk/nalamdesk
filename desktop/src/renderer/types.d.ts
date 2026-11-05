@@ -153,14 +153,6 @@ declare global {
                 retireMedicine: (id: number) => Promise<any>;
                 replaceConditionMedPresets: (input: { conditionId: number; lines: any[] }) => Promise<any[]>;
             };
-            drive: {
-                isAuthenticated: () => Promise<boolean>;
-                disconnect: () => Promise<{ success: boolean; error?: string }>;
-                authenticate: (credentials: { clientId: string, clientSecret: string }) => Promise<any>;
-                backup: () => Promise<{ success: boolean; error?: string }>;
-                restore: (fileId: string) => Promise<{ success: boolean; restartRequired?: boolean; error?: string }>;
-                listBackups: () => Promise<any[]>;
-            };
             updates: {
                 check: (opts?: { source?: 'startup' | 'manual' }) => Promise<any>;
                 download: () => Promise<any>;

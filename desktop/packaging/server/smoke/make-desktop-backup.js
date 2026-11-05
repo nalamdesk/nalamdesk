@@ -44,7 +44,7 @@ async function main() {
         const code = await new ProvisioningService(security, database)
             .provision(password, { clinic_name: 'Smoke Test Clinic' }, dbPath, dir);
         database.setDb(security.getDb());
-        const backups = new BackupService(database, undefined, security, dir, { appVersion: 'smoke' });
+        const backups = new BackupService(database, security, dir, { appVersion: 'smoke' });
         await backups.createBackupBundle(bundlePath);
         security.closeDb();
         fs.writeFileSync(path.join(outDir, 'code'), `${code}\n`, { mode: 0o600 });

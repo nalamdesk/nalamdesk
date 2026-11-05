@@ -7,7 +7,6 @@ import type { DeviceKeyStore } from './DeviceKeyStore';
 import { SecurityService } from './SecurityService';
 import { DatabaseService } from './DatabaseService';
 import { BackupService } from './BackupService';
-import type { GoogleDriveService } from './GoogleDriveService';
 
 class BackupIntegrationStore implements DeviceKeyStore {
     constructor(private mask: number) { }
@@ -19,7 +18,6 @@ class BackupIntegrationStore implements DeviceKeyStore {
 describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration', () => {
     let root: string;
     let bundle: string;
-    const drive = { isAuthenticated: vi.fn(() => false), uploadFile: vi.fn() } as unknown as GoogleDriveService;
 
     beforeEach(() => {
         root = fs.mkdtempSync(path.join(os.tmpdir(), 'nalamdesk-backup-integration-'));
@@ -39,7 +37,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
     }
 
     async function makeBundle(source: Awaited<ReturnType<typeof vault>>) {
-        await new BackupService(source.database, drive, source.security, source.directory, { appVersion: 'integration' })
+        await new BackupService(source.database, source.security, source.directory, { appVersion: 'integration' })
             .createBackupBundle(bundle);
     }
 
@@ -77,7 +75,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const targetStore = new BackupIntegrationStore(0x72);
         const targetSecurity = new SecurityService(targetStore);
         const targetDatabase = new DatabaseService();
-        const service = new BackupService(targetDatabase, drive, targetSecurity, targetDirectory, {
+        const service = new BackupService(targetDatabase, targetSecurity, targetDirectory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore), onRestoreCommitted: vi.fn()
         });
         await service.restoreLocalBackup(bundle, source.recoveryCode);
@@ -95,7 +93,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         await makeBundle(source); source.security.closeDb();
         const targetDirectory = path.join(root, 'target'); fs.mkdirSync(targetDirectory);
         const targetStore = new BackupIntegrationStore(0x44);
-        const service = new BackupService(new DatabaseService(), drive, new SecurityService(targetStore), targetDirectory, {
+        const service = new BackupService(new DatabaseService(), new SecurityService(targetStore), targetDirectory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore), onRestoreCommitted: vi.fn()
         });
         await expect(service.restoreLocalBackup(bundle, 'WRONG-CODE')).rejects.toThrow('INVALID_RECOVERY_CODE');
@@ -113,7 +111,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const current = await vault(path.join(root, 'target'), targetStore, 'current-preserved');
         const oldDatabase = fs.readFileSync(current.dbPath);
         const oldConfig = fs.readFileSync(path.join(current.directory, 'security.json'));
-        const service = new BackupService(current.database, drive, current.security, current.directory, {
+        const service = new BackupService(current.database, current.security, current.directory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore), onRestoreCommitted: vi.fn()
         });
         await expect(service.restoreLocalBackup(bundle, source.recoveryCode)).rejects
@@ -135,10 +133,10 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
             }),
             getDb: () => second.security.getDb(), getDbPath: () => second.dbPath
         } as unknown as SecurityService;
-        await new BackupService(second.database, drive, mismatchedSecurity, second.directory).createBackupBundle(bundle);
+        await new BackupService(second.database, mismatchedSecurity, second.directory).createBackupBundle(bundle);
         const targetDirectory = path.join(root, 'target'); fs.mkdirSync(targetDirectory);
         const targetStore = new BackupIntegrationStore(0x50);
-        const service = new BackupService(new DatabaseService(), drive, new SecurityService(targetStore), targetDirectory, {
+        const service = new BackupService(new DatabaseService(), new SecurityService(targetStore), targetDirectory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore), onRestoreCommitted: vi.fn()
         });
         await expect(service.restoreLocalBackup(bundle, second.recoveryCode)).rejects.toThrow('VAULT_BINDING_MISMATCH');
@@ -151,7 +149,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         await makeBundle(incoming); incoming.security.closeDb();
         const targetStore = new BackupIntegrationStore(0x62);
         const current = await vault(path.join(root, 'target'), targetStore, 'current');
-        const service = new BackupService(current.database, drive, current.security, current.directory, {
+        const service = new BackupService(current.database, current.security, current.directory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore),
             onRestoreCommitted: vi.fn(),
             onStep: step => { if (step === 'restore-after-config-replace') throw new Error('forced interruption'); }
@@ -166,7 +164,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const recoveryStore = new BackupIntegrationStore(0x73);
         const recoverySecurity = new SecurityService(recoveryStore);
         const recoveryDatabase = new DatabaseService();
-        await new BackupService(recoveryDatabase, drive, recoverySecurity, recoveryDirectory, {
+        await new BackupService(recoveryDatabase, recoverySecurity, recoveryDirectory, {
             createIsolatedSecurityService: () => new SecurityService(recoveryStore), onRestoreCommitted: vi.fn()
         }).restoreLocalBackup(path.join(current.directory, 'backups', snapshots[0]), current.recoveryCode);
         expect(recoverySecurity.getDb().prepare('SELECT value FROM clinical_backup_test').get()).toEqual({ value: 'current' });
@@ -184,7 +182,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         liveDb.prepare('INSERT INTO clinical_backup_test (value) VALUES (?)').run('committed-in-wal');
         expect(fs.existsSync(`${current.dbPath}-wal`)).toBe(true);
 
-        const service = new BackupService(current.database, drive, current.security, current.directory, {
+        const service = new BackupService(current.database, current.security, current.directory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore),
             onRestoreCommitted: vi.fn(),
             onStep: step => { if (step === 'restore-after-config-replace') throw new Error('forced WAL interruption'); }
@@ -201,7 +199,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const targetStore = new BackupIntegrationStore(0x75);
         const current = await vault(path.join(root, 'target-schema'), targetStore, 'current');
         let boundarySchema = 0;
-        const service = new BackupService(current.database, drive, current.security, current.directory, {
+        const service = new BackupService(current.database, current.security, current.directory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore),
             onRestoreCommitted: vi.fn(),
             onStep: step => {
@@ -225,7 +223,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const recoveryDirectory = path.join(root, 'schema-boundary-recovery'); fs.mkdirSync(recoveryDirectory);
         const recoveryStore = new BackupIntegrationStore(0x76);
         const recoverySecurity = new SecurityService(recoveryStore);
-        await new BackupService(new DatabaseService(), drive, recoverySecurity, recoveryDirectory, {
+        await new BackupService(new DatabaseService(), recoverySecurity, recoveryDirectory, {
             createIsolatedSecurityService: () => new SecurityService(recoveryStore), onRestoreCommitted: vi.fn()
         }).restoreLocalBackup(path.join(current.directory, 'backups', snapshots[0]), current.recoveryCode);
         expect(recoverySecurity.getDb().pragma('user_version', { simple: true })).toBe(boundarySchema);
@@ -240,7 +238,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const targetStore = new BackupIntegrationStore(0x78);
         const current = await vault(path.join(root, 'target-api'), targetStore, 'base-row');
         current.database.beginWork();
-        const service = new BackupService(current.database, drive, current.security, current.directory, {
+        const service = new BackupService(current.database, current.security, current.directory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore),
             onRestoreCommitted: vi.fn(),
             onStep: step => {
@@ -271,7 +269,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const recoveryDirectory = path.join(root, 'api-overlap-recovery'); fs.mkdirSync(recoveryDirectory);
         const recoveryStore = new BackupIntegrationStore(0x79);
         const recoverySecurity = new SecurityService(recoveryStore);
-        await new BackupService(new DatabaseService(), drive, recoverySecurity, recoveryDirectory, {
+        await new BackupService(new DatabaseService(), recoverySecurity, recoveryDirectory, {
             createIsolatedSecurityService: () => new SecurityService(recoveryStore), onRestoreCommitted: vi.fn()
         }).restoreLocalBackup(path.join(current.directory, 'backups', snapshots[0]), current.recoveryCode);
         expect(recoverySecurity.getDb().prepare('SELECT value FROM clinical_backup_test ORDER BY rowid').all())
@@ -284,7 +282,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         await makeBundle(incoming); incoming.security.closeDb();
         const targetStore = new BackupIntegrationStore(0x67);
         const current = await vault(path.join(root, 'target-close'), targetStore, 'base-row');
-        const service = new BackupService(current.database, drive, current.security, current.directory, {
+        const service = new BackupService(current.database, current.security, current.directory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore),
             onRestoreCommitted: vi.fn(),
             onStep: step => {
@@ -306,7 +304,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         const recoveryDirectory = path.join(root, 'close-boundary-recovery'); fs.mkdirSync(recoveryDirectory);
         const recoveryStore = new BackupIntegrationStore(0x70);
         const recoverySecurity = new SecurityService(recoveryStore);
-        await new BackupService(new DatabaseService(), drive, recoverySecurity, recoveryDirectory, {
+        await new BackupService(new DatabaseService(), recoverySecurity, recoveryDirectory, {
             createIsolatedSecurityService: () => new SecurityService(recoveryStore), onRestoreCommitted: vi.fn()
         }).restoreLocalBackup(path.join(current.directory, 'backups', snapshots[0]), current.recoveryCode);
         expect(recoverySecurity.getDb().prepare('SELECT value FROM clinical_backup_test ORDER BY rowid').all())
@@ -319,7 +317,7 @@ describe.skipIf(!process.versions.electron)('BackupService SQLCipher integration
         await makeBundle(incoming); incoming.security.closeDb();
         const targetStore = new BackupIntegrationStore(0x69);
         const current = await vault(path.join(root, 'target-reopen'), targetStore, 'still-live');
-        const service = new BackupService(current.database, drive, current.security, current.directory, {
+        const service = new BackupService(current.database, current.security, current.directory, {
             createIsolatedSecurityService: () => new SecurityService(targetStore),
             onRestoreCommitted: vi.fn(),
             onStep: step => { if (step === 'restore-after-snapshot') throw new Error('forced pre-replacement failure'); }

@@ -61,13 +61,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // General Settings
   settings = {
     clinic_name: '',
-    drive_client_id: '',
-    drive_client_secret: '',
     local_backup_path: '',
     backup_schedule: '13:00',
-    cloud_backup_schedule: '13:00',
     consultation_fee: 0
   };
+  /** The app's own backup folder; choosing it means "no copy folder". */
+  defaultBackupPath = '';
+  /** Shown to admins who had set up the retired Google Drive backup. */
+  driveRetiredNotice = false;
   settingsSaved = false;
   isElectron = !!(window as any).electron;
 
@@ -106,7 +107,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
   isBackupLoading = false;
   message = '';
   success = false;
-  backups: any[] = [];
 
   // Local backup health (Settings → Data Redundancy)
   backupHealth: any = null;
@@ -411,10 +411,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.loadSettings();
     void this.profileService.load();
     this.loadAppVersion();
-    if (this.isElectron) {
-      this.listBackups();
-      this.checkDriveStatus();
-    }
+    if (this.isElectron) void this.loadDefaultBackupPath();
     if (this.canManageBackups) void this.loadBackupHealth();
     if (!this.isElectron && this.currentUser?.role === 'admin') this.loadServerBackups().catch(() => undefined);
     if (this.currentUser?.role === 'admin') {
@@ -483,11 +480,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.ngZone.run(() => {
         if (s) {
           this.settings.clinic_name = s.clinic_name || '';
-          this.settings.drive_client_id = s.drive_client_id || '';
-          this.settings.drive_client_secret = s.drive_client_secret || '';
           this.settings.local_backup_path = s.local_backup_path || '';
           this.settings.backup_schedule = s.backup_schedule || '13:00';
-          this.settings.cloud_backup_schedule = s.cloud_backup_schedule || '13:00';
+          this.driveRetiredNotice = !!s.drive_client_id;
         }
       });
     } catch (e) { console.error(e); }
@@ -504,17 +499,38 @@ export class SettingsComponent implements OnInit, OnDestroy {
     } catch (e) { console.error(e); }
   }
 
+  /** Stops copying backups to a folder: they stay in the app's own folder. */
   async useDefaultBackupPath() {
     if (!this.isElectron) return;
     try {
+      // The app's own folder, not empty: empty would show first-run backup setup again.
+      const path = this.defaultBackupPath || await window.electron.backup.useDefaultPath();
+      if (!path) return;
+      this.ngZone.run(() => { this.defaultBackupPath = path; this.settings.local_backup_path = path; });
+      await this.saveSettings();
+    } catch (e) { console.error(e); }
+  }
+
+  /** True when backups are also copied to a folder an admin chose. */
+  get hasBackupCopyFolder(): boolean {
+    const chosen = (this.settings.local_backup_path || '').trim();
+    // Older setups saved a placeholder name rather than a folder.
+    const absolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(chosen);
+    return absolute && chosen !== this.defaultBackupPath;
+  }
+
+  private async loadDefaultBackupPath() {
+    try {
       const path = await window.electron.backup.useDefaultPath();
-      if (path) {
-        this.ngZone.run(() => this.settings.local_backup_path = path); // Update UI
-        // We should also clear it in the DB settings so it falls back to default logic? 
-        // Or explicitly save the default path? The requirement says "Use Default Location".
-        // Saving the explicit default path is safer to ensure consistency.
-        this.saveSettings();
-      }
+      this.ngZone.run(() => this.defaultBackupPath = path || '');
+    } catch (e) { console.error(e); }
+  }
+
+  /** Hides the retired-Drive notice for good (the stored client ID is its marker). */
+  async dismissDriveRetiredNotice() {
+    this.driveRetiredNotice = false;
+    try {
+      await this.dataService.invoke('saveSettings', { drive_client_id: '' });
     } catch (e) { console.error(e); }
   }
 
@@ -1208,127 +1224,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }
   }
 
-  async connectDrive() {
-    if (!this.isElectron) return;
-    this.isLoading = true;
-    this.message = '';
-    try {
-      const res = await window.electron.drive.authenticate({
-        clientId: this.settings.drive_client_id,
-        clientSecret: this.settings.drive_client_secret
-      }) as any;
-      this.ngZone.run(() => {
-        this.isLoading = false;
-        if (res && res.success) {
-          this.success = true;
-          this.message = 'Connected successfully';
-          this.listBackups();
-        } else {
-          this.success = false;
-          this.message = res.error || 'Connection failed';
-        }
-      });
-    } catch (error: any) {
-      this.ngZone.run(() => {
-        this.isLoading = false;
-        this.success = false;
-        this.message = error.message || 'An unexpected error occurred';
-      });
-    }
-  }
 
-  async disconnectDrive() {
-    const confirmed = await this.dialogService?.open({
-      title: 'Disconnect Google Drive?',
-      message: 'Automated backups will stop.',
-      type: 'confirm',
-      confirmText: 'Disconnect',
-      cancelText: 'Keep'
-    });
-    if (!confirmed) return;
-    // We should probably have a backend method to clear tokens, but for now we can just clear local state 
-    // and maybe save empty tokens to settings? 
-    // Ideally, we should add a drive:disconnect IPC. 
-    // For now, let's just clear the success flag and maybe warn user?
-    // Actually, let's just clear the settings on backend if possible, or just UI for now.
-    // Wait, let's add a proper disconnect IPC handler in the next step.
-    // For now, I'll just add the method stub to be filled.
-
-    try {
-      await window.electron.drive.disconnect(); // Need to add this
-      this.ngZone.run(() => {
-        this.success = false;
-        this.message = 'Disconnected';
-        this.backups = [];
-      });
-    } catch (e) {
-      console.error('Disconnect failed', e);
-    }
-  }
-  async listBackups() {
-    if (!this.isElectron) return;
-    const files = await window.electron.drive.listBackups();
-    this.ngZone.run(() => this.backups = files || []);
-  }
-  async backupNow() {
-    if (!this.isElectron) return;
-    this.isBackupLoading = true;
-    try {
-      const res = await window.electron.drive.backup() as any;
-      this.ngZone.run(() => {
-        this.isBackupLoading = false;
-        if (res.success) {
-          this.toastService?.success('Drive backup finished.', 'Backup Complete');
-          this.listBackups();
-        } else void this.dialogService?.open({
-          title: 'Backup failed',
-          message: 'Failed: ' + res.error,
-          type: 'error'
-        });
-      });
-    } catch { this.isBackupLoading = false; }
-  }
-  async restore(id: string) {
-    const confirmed = await this.dialogService?.open({
-      title: 'Restore this backup?',
-      message: 'OVERWRITE WARNING: this replaces the current database with the backup. This cannot be undone.',
-      type: 'confirm',
-      confirmText: 'Restore',
-      cancelText: 'Cancel'
-    });
-    if (!confirmed) return;
-
-    this.isBackupLoading = true; // Use existing loading flag or add new one
-    this.message = 'Restoring backup... The app will restart automatically.';
-
-    try {
-      const res = await window.electron.drive.restore(id);
-      if (res.success && res.restartRequired) {
-        this.ngZone.run(() => {
-          this.toastService?.success('The application will now restart.', 'Restore Successful');
-          // In case main process doesn't kill it immediately (though it should)
-        });
-      } else {
-        this.ngZone.run(() => {
-          this.isBackupLoading = false;
-          void this.dialogService?.open({
-            title: 'Restore failed',
-            message: 'Restore Failed: ' + (res.error || 'Unknown Error'),
-            type: 'error'
-          });
-        });
-      }
-    } catch (e: any) {
-      this.ngZone.run(() => {
-        this.isBackupLoading = false;
-        void this.dialogService?.open({
-          title: 'Restore failed',
-          message: 'Restore Error: ' + e.message,
-          type: 'error'
-        });
-      });
-    }
-  }
 
   async selectRestoreBundle() {
     if (!this.isElectron) return;
@@ -1396,28 +1292,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }
   }
 
-  async checkDriveStatus() {
-    if (!this.isElectron) return;
-    try {
-      const isAuth = await window.electron.drive.isAuthenticated();
-      this.ngZone.run(() => {
-        if (isAuth) {
-          this.success = true;
-          this.message = 'Connected successfully';
-          this.listBackups();
-        }
-      });
-    } catch (e) {
-      console.error('Failed to check drive status', e);
-    }
-  }
 
-  openDriveConsole(e: Event) {
-    e.preventDefault();
-    if (window.electron && window.electron.utils) {
-      window.electron.utils.openExternal('https://console.cloud.google.com/');
-    }
-  }
 
   async openSetupGuide(e: Event) {
     e.preventDefault();

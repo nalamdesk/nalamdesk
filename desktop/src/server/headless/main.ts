@@ -3,7 +3,7 @@ import { DatabaseService } from '../../main/services/DatabaseService';
 import { ProvisioningService } from '../../main/services/ProvisioningService';
 import { SecurityService } from '../../main/services/SecurityService';
 import * as path from 'path';
-import { BackupService, NO_UPLOADER } from '../../main/services/BackupService';
+import { BackupService } from '../../main/services/BackupService';
 import type { DeviceKeyStore } from '../../main/services/DeviceKeyStore';
 import { buildIdentityPath, readBuildIdentityFile } from '../../main/appVersionInfo';
 import { getCloudServiceUrl } from '../../shared/runtime-config';
@@ -52,7 +52,7 @@ const appVersion = buildIdentity?.version ?? process.env['npm_package_version'] 
 
 function createBackups(vault: SecurityService, database: DatabaseService, store: DeviceKeyStore, config: ServerConfig): BackupService {
     // Backups live in the data directory, with an optional off-site copy (#216).
-    return new BackupService(database, NO_UPLOADER, vault, config.dataDir, {
+    return new BackupService(database, vault, config.dataDir, {
         appVersion,
         offsite: config.offsiteBackup ? createOffsiteTarget(config.offsiteBackup) : null,
         // Restore validation must not reconfigure or close the live vault.

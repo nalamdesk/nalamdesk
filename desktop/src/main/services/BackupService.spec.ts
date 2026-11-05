@@ -4,7 +4,6 @@ import * as os from 'os';
 import * as path from 'path';
 import { BackupService, type BackupStep } from './BackupService';
 import { CronJob } from 'cron';
-import type { GoogleDriveService } from './GoogleDriveService';
 import type { SecurityService, SecurityConfigV3 } from './SecurityService';
 import { DatabaseService } from './DatabaseService';
 import { MIGRATIONS } from '../schema/migrations';
@@ -39,34 +38,31 @@ describe('BackupService recoverable bundles', () => {
     });
     afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-    function drive(): GoogleDriveService {
-        return { isAuthenticated: vi.fn(() => false), uploadFile: vi.fn() } as unknown as GoogleDriveService;
-    }
 
     it('preserves default scheduling and stops replaced jobs', () => {
         const db = database(sourceDb);
         (db.getSettings as any).mockReturnValue(null);
-        const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData);
+        const service = new BackupService(db, sourceSecurity(), sourceUserData);
         service.initAutomatedBackup();
         expect(CronJob).toHaveBeenCalledWith('0 00 13 * * *', expect.any(Function));
-        expect(cron.start).toHaveBeenCalledTimes(2);
+        expect(cron.start).toHaveBeenCalledTimes(1);
         service.scheduleLocalBackup('14:00');
-        service.scheduleCloudBackup('15:00');
+        service.scheduleLocalBackup('15:00');
         expect(cron.stop).toHaveBeenCalledTimes(2);
     });
 
-    it('preserves configured local/cloud schedules', () => {
+    it('preserves the configured schedule and ignores the retired cloud one', () => {
         const db = database(sourceDb);
         (db.getSettings as any).mockReturnValue({ backup_schedule: '02:30', cloud_backup_schedule: '03:45' });
-        new BackupService(db, drive(), sourceSecurity(), sourceUserData).initAutomatedBackup();
+        new BackupService(db, sourceSecurity(), sourceUserData).initAutomatedBackup();
         expect(CronJob).toHaveBeenCalledWith('0 30 02 * * *', expect.any(Function));
-        expect(CronJob).toHaveBeenCalledWith('0 45 03 * * *', expect.any(Function));
+        expect(CronJob).not.toHaveBeenCalledWith('0 45 03 * * *', expect.any(Function));
     });
 
     it('falls back to the default when stored schedules predate validation', () => {
         const db = database(sourceDb);
         (db.getSettings as any).mockReturnValue({ backup_schedule: '99:99', cloud_backup_schedule: null });
-        new BackupService(db, drive(), sourceSecurity(), sourceUserData).initAutomatedBackup();
+        new BackupService(db, sourceSecurity(), sourceUserData).initAutomatedBackup();
         expect(CronJob).toHaveBeenCalledWith('0 00 13 * * *', expect.any(Function));
         expect(CronJob).not.toHaveBeenCalledWith(expect.stringContaining('99'), expect.anything());
     });
@@ -75,7 +71,7 @@ describe('BackupService recoverable bundles', () => {
         const db = database(sourceDb) as any;
         db.saveSettings = vi.fn();
         (db.getSettings as any).mockReturnValue({ backup_schedule: '99:99' });
-        new BackupService(db, drive(), sourceSecurity(), sourceUserData).initAutomatedBackup();
+        new BackupService(db, sourceSecurity(), sourceUserData).initAutomatedBackup();
         expect(db.saveSettings).toHaveBeenCalledWith({ backup_schedule: '13:00' });
         expect(db.logAudit).toHaveBeenCalledWith('BACKUP_ERROR', 'system', 0, 0,
             expect.stringContaining('reset to 13:00'));
@@ -83,7 +79,7 @@ describe('BackupService recoverable bundles', () => {
 
     it('keeps the running job when a reschedule expression is invalid', () => {
         const db = database(sourceDb);
-        const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData);
+        const service = new BackupService(db, sourceSecurity(), sourceUserData);
         service.scheduleLocalBackup('14:00');
         const stopsBefore = (cron.stop as any).mock.calls.length;
         vi.mocked(CronJob).mockImplementationOnce(((expr: unknown) => {
@@ -131,7 +127,7 @@ describe('BackupService recoverable bundles', () => {
             const db = database(sourceDb);
             (db.getSettings as any).mockReturnValue({ backup_schedule: '13:00' });
             (db as any).getAuditLogs = vi.fn(() => audits);
-            return new BackupService(db, drive(), sourceSecurity(), sourceUserData);
+            return new BackupService(db, sourceSecurity(), sourceUserData);
         }
 
         it('reports a healthy recent backup with free space', async () => {
@@ -167,32 +163,31 @@ describe('BackupService recoverable bundles', () => {
             const db = database(sourceDb);
             (db.getSettings as any).mockReturnValue({ backup_schedule: '13:00' });
             (db as any).getAuditLogs = vi.fn(() => []);
-            const service = new BackupService(db, drive(), sourceSecurity(), fileAsDir);
+            const service = new BackupService(db, sourceSecurity(), fileAsDir);
             const health = await service.getLocalBackupHealth();
             expect(health.writable).toBe(false);
             expect(health.enabled).toBe(false);
         });
     });
 
-    it('uploads cloud independently when local bundle creation fails', async () => {
+    it('throws when the local bundle cannot be written, and copies nothing off-site', async () => {
         const db = database(sourceDb);
         (db.backupDatabase as any).mockRejectedValue(new Error('local disk full'));
-        const cloud = { isAuthenticated: vi.fn(() => true), uploadFile: vi.fn(async () => undefined) } as unknown as GoogleDriveService;
-        const security = sourceSecurity();
-        const service = new BackupService(db, cloud, security, sourceUserData);
+        const uploadFile = vi.fn(async () => undefined);
+        const service = new BackupService(db, sourceSecurity(), sourceUserData, { offsite: { description: 'folder X', uploadFile } });
         await expect(service.performBackup()).rejects.toThrow('local disk full');
-        expect(cloud.uploadFile).toHaveBeenCalledWith(sourceDb, expect.stringContaining('nalamdesk-cloud-backup-'));
+        expect(uploadFile).not.toHaveBeenCalled();
     });
 
-    it('skips cloud when unauthenticated and attempts it on quit when authenticated', async () => {
-        const db = database(sourceDb);
-        const cloud = { isAuthenticated: vi.fn(() => false), uploadFile: vi.fn(async () => undefined) } as unknown as GoogleDriveService;
-        const service = new BackupService(db, cloud, sourceSecurity(), sourceUserData);
+    it('copies to an off-site target set after construction, and stops when it is cleared', async () => {
+        const uploadFile = vi.fn(async () => undefined);
+        const service = new BackupService(database(sourceDb), sourceSecurity(), sourceUserData);
+        service.setOffsiteTarget({ description: 'folder X', uploadFile });
         await service.performBackup();
-        expect(cloud.uploadFile).not.toHaveBeenCalled();
-        (cloud.isAuthenticated as any).mockReturnValue(true);
+        expect(uploadFile).toHaveBeenCalledWith(expect.stringContaining('nalamdesk-auto-backup-'), expect.stringMatching(/\.ndbackup$/));
+        service.setOffsiteTarget(null);
         await service.performBackupOnQuit();
-        expect(cloud.uploadFile).toHaveBeenCalledOnce();
+        expect(uploadFile).toHaveBeenCalledOnce();
     });
     describe('off-site copy', () => {
         it('copies each new bundle to the off-site target and records it', async () => {
@@ -200,7 +195,7 @@ describe('BackupService recoverable bundles', () => {
             const uploadFile = vi.fn(async (_file: string, _name: string) => {
                 expect(fs.existsSync(_file)).toBe(true);
             });
-            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+            const service = new BackupService(db, sourceSecurity(), sourceUserData,
                 { offsite: { description: 'folder /mnt/usb', uploadFile } });
             await service.performBackup();
             expect(uploadFile).toHaveBeenCalledOnce();
@@ -215,7 +210,7 @@ describe('BackupService recoverable bundles', () => {
         it('keeps the local backup and records the failure when the copy fails', async () => {
             const db = database(sourceDb);
             const uploadFile = vi.fn(async () => { throw new Error('share not mounted'); });
-            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+            const service = new BackupService(db, sourceSecurity(), sourceUserData,
                 { offsite: { description: 'folder /mnt/nas', uploadFile } });
             await expect(service.performBackup()).resolves.toBeUndefined();
             expect(db.logAudit).toHaveBeenCalledWith('BACKUP_LOCAL', 'system', 0, 0, expect.any(String));
@@ -228,7 +223,7 @@ describe('BackupService recoverable bundles', () => {
             const db = database(sourceDb);
             (db.backupDatabase as any).mockRejectedValue(new Error('local disk full'));
             const uploadFile = vi.fn(async () => undefined);
-            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+            const service = new BackupService(db, sourceSecurity(), sourceUserData,
                 { offsite: { description: 'folder /mnt/usb', uploadFile } });
             await expect(service.performBackup()).rejects.toThrow('local disk full');
             expect(uploadFile).not.toHaveBeenCalled();
@@ -241,7 +236,7 @@ describe('BackupService recoverable bundles', () => {
                 { action: 'BACKUP_OFFSITE_ERROR', details: 'bucket refused', timestamp: '2026-03-11 13:00:00' },
                 { action: 'BACKUP_OFFSITE', details: 'copied', timestamp: '2026-03-10 13:00:00' }
             ]);
-            const service = new BackupService(db, drive(), sourceSecurity(), sourceUserData,
+            const service = new BackupService(db, sourceSecurity(), sourceUserData,
                 { offsite: { description: 'S3 bucket clinic at s3.example.com', uploadFile: vi.fn() } });
             const health = await service.getLocalBackupHealth(new Date('2026-03-12T12:00:00'));
             expect(health.offsite).toEqual({
@@ -257,7 +252,7 @@ describe('BackupService recoverable bundles', () => {
         it('reports no off-site section when none is configured', async () => {
             const db = database(sourceDb);
             (db as any).getAuditLogs = vi.fn(() => []);
-            const health = await new BackupService(db, drive(), sourceSecurity(), sourceUserData).getLocalBackupHealth();
+            const health = await new BackupService(db, sourceSecurity(), sourceUserData).getLocalBackupHealth();
             expect(health.offsite).toBeNull();
         });
     });
@@ -291,7 +286,7 @@ describe('BackupService recoverable bundles', () => {
         } as unknown as SecurityService;
     }
     async function createBundle() {
-        const service = new BackupService(database(sourceDb), drive(), sourceSecurity(), sourceUserData, { appVersion: 'test' });
+        const service = new BackupService(database(sourceDb), sourceSecurity(), sourceUserData, { appVersion: 'test' });
         await service.createBackupBundle(bundle);
     }
     function targetService(options: { existing?: boolean; validatorError?: string; validatorSchema?: number;
@@ -309,7 +304,7 @@ describe('BackupService recoverable bundles', () => {
         } as unknown as SecurityService;
         const db = database(dbPath);
         const committed = vi.fn();
-        const service = new BackupService(db, drive(), live, userData, {
+        const service = new BackupService(db, live, userData, {
             createIsolatedSecurityService: () => validator('correct-code', options.validatorError, options.validatorSchema ?? 6),
             onStep: step => { if (step === options.failAt) throw new Error(`INTERRUPTED_${step}`); },
             onRestoreCommitted: committed,
@@ -334,7 +329,7 @@ describe('BackupService recoverable bundles', () => {
     it('retries short writes while creating and extracting a bundle', async () => {
         const shortWrite = (fd: number, data: Buffer, offset: number, length: number, position: number | null) =>
             fs.writeSync(fd, data, offset, Math.min(length, 3), position);
-        await new BackupService(database(sourceDb), drive(), sourceSecurity(), sourceUserData, { write: shortWrite })
+        await new BackupService(database(sourceDb), sourceSecurity(), sourceUserData, { write: shortWrite })
             .createBackupBundle(bundle);
         const { service, dbPath } = targetService({ write: shortWrite });
         await expect(service.restoreLocalBackup(bundle, 'correct-code')).resolves.toMatchObject({ success: true });
@@ -347,7 +342,7 @@ describe('BackupService recoverable bundles', () => {
         ['nested KDF plaintext', { ...portable, recovery: { ...envelope, kdfParams: { ...envelope.kdfParams, password: 'secret' } } }]
     ])('refuses creation metadata containing a forbidden %s field', async (_label, injected) => {
         const security = { ...sourceSecurity(), getPortableVaultMetadata: vi.fn(() => injected) } as unknown as SecurityService;
-        await expect(new BackupService(database(sourceDb), drive(), security, sourceUserData)
+        await expect(new BackupService(database(sourceDb), security, sourceUserData)
             .createBackupBundle(bundle)).rejects.toThrow('BACKUP_CONTAINS_FORBIDDEN_METADATA');
         expect(fs.existsSync(bundle)).toBe(false);
     });
@@ -356,7 +351,7 @@ describe('BackupService recoverable bundles', () => {
         const security = { ...sourceSecurity(), getPortableVaultMetadata: vi.fn(() => ({
             ...portable, transitionRecovery: { ...envelope, purpose: 'wrong-purpose' }
         })) } as unknown as SecurityService;
-        await expect(new BackupService(database(sourceDb), drive(), security, sourceUserData)
+        await expect(new BackupService(database(sourceDb), security, sourceUserData)
             .createBackupBundle(bundle)).rejects.toThrow('INVALID_PORTABLE_RECOVERY_ENVELOPE');
     });
 
@@ -429,7 +424,7 @@ describe('BackupService recoverable bundles', () => {
     it('rejects an unlocked database newer than this application supports', async () => {
         const future = Math.max(...MIGRATIONS.map(item => item.version)) + 1;
         const futureSecurity = { ...sourceSecurity(), getDb: vi.fn(() => ({ pragma: vi.fn(() => future) })) } as SecurityService;
-        await new BackupService(database(sourceDb), drive(), futureSecurity, sourceUserData).createBackupBundle(bundle);
+        await new BackupService(database(sourceDb), futureSecurity, sourceUserData).createBackupBundle(bundle);
         const { service } = targetService({ validatorSchema: future });
         await expect(service.restoreLocalBackup(bundle, 'correct-code')).rejects.toThrow('BACKUP_SCHEMA_VERSION_UNSUPPORTED');
     });
@@ -449,7 +444,7 @@ describe('BackupService recoverable bundles', () => {
             closeDb: vi.fn(),
             initializeDevice: vi.fn(async () => ({}))
         } as unknown as SecurityService;
-        const interrupted = new BackupService(database(dbPath), drive(), live, userData, {
+        const interrupted = new BackupService(database(dbPath), live, userData, {
             createIsolatedSecurityService: () => validator(),
             onStep: step => {
                 if (step === 'restore-before-live-close') schemaVersion = 7;
@@ -483,7 +478,7 @@ describe('BackupService recoverable bundles', () => {
             initializeDevice: vi.fn(async () => ({}))
         } as unknown as SecurityService;
         const overlapping: Error[] = [];
-        const interrupted = new BackupService(db, drive(), live, userData, {
+        const interrupted = new BackupService(db, live, userData, {
             createIsolatedSecurityService: () => validator(),
             onStep: step => {
                 if (step === 'restore-after-stage-validation') {
@@ -520,7 +515,7 @@ describe('BackupService recoverable bundles', () => {
             closeDb: vi.fn(),
             initializeDevice: vi.fn(async () => ({}))
         } as unknown as SecurityService;
-        const service = new BackupService(db, drive(), live, userData, {
+        const service = new BackupService(db, live, userData, {
             createIsolatedSecurityService: () => validator(),
             drainTimeoutMs: 20,
             onRestoreCommitted: vi.fn()
@@ -547,7 +542,7 @@ describe('BackupService recoverable bundles', () => {
             closeDb: vi.fn(),
             initializeDevice: vi.fn(async () => ({}))
         } as unknown as SecurityService;
-        const service = new BackupService(db, drive(), live, userData, {
+        const service = new BackupService(db, live, userData, {
             createIsolatedSecurityService: () => validator(),
             onStep: step => { if (step === 'restore-before-live-close') throw new Error('INTERRUPTED_restore-before-live-close'); },
             onRestoreCommitted: vi.fn()
@@ -574,7 +569,7 @@ describe('BackupService recoverable bundles', () => {
             closeDb: vi.fn(() => { open = null; }),
             initializeDevice: vi.fn(async () => { throw new Error('REOPEN_FAILED'); })
         } as unknown as SecurityService;
-        const service = new BackupService(db, drive(), live, userData, {
+        const service = new BackupService(db, live, userData, {
             createIsolatedSecurityService: () => validator(),
             onStep: step => { if (step === 'restore-after-snapshot') throw new Error('INTERRUPTED_restore-after-snapshot'); },
             onRestoreCommitted: vi.fn()
@@ -596,7 +591,7 @@ describe('BackupService recoverable bundles', () => {
             initializeDevice: vi.fn(async () => ({}))
         } as unknown as SecurityService;
         const committed = vi.fn();
-        const service = new BackupService(db, drive(), live, userData, {
+        const service = new BackupService(db, live, userData, {
             createIsolatedSecurityService: () => validator(),
             onRestoreCommitted: committed
         });
@@ -635,7 +630,7 @@ describe('BackupService recoverable bundles', () => {
     it('detects legacy database-only backups and reports why they are not recoverable', async () => {
         const userData = path.join(root, 'legacy'); const backups = path.join(userData, 'backups');
         fs.mkdirSync(backups, { recursive: true }); fs.writeFileSync(path.join(backups, 'nalamdesk-auto-backup-old.db'), 'legacy');
-        const service = new BackupService(database(sourceDb), drive(), sourceSecurity(), userData);
+        const service = new BackupService(database(sourceDb), sourceSecurity(), userData);
         const listed = await service.listSystemBackups();
         expect(listed[0]).toMatchObject({ format: 'legacy-database-only', recoverable: false });
         expect(listed[0].warning).toContain('wrapped-key metadata');
@@ -649,11 +644,11 @@ describe('BackupService recoverable bundles', () => {
             targetDatabase: '/tmp/attacker.db', liveConfig: '/tmp/security.json',
             databaseRollback: '/tmp/a', configRollback: '/tmp/b', hadDatabase: true, hadConfig: true
         }));
-        expect(() => new BackupService(database(sourceDb), drive(), sourceSecurity(), userData)).toThrow('RESTORE_JOURNAL_PATH_MISMATCH');
+        expect(() => new BackupService(database(sourceDb), sourceSecurity(), userData)).toThrow('RESTORE_JOURNAL_PATH_MISMATCH');
     });
 
     it('propagates regular-file fsync failures so rollback copies are never assumed durable', () => {
-        const service = new BackupService(database(sourceDb), drive(), sourceSecurity(), sourceUserData, { fsync: () => {
+        const service = new BackupService(database(sourceDb), sourceSecurity(), sourceUserData, { fsync: () => {
             const error: any = new Error('disk I/O failure'); error.code = 'EIO'; throw error;
         } }) as any;
         expect(() => service.copyDurable(sourceDb, path.join(root, 'copy.db'))).toThrow('disk I/O failure');
@@ -661,12 +656,12 @@ describe('BackupService recoverable bundles', () => {
 
     it('ignores only unsupported Windows directory fsync and propagates Windows EIO', () => {
         const unsupported: any = new Error('unsupported'); unsupported.code = 'EPERM';
-        const unsupportedService = new BackupService(database(sourceDb), drive(), sourceSecurity(), sourceUserData, {
+        const unsupportedService = new BackupService(database(sourceDb), sourceSecurity(), sourceUserData, {
             platform: 'win32', fsync: () => { throw unsupported; }
         }) as any;
         expect(() => unsupportedService.fsyncDirectory(sourceUserData)).not.toThrow();
         const io: any = new Error('I/O'); io.code = 'EIO';
-        const ioService = new BackupService(database(sourceDb), drive(), sourceSecurity(), sourceUserData, {
+        const ioService = new BackupService(database(sourceDb), sourceSecurity(), sourceUserData, {
             platform: 'win32', fsync: () => { throw io; }
         }) as any;
         expect(() => ioService.fsyncDirectory(sourceUserData)).toThrow('I/O');

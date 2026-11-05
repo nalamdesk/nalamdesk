@@ -80,6 +80,12 @@ export class DatabaseService {
         return row.role || null;
     }
 
+    /** True for an active organisation admin: the people who manage the whole server. */
+    isOrgAdmin(userId: number): boolean {
+        const row = this.db.prepare('SELECT org_admin, active FROM users WHERE id = ?').get(Number(userId)) as any;
+        return !!row && row.active !== 0 && Number(row.org_admin) === 1;
+    }
+
     /** Facilities the user can work in, with their role at each. */
     getUserFacilities(userId: number): Array<{ id: number; code: string; name: string; kind: string; role: string }> {
         const user = this.db.prepare('SELECT org_admin, active FROM users WHERE id = ?').get(Number(userId)) as any;
@@ -145,49 +151,73 @@ export class DatabaseService {
         finally { this.endWork(); }
     }
 
+    /** The schema version this build migrates to. */
+    static latestSchemaVersion(): number {
+        return MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);
+    }
+
+    /**
+     * Snapshot taken before migrating. Written to a temp file and renamed into
+     * place, so a failed snapshot never removes the previous good one; the
+     * previous snapshot is kept as `.bak.prev`.
+     */
     private async createBackup(dbName: string) {
         if (!dbName || dbName === ':memory:') return;
-
+        const fs = require('node:fs');
         const backupName = `${dbName}.bak`;
-        // Delete existing backup to prevent "incompatible source and target" errors 
-        // if the schema/key changed since the last backup.
+        const temp = `${backupName}.tmp`;
+        fs.rmSync(temp, { force: true });
+        console.log(`[DB] Backing up before migrating to ${backupName}...`);
         try {
-            const fs = require('node:fs');
-            if (fs.existsSync(backupName)) {
-                fs.unlinkSync(backupName);
-                console.log(`[DB] Deleted old backup: ${backupName}`);
+            try {
+                // VACUUM INTO needs a target that does not exist yet.
+                this.db.prepare('VACUUM INTO ?').run(temp);
+            } catch (e: any) {
+                console.warn('[DB] VACUUM INTO failed during migration backup, trying the backup API...', e);
+                fs.rmSync(temp, { force: true });
+                if (typeof this.db.backup !== 'function') throw e;
+                await this.db.backup(temp);
             }
-        } catch (e) {
-            console.warn('[DB] Failed to delete old backup:', e);
+            if (!fs.existsSync(temp) || fs.statSync(temp).size === 0) throw new Error('The backup file is empty.');
+            if (fs.existsSync(backupName)) fs.renameSync(backupName, `${backupName}.prev`);
+            fs.renameSync(temp, backupName);
+        } finally {
+            fs.rmSync(temp, { force: true });
         }
+        console.log('[DB] Pre-migration backup complete.');
+    }
 
-        console.log(`[DB] Backing up manual snapshot to ${backupName}...`);
-        // Use VACUUM INTO for encrypted DB safety
-        try {
-            this.db.prepare(`VACUUM INTO ?`).run(backupName);
-            console.log('[DB] Backup (VACUUM INTO) complete.');
-        } catch (e: any) {
-            console.warn('[DB] VACUUM INTO failed during migration backup, trying fallback...', e);
-            await this.db.backup(backupName);
-        }
+    /** True when the database holds tables, i.e. it is not a brand new file. */
+    private hasUserTables(): boolean {
+        const row = this.db.prepare(`SELECT COUNT(*) AS n FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).get() as any;
+        return Number(row?.n || 0) > 0;
     }
 
     async migrate(options: { skipBackup?: boolean } = {}) {
         if (!this.db) throw new Error('DB not initialized');
 
-        // Safety: Backup before migrating
-        if (!options.skipBackup) {
-            try {
-                await this.createBackup(this.db.name);
-            } catch (e) {
-                console.error('[DB] Backup failed! Proceeding with caution...', e);
-                // Optional: Throw if backup is critical? For now, log and proceed (or user can't login).
-            }
+        const currentVersion = Number(this.db.pragma('user_version', { simple: true }) || 0);
+        const latestVersion = DatabaseService.latestSchemaVersion();
+        console.log(`[DB] Current Schema Version: ${currentVersion} (this build: ${latestVersion})`);
+
+        // An older build must not write to a database a newer build has
+        // migrated: it does not know the newer tables and rules.
+        if (currentVersion > latestVersion) {
+            throw new Error(`SCHEMA_TOO_NEW: this database was upgraded by a newer NalamDesk (schema v${currentVersion}; this version understands up to v${latestVersion}). Install the latest NalamDesk to open it.`);
         }
 
-        // Check Version
-        const currentVersion = this.db.pragma('user_version', { simple: true });
-        console.log(`[DB] Current Schema Version: ${currentVersion}`);
+        const pending = currentVersion < latestVersion;
+        // Safety: back up before changing the schema. Without a backup the
+        // upgrade does not run, so a failed migration always has a way back.
+        if (pending && !options.skipBackup && this.hasUserTables()) {
+            try {
+                await this.createBackup(this.db.name);
+            } catch (e: any) {
+                console.error('[DB] Pre-migration backup failed; not migrating.', e);
+                throw new Error(`MIGRATION_BACKUP_FAILED: could not back up the database before upgrading it (${e?.message ?? e}). Free some disk space and start NalamDesk again.`);
+            }
+        }
 
         // Transactional Migration
         const runMigrations = this.db.transaction(() => {
@@ -200,12 +230,14 @@ export class DatabaseService {
             }
         });
 
-        try {
-            runMigrations();
-            console.log(`[DB] Migration check complete. Version: ${this.db.pragma('user_version', { simple: true })}`);
-        } catch (err) {
-            console.error('[DB] MIGRATION FAILED! Rolling back transaction.', err);
-            throw err; // Critical failure
+        if (pending) {
+            try {
+                runMigrations();
+                console.log(`[DB] Migration complete. Version: ${this.db.pragma('user_version', { simple: true })}`);
+            } catch (err) {
+                console.error('[DB] MIGRATION FAILED! Rolling back transaction.', err);
+                throw err; // Critical failure
+            }
         }
         this.repairMissingMrns();
     }

@@ -516,10 +516,24 @@ ipcMain.handle('clipboard:writeText', (event, text) => {
     return true;
 });
 
+/** Sign-in error code for a schema that cannot be brought up to date, or null. */
+function schemaErrorCode(error: unknown): string | null {
+    const message = String((error as any)?.message ?? '');
+    return ['SCHEMA_TOO_NEW', 'MIGRATION_BACKUP_FAILED'].find((code) => message.startsWith(`${code}:`)) ?? null;
+}
+
 async function tryUnlockDatabase(legacySecret: string): Promise<{ error?: string; migrated?: boolean }> {
     if (securityService.getDb()) {
         const openDb = securityService.getDb();
         databaseService.setDb(openDb);
+        // A vault left open by an earlier attempt whose upgrade failed must
+        // not be used until its schema is current (a no-op when it is).
+        try {
+            await databaseService.migrate();
+        } catch (e: any) {
+            console.error('DB Init failed:', e);
+            return { error: schemaErrorCode(e) ?? 'SYSTEM_ERROR' };
+        }
         credentialRotationService.setDb(openDb);
         credentialRotationService.reconcileInterruptedRotation();
         return {};
@@ -554,6 +568,12 @@ async function tryUnlockDatabase(legacySecret: string): Promise<{ error?: string
             return { error: 'RECOVERY_REQUIRED' };
         }
         if (e.message === 'VAULT_BINDING_MISMATCH') return { error: 'VAULT_BINDING_MISMATCH' };
+        // The vault is open but its schema cannot be brought up to date.
+        const schemaError = schemaErrorCode(e);
+        if (schemaError) {
+            console.error('DB Init failed:', e);
+            return { error: schemaError };
+        }
 
         console.error('DB Init failed:', e);
         return { error: 'SYSTEM_ERROR' };

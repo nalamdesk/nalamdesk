@@ -339,6 +339,12 @@ export class LoginComponent implements OnInit {
 
   private loginErrorMessage(error?: string): string {
     if (error === 'NO_FACILITY_ACCESS') return NO_FACILITY_ACCESS_MESSAGE;
+    if (error === 'SCHEMA_TOO_NEW') {
+      return 'This data was upgraded by a newer version of NalamDesk. Install the latest NalamDesk to open it.';
+    }
+    if (error === 'MIGRATION_BACKUP_FAILED') {
+      return 'NalamDesk could not back up your data before updating it, so the update did not run. Free some disk space and try again.';
+    }
     if (this.isElectron) {
       return 'Sign-in failed. Check your credentials or use Recover Device if access is unavailable.';
     }

@@ -169,14 +169,6 @@ contextBridge.exposeInMainWorld('electron', {
         abdmAcceptShareTokenAndCheckIn: (input: any) => ipcRenderer.invoke('db:abdmAcceptShareTokenAndCheckIn', input),
         abdmSimulateShare: () => ipcRenderer.invoke('db:abdmSimulateShare')
     },
-    drive: {
-        isAuthenticated: () => ipcRenderer.invoke('drive:isAuthenticated'),
-        disconnect: () => ipcRenderer.invoke('drive:disconnect'),
-        authenticate: (credentials: { clientId: string, clientSecret: string }) => ipcRenderer.invoke('drive:authenticate', credentials),
-        backup: () => ipcRenderer.invoke('drive:backup'),
-        restore: (fileId: string) => ipcRenderer.invoke('drive:restore', fileId),
-        listBackups: () => ipcRenderer.invoke('drive:listBackups')
-    },
     updates: {
         check: (opts?: { source?: 'startup' | 'manual' }) => ipcRenderer.invoke('updates:check', opts),
         download: () => ipcRenderer.invoke('updates:download'),

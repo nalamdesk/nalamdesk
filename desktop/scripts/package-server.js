@@ -44,7 +44,7 @@ const SERVER_DEPENDENCIES = [
     'tslib'
 ];
 /** Required only by desktop modules that the server build compiles but never loads. */
-const DESKTOP_ONLY = new Set(['electron', 'electron-updater', 'googleapis', 'open']);
+const DESKTOP_ONLY = new Set(['electron', 'electron-updater', 'open']);
 const NATIVE = ['better-sqlite3-multiple-ciphers', 'argon2'];
 
 function parseArgs(argv) {

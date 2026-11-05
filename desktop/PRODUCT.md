@@ -22,7 +22,7 @@ Offline-first privacy vault. Unlike generic cloud clinic SaaS, the desktop store
 
 ## Operating Context
 
-Small-clinic rituals on Windows / macOS / Linux (`.deb` primary on Linux, AppImage secondary needing FUSE 2): first-run vault setup with recovery code, morning login (session cleared on logout), walk-in + synced-booking check-in (Today's Appointments → validate → Live Queue), 4-tier triage (`immediate`/`urgent`/`priority`/`routine`) with mandatory rationale + `queue_triage_history` audit, dual-unit vitals with abnormal badges, scribe (`author_id`) vs. attending doctor (`doctor_id`) attribution with license snapshot on encounter completion, condition presets → editable prescription lines → PDF print, evening automated daily local backup (30-day retention, optional Google Drive 10 PM) + `.ndbackup` restore gated by Recovery Code + admin password.
+Small-clinic rituals on Windows / macOS / Linux (`.deb` primary on Linux, AppImage secondary needing FUSE 2): first-run vault setup with recovery code, morning login (session cleared on logout), walk-in + synced-booking check-in (Today's Appointments → validate → Live Queue), 4-tier triage (`immediate`/`urgent`/`priority`/`routine`) with mandatory rationale + `queue_triage_history` audit, dual-unit vitals with abnormal badges, scribe (`author_id`) vs. attending doctor (`doctor_id`) attribution with license snapshot on encounter completion, condition presets → editable prescription lines → PDF print, evening automated daily local backup (30-day retention, each bundle optionally copied to a chosen backup folder such as a Drive/OneDrive sync folder or USB disk) + `.ndbackup` restore gated by Recovery Code + admin password.
 
 ## Capabilities and Constraints
 

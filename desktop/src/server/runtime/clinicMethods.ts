@@ -58,7 +58,7 @@ export interface BackupOperations {
     performBackup(): Promise<void>;
     listSystemBackups(): Promise<unknown[]>;
     getLocalBackupHealth(): Promise<unknown>;
-    updateSchedule(type: 'local' | 'cloud', time: string): void;
+    updateSchedule(type: 'local', time: string): void;
 }
 
 /** After a settings save through the API, moves the backup schedule to match. */
@@ -67,9 +67,7 @@ export function backupScheduleFollower(backups: BackupOperations): (method: stri
         if (method !== 'saveSettings') return;
         const settings = input(args);
         const local = settings['backup_schedule'];
-        const cloud = settings['cloud_backup_schedule'];
         if (BackupService.isValidScheduleTime(local)) backups.updateSchedule('local', local);
-        if (BackupService.isValidScheduleTime(cloud)) backups.updateSchedule('cloud', cloud);
     };
 }
 

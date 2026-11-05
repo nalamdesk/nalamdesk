@@ -35,6 +35,6 @@ Suite: `desktop/e2e/regression/` (real local Electron + real `ng serve` renderer
 ## Explicit non-goals (documented gaps)
 
 - Packaged-installer flows (`electron-builder` artifacts) — not launched here.
-- Real cloud sync / Google Drive / ABDM network calls — IPC surface is
+- Real cloud sync / ABDM network calls — IPC surface is
   exercised, remote round-trips are not.
 - Visual pixel diffs — live in `e2e/visual.spec.ts`, not this suite.

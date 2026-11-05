@@ -10,7 +10,6 @@ import { SessionService } from './services/SessionService';
 import { BackupService } from './services/BackupService';
 import { selectRestoreBundle } from './services/BackupFileSelection';
 import { RestoreOperationGate } from './services/RestoreOperationGate';
-import { runDriveRestore } from './services/DriveRestore';
 import { requireExistingRestoreAuthorization } from './services/RestoreAuthorization';
 import { CrashService } from './services/CrashService';
 import { SecurityService } from './services/SecurityService';
@@ -18,7 +17,7 @@ import { ElectronSafeStorageDeviceKeyStore, isDeviceCryptoFailure } from './serv
 import { abdmConfigView } from './services/AbdmRelayService';
 import { FideliusService, parseKeyMaterial } from './services/FideliusService';
 import { DatabaseService } from './services/DatabaseService';
-import { GoogleDriveService } from './services/GoogleDriveService';
+import { assertBackupFolder, backupCopyTarget as copyTargetFor } from './services/BackupFolder';
 import { CLINIC_EVENT_TOPICS, createClinicServices, type ClinicServiceEvent } from '../server/runtime/clinicServices';
 import {
     assertMethodAccess, BACKUP_IPC_CHANNELS, backupScheduleFollower, CLOUD_IPC_CHANNELS, createBackupMethods, createCloudMethods
@@ -165,7 +164,6 @@ const databaseService = new DatabaseService();
 const fideliusService = new FideliusService();
 const credentialRotationService = new CredentialRotationService();
 const provisioningService = new ProvisioningService(securityService, databaseService);
-const googleDriveService = new GoogleDriveService();
 // NalamDesk Cloud (#154, #155) and ABDM through the relay (#160): the same
 // wiring NalamDesk Server uses, run in-process for single-PC mode.
 const stampedIdentity = readBuildIdentityFile(buildIdentityPath(app.getAppPath()));
@@ -214,7 +212,7 @@ const apiServer = new ApiServer(
 const sessionService = new SessionService();
 // Desktop IPC calls run in the signed-in session's facility (#195).
 setFallbackFacility(() => sessionService.getUser()?.facilityId);
-const backupService = new BackupService(databaseService, googleDriveService, securityService, userDataPath, {
+const backupService = new BackupService(databaseService, securityService, userDataPath, {
     appVersion: app.getVersion(),
     // Restore validation must not reconfigure or close the live vault.
     createIsolatedSecurityService: () => new SecurityService(new ElectronSafeStorageDeviceKeyStore()),
@@ -336,10 +334,8 @@ function initializeApp() {
                 return callback({ cancel: false });
             }
 
-            // Allow specific Google hosts for OAuth and Fonts
+            // Allow Google Fonts
             const trustedHosts = [
-                'accounts.google.com',
-                'www.googleapis.com',
                 'fonts.googleapis.com',
                 'fonts.gstatic.com'
             ];
@@ -595,17 +591,14 @@ async function tryUnlockDatabase(legacySecret: string): Promise<{ error?: string
     }
 }
 
+/** The chosen backup copy folder as a copy target, or none (#1 of the audit). */
+const backupCopyTarget = (folder: unknown) => copyTargetFor(folder, path.join(userDataPath, 'backups'));
+
 function initializeServices(settings: any): void {
     try {
-        if (settings?.drive_client_id && settings?.drive_client_secret) {
-            googleDriveService.configureCredentials(settings.drive_client_id, settings.drive_client_secret);
-        }
-        if (settings?.drive_tokens) {
-            googleDriveService.setCredentials(JSON.parse(settings.drive_tokens));
-        }
-        if (settings?.local_backup_path || settings?.drive_tokens) {
-            backupService.initAutomatedBackup();
-        }
+        // Daily backups always run; a chosen folder also gets a copy of each.
+        backupService.setOffsiteTarget(backupCopyTarget(settings?.local_backup_path));
+        backupService.initAutomatedBackup();
         // Cloud link, mailbox drain and the daily HIU retention sweep.
         clinicServices.start();
     } catch (e) {
@@ -1279,9 +1272,7 @@ handleGuardedDb('db:saveSettings', async (_, settings) => {
     if (settings.backup_schedule && !BackupService.isValidScheduleTime(settings.backup_schedule)) {
         throw new Error('Invalid backup schedule time.');
     }
-    if (settings.cloud_backup_schedule && !BackupService.isValidScheduleTime(settings.cloud_backup_schedule)) {
-        throw new Error('Invalid cloud backup schedule time.');
-    }
+    if ('local_backup_path' in settings) assertBackupFolder(settings.local_backup_path);
 
     const result = databaseService.saveSettings(settings);
 
@@ -1289,13 +1280,8 @@ handleGuardedDb('db:saveSettings', async (_, settings) => {
     if (settings.backup_schedule) {
         backupService.updateSchedule('local', settings.backup_schedule);
     }
-    if (settings.cloud_backup_schedule) {
-        backupService.updateSchedule('cloud', settings.cloud_backup_schedule);
-    }
-
-    // Update Drive Credebtials if changed
-    if (settings.drive_client_id && settings.drive_client_secret) {
-        googleDriveService.configureCredentials(settings.drive_client_id, settings.drive_client_secret);
+    if ('local_backup_path' in settings) {
+        backupService.setOffsiteTarget(backupCopyTarget(settings.local_backup_path));
     }
 
     return result;
@@ -1721,98 +1707,6 @@ handleGuardedDb('db:replaceConditionMedPresets', (_, input) => {
     return databaseService.replaceConditionMedPresets(input);
 });
 
-// Drive IPC Handlers
-handleDb('drive:authenticate', async (_, { clientId, clientSecret }) => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    if (!mainWindow) return { success: false, error: 'Main window not found' };
-    try {
-        // Configure credentials first
-        googleDriveService.configureCredentials(clientId, clientSecret);
-
-        await googleDriveService.authenticate(mainWindow, (state) => apiServer.waitForOAuthCallback(state));
-        const tokens = googleDriveService.getCredentials();
-
-        // Save everything to settings
-        databaseService.saveSettings({
-            drive_client_id: clientId,
-            drive_client_secret: clientSecret,
-            drive_tokens: JSON.stringify(tokens)
-        });
-
-        return { success: true };
-    } catch (e: any) {
-        if (e?.message === 'RESTORE_IN_PROGRESS') throw e;
-        console.error('Drive auth failed', e);
-        return { success: false, error: e.message || 'Authentication failed' };
-    }
-});
-
-handleDb('drive:disconnect', async () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    try {
-        googleDriveService.setCredentials(null);
-        databaseService.saveSettings({ drive_tokens: '' });
-        return { success: true };
-    } catch (e: any) {
-        if (e?.message === 'RESTORE_IN_PROGRESS') throw e;
-        console.error('Drive disconnect failed', e);
-        return { success: false, error: e.message };
-    }
-});
-
-ipcMain.handle('drive:isAuthenticated', () => {
-    return googleDriveService.isAuthenticated();
-});
-
-ipcMain.handle('drive:backup', async () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    try {
-        const dbPath = securityService.getDbPath();
-        if (!dbPath) throw new Error('DB not open');
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const fileName = `nalamdesk-backup-${timestamp}.db`;
-        await googleDriveService.uploadFile(dbPath, fileName);
-        return { success: true };
-    } catch (e: any) {
-        console.error('Backup failed', e);
-        return { success: false, error: e.message };
-    }
-});
-
-ipcMain.handle('drive:restore', async (_, fileId) => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    try {
-        return await runDriveRestore({
-            gate: restoreOperationGate,
-            dbService: databaseService,
-            getDbPath: () => securityService.getDbPath(),
-            closeDb: () => securityService.closeDb(),
-            downloadFile: (id, destination) => googleDriveService.downloadFile(id, destination),
-            fileId,
-            onCommitted: () => { setTimeout(() => { app.relaunch(); app.exit(0); }, 1500); }
-        });
-    } catch (e: any) {
-        if (e?.message === 'RESTORE_IN_PROGRESS') throw e;
-        console.error('Restore failed', e.message); // e might be object
-        return { success: false, error: String(e) };
-    }
-});
-
-ipcMain.handle('drive:listBackups', async () => {
-    const user = sessionService.getUser();
-    if (!user) throw new Error('Unauthorized');
-    try {
-        return await googleDriveService.listBackups();
-    } catch (e) {
-        return [];
-    }
-});
-
-// Backup IPC
 // Backup IPC
 ipcMain.handle('backup:selectPath', async () => {
     if (!mainWindow) return null;

@@ -1978,6 +1978,18 @@ export const MIGRATIONS = [
     {
         version: 54,
         up: (db: any) => migrateCloudDevicePerFacility(db)
+    },
+    {
+        version: 55,
+        up: (db: any) => {
+            // Google Drive backup is retired: the Drive tokens and client
+            // secret are no longer used, so they leave the vault. The client
+            // ID stays only so Settings can tell the admin, once.
+            if (!tableExists(db, 'settings')) return;
+            for (const column of ['drive_tokens', 'drive_client_secret']) {
+                try { db.exec(`UPDATE settings SET ${column} = NULL`); } catch { /* column absent */ }
+            }
+        }
     }
 ];
 

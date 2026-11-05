@@ -38,18 +38,6 @@ export type BackupStep = 'restore-after-stage-validation' | 'restore-after-snaps
     'restore-before-live-close' |
     'restore-after-journal' | 'restore-after-database-replace' |
     'restore-after-config-replace' | 'restore-after-activation';
-/** Off-site copy target (Google Drive on the desktop). NalamDesk Server has none yet. */
-export interface BackupUploader {
-    isAuthenticated(): boolean;
-    uploadFile(filePath: string, name: string): Promise<unknown>;
-}
-
-/** For hosts with no off-site target: backups stay local. */
-export const NO_UPLOADER: BackupUploader = {
-    isAuthenticated: () => false,
-    uploadFile: () => Promise.reject(new Error('No off-site backup target is configured.'))
-};
-
 export interface BackupServiceOptions {
     createIsolatedSecurityService?: () => SecurityService;
     appVersion?: string;
@@ -62,7 +50,11 @@ export interface BackupServiceOptions {
     onRestoreCommitted?: () => void;
     /** Test seam: how long fence() waits for in-flight API/IPC DB work. */
     drainTimeoutMs?: number;
-    /** Second location that receives a copy of each scheduled bundle (NalamDesk Server, #216). */
+    /**
+     * Second location that receives a copy of each scheduled bundle: the
+     * server's off-site target (#216), or the desktop's backup folder.
+     * Changeable later with setOffsiteTarget.
+     */
     offsite?: OffsiteCopyTarget | null;
 }
 
@@ -83,33 +75,32 @@ export interface OffsiteBackupHealth {
  * established by recovery AEAD unwrap, SQLCipher open, and DB vault binding. */
 export class BackupService {
     private localJob: CronJob | null = null;
-    private cloudJob: CronJob | null = null;
     private localBackupPath: string;
+    private offsite: OffsiteCopyTarget | null;
 
     constructor(
         private dbService: DatabaseService,
-        private driveService: BackupUploader,
         private securityService: SecurityService,
         private userDataPath: string,
         private readonly options: BackupServiceOptions = {}
     ) {
         this.localBackupPath = path.join(userDataPath, 'backups');
+        this.offsite = options.offsite ?? null;
         this.reconcileInterruptedRestore();
     }
 
     setLocalBackupPath(backupPath: string) { this.localBackupPath = backupPath; }
+    /** Where each scheduled bundle is also copied; null for none. */
+    setOffsiteTarget(target: OffsiteCopyTarget | null) { this.offsite = target; }
     initAutomatedBackup() {
         const settings = this.dbService.getSettings();
         // Stored values predate validation (or were hand-edited): repair to
         // the default with an audit trail instead of leaving the schedule
         // silently dead on every launch.
         this.scheduleLocalBackup(this.validatedStoredSchedule(settings?.backup_schedule, 'backup_schedule', 'local'));
-        this.scheduleCloudBackup(this.validatedStoredSchedule(settings?.cloud_backup_schedule, 'cloud_backup_schedule', 'cloud'));
     }
 
-    private validatedStoredSchedule(
-        stored: unknown, column: 'backup_schedule' | 'cloud_backup_schedule', label: string
-    ): string {
+    private validatedStoredSchedule(stored: unknown, column: 'backup_schedule', label: string): string {
         if (stored == null || stored === '') return '13:00';
         if (BackupService.isValidScheduleTime(stored)) return stored;
         try {
@@ -136,14 +127,6 @@ export class BackupService {
             this.localJob = next;
             this.localJob.start();
         } catch (error) { console.error('[Backup] Failed to schedule local backup:', error); }
-    }
-    scheduleCloudBackup(time: string) {
-        try {
-            const next = new CronJob(this.convertToCron(time), () => void this.performCloudBackup());
-            this.cloudJob?.stop();
-            this.cloudJob = next;
-            this.cloudJob.start();
-        } catch (error) { console.error('[Backup] Failed to schedule cloud backup:', error); }
     }
 
     /**
@@ -230,24 +213,17 @@ export class BackupService {
     /** Stops scheduled backups (server shutdown). */
     stopSchedules() {
         this.localJob?.stop(); this.localJob = null;
-        this.cloudJob?.stop(); this.cloudJob = null;
     }
-    updateSchedule(type: 'local' | 'cloud', time: string) {
-        type === 'local' ? this.scheduleLocalBackup(time) : this.scheduleCloudBackup(time);
+    updateSchedule(type: 'local', time: string) {
+        if (type === 'local') this.scheduleLocalBackup(time);
     }
     async performBackupOnQuit() {
         try { await this.performBackup(); }
         catch (error) { console.error('[Backup] Backup on quit failed', error); }
     }
+    /** One backup now: the local bundle, then its off-site copy when one is set. */
     async performBackup() {
-        let localError: unknown;
-        if (this.localBackupPath) {
-            try { await this.performLocalBackup(); }
-            catch (error) { localError = error; }
-        }
-        // Cloud remains an independent attempt if local bundle creation fails.
-        if (this.driveService.isAuthenticated()) await this.performCloudBackup();
-        if (localError) throw localError;
+        await this.performLocalBackup();
     }
 
     async createBackupBundle(destination: string): Promise<string> {
@@ -308,7 +284,7 @@ export class BackupService {
 
     /** A failed copy is recorded for the health card; the local backup still stands. */
     private async copyOffsite(filePath: string, name: string): Promise<void> {
-        const target = this.options.offsite;
+        const target = this.offsite;
         if (!target) return;
         try {
             await target.uploadFile(filePath, name);
@@ -321,7 +297,7 @@ export class BackupService {
     }
 
     private offsiteHealth(audits: any[]): OffsiteBackupHealth | null {
-        const target = this.options.offsite;
+        const target = this.offsite;
         if (!target) return null;
         const copied = audits.find((a) => a?.action === 'BACKUP_OFFSITE');
         const failed = audits.find((a) => a?.action === 'BACKUP_OFFSITE_ERROR');
@@ -343,20 +319,6 @@ export class BackupService {
         } catch (error) { console.error('[Backup] Failed to prune old backups:', error); }
     }
 
-    // Cloud backup remains outside this offline-only change.
-    private async performCloudBackup() {
-        try {
-            const dbPath = this.securityService.getDbPath();
-            if (!dbPath || !fs.existsSync(dbPath)) return;
-            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const name = `nalamdesk-cloud-backup-${stamp}.db`;
-            await this.driveService.uploadFile(dbPath, name);
-            this.dbService.logAudit('BACKUP_CLOUD', 'system', 0, 0, `Uploaded cloud backup: ${name}`);
-        } catch (error: any) {
-            console.error('[Backup] Cloud backup failed:', error);
-            this.dbService.logAudit('BACKUP_ERROR', 'system', 0, 0, `Cloud backup failed: ${error.message}`);
-        }
-    }
 
     async listSystemBackups(): Promise<SystemBackupInfo[]> {
         try {

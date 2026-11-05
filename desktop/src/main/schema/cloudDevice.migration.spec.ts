@@ -47,7 +47,7 @@ describe('migration v54: cloud pairing per facility (#215)', () => {
     afterEach(() => db.close());
 
     it('keeps the paired clinic paired as facility 1, keys and mailbox intact', () => {
-        expect(db.pragma('user_version', { simple: true })).toBe(V54);
+        expect(db.pragma('user_version', { simple: true })).toBe(DatabaseService.latestSchemaVersion());
         const columns = (db.prepare('PRAGMA table_info(cloud_device)').all() as any[]).map(c => c.name);
         expect(columns).not.toContain('id');
         expect(service.getCloudDevice(1)).toEqual(deviceRow());

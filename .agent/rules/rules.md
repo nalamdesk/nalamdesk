@@ -12,7 +12,7 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 - **Location**: `desktop/`
 - **Database**: SQLite (`nalamdesk.db`) stored locally.
 - **Logic**: 
-  - Main Process (`src/main`): Handles OS integration, SQLite DB access, Google Drive Backups, and Cloud Sync.
+  - Main Process (`src/main`): Handles OS integration, SQLite DB access, backups (with an optional backup copy folder), and Cloud Sync.
   - Renderer (`src/renderer`): Angular UI.
   - Local Server (`src/server`): Fastify — API + LAN browser access (prod: serves `dist`; dev: proxies UI to ng serve).
 
@@ -29,7 +29,7 @@ NalamDesk is a **Hybrid Medical Practice Management System** that combines priva
 /
 ├── desktop/                # The Electron Application
 │   ├── src/
-│   │   ├── main/           # Electron Main Process (DB, Sync, Drive)
+│   │   ├── main/           # Electron Main Process (DB, Sync, Backup)
 │   │   ├── renderer/       # Angular UI
 │   │   └── server/         # Embedded Local Server
 │   ├── package.json        # "nalamdesk-desktop"

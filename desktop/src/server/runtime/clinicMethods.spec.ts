@@ -200,8 +200,8 @@ describe('backup methods', () => {
         expect(backups.updateSchedule).not.toHaveBeenCalled();
         follow('saveSettings', [{ backup_schedule: '02:30', cloud_backup_schedule: '23:15' }]);
         expect(backups.updateSchedule).toHaveBeenCalledWith('local', '02:30');
-        expect(backups.updateSchedule).toHaveBeenCalledWith('cloud', '23:15');
         follow('saveSettings', []);
-        expect(backups.updateSchedule).toHaveBeenCalledTimes(2);
+        // The retired cloud schedule is ignored.
+        expect(backups.updateSchedule).toHaveBeenCalledTimes(1);
     });
 });

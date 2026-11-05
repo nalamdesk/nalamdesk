@@ -180,13 +180,9 @@ describe('SettingsComponent Validation', () => {
         component.restoreAdminPassword = 'secret';
         (component as any).dialogService = { open: vi.fn().mockResolvedValue(true) };
         const restoreSystemBackup = vi.fn(async () => ({ success: false, error: 'INVALID_ADMIN_CREDENTIAL' }));
-        (window as any).electron = {
-            restoreSystemBackup,
-            drive: { restore: vi.fn() }
-        };
+        (window as any).electron = { restoreSystemBackup };
         await component.restoreLocalBackup();
         expect(restoreSystemBackup).toHaveBeenCalled();
-        expect((window as any).electron.drive.restore).not.toHaveBeenCalled();
         expect(component.restoreError).toContain('administrator password');
         expect(component.isRestoring).toBe(false);
     });
@@ -874,6 +870,26 @@ describe('SettingsComponent Validation', () => {
                 await component.loadSettings();
                 expect(component.settings.clinic_name).toBe('Test Clinic');
                 expect(component.settings.backup_schedule).toBe('09:00');
+                expect(component.settings).not.toHaveProperty('drive_client_secret');
+                // An admin who had set up Google Drive is told it was retired.
+                expect(component.driveRetiredNotice).toBe(true);
+            });
+
+            it('dismisses the retired-Drive notice for good', async () => {
+                invokeImpl({ saveSettings: true });
+                component.driveRetiredNotice = true;
+                await component.dismissDriveRetiredNotice();
+                expect(component.driveRetiredNotice).toBe(false);
+                expect(mockData.invoke).toHaveBeenCalledWith('saveSettings', { drive_client_id: '' });
+            });
+
+            it('treats only a chosen absolute folder as a backup copy folder', () => {
+                component.defaultBackupPath = '/app/backups';
+                for (const [folder, copies] of [['', false], ['NalamDesk_Backups', false], ['/app/backups', false],
+                    ['/Users/clinic/Google Drive/NalamDesk', true], ['D:\\Backups', true]] as const) {
+                    component.settings.local_backup_path = folder;
+                    expect(component.hasBackupCopyFolder).toBe(copies);
+                }
             });
 
             it('tolerates settings load failures', async () => {
@@ -1326,179 +1342,14 @@ describe('SettingsComponent Validation', () => {
             });
         });
 
-        describe('drive backups', () => {
-            const driveApi = () => {
-                const api = {
-                    authenticate: vi.fn(),
-                    disconnect: vi.fn(async () => undefined),
-                    listBackups: vi.fn(async () => []),
-                    backup: vi.fn(),
-                    restore: vi.fn(),
-                    isAuthenticated: vi.fn(async () => false)
-                };
-                setElectron({ drive: api });
-                return api;
-            };
-
-            it('connects with stored credentials and lists backups', async () => {
-                const api = driveApi();
-                api.authenticate.mockResolvedValue({ success: true });
-                api.listBackups.mockResolvedValue([{ id: 'b1' }]);
-                component.settings.drive_client_id = 'cid';
-                await component.connectDrive();
-                expect(api.authenticate).toHaveBeenCalledWith({ clientId: 'cid', clientSecret: component.settings.drive_client_secret });
-                expect(component.success).toBe(true);
-                await flush();
-                expect(component.backups).toEqual([{ id: 'b1' }]);
-            });
-
-            it('reports failed and throwing connections distinctly', async () => {
-                const api = driveApi();
-                api.authenticate.mockResolvedValue({ success: false, error: 'bad secret' });
-                await component.connectDrive();
-                expect(component.success).toBe(false);
-                expect(component.message).toBe('bad secret');
-
-                api.authenticate.mockRejectedValueOnce(new Error('network down'));
-                await component.connectDrive();
-                expect(component.message).toBe('network down');
-            });
-
-            it('disconnects after confirmation only', async () => {
-                const api = driveApi();
-                await component.disconnectDrive();
-                expect(api.disconnect).toHaveBeenCalled();
-                expect(component.backups).toEqual([]);
-
-                mockDialog.open.mockResolvedValueOnce(false);
-                await component.disconnectDrive();
-                expect(api.disconnect).toHaveBeenCalledTimes(1);
-            });
-
-            it('runs drive backups and surfaces failures', async () => {
-                const api = driveApi();
-                api.backup.mockResolvedValue({ success: true });
-                api.listBackups.mockResolvedValue([{ id: 'b1' }]);
-                await component.backupNow();
-                await flush();
-                expect(component.backups).toEqual([{ id: 'b1' }]);
-
-                api.backup.mockResolvedValueOnce({ success: false, error: 'quota' });
-                await component.backupNow();
-                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Backup failed' }));
-            });
-
-            it('restores a backup after confirmation', async () => {
-                const api = driveApi();
-                api.restore.mockResolvedValue({ success: true, restartRequired: true });
-                await component.restore('b1');
-                expect(api.restore).toHaveBeenCalledWith('b1');
-                expect(mockToast.success).toHaveBeenCalledWith(
-                    'The application will now restart.', 'Restore Successful');
-
-                mockDialog.open.mockResolvedValueOnce(false);
-                await component.restore('b2');
-                expect(api.restore).toHaveBeenCalledTimes(1);
-            });
-
-            it('reports failed and throwing restores', async () => {
-                const api = driveApi();
-                api.restore.mockResolvedValue({ success: false, error: 'gone' });
-                await component.restore('b9');
-                expect(mockDialog.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Restore failed' }));
-
-                api.restore.mockRejectedValueOnce(new Error('crashed'));
-                await component.restore('b9');
-                expect(component.isBackupLoading).toBe(false);
-            });
-
-            it('selects restore bundles and flags legacy files', async () => {
-                setElectron({ backup: { selectRestoreBundle: vi.fn(async () => ({ path: '/x/y.ndbackup', name: 'y.ndbackup' })) } });
-                await component.selectRestoreBundle();
-                expect(component.restoreBundle).toEqual({ path: '/x/y.ndbackup', name: 'y.ndbackup' });
-                expect(component.restoreError).toBe('');
-
-                setElectron({ backup: { selectRestoreBundle: vi.fn(async () => ({ path: '/x/y.db', name: 'y.DB' })) } });
-                await component.selectRestoreBundle();
-                expect(component.restoreError).toContain('cannot recover a live vault');
-            });
-
-            it('restores a local bundle through the guarded IPC', async () => {
-                const restoreSystemBackup = vi.fn(async () => ({ success: true }));
-                setElectron({ restoreSystemBackup });
-                component.restoreBundle = { path: '/x/y.ndbackup', name: 'y.ndbackup' };
-                component.restoreRecoveryCode = 'CODE';
-                component.restoreAdminPassword = 'pw';
-                await component.restoreLocalBackup();
-                expect(restoreSystemBackup).toHaveBeenCalledWith({
-                    path: '/x/y.ndbackup', recoveryCode: 'CODE', currentAdminPassword: 'pw'
-                });
-                expect(component.isRestoring).toBe(true);
-            });
-
-            it('validates restore inputs before touching IPC', async () => {
-                setElectron({ restoreSystemBackup: vi.fn() });
-                component.isElectron = false;
-                await component.restoreLocalBackup();
-                component.isElectron = true;
-
-                component.restoreBundle = { path: '/x/y.db', name: 'y.db' };
-                await component.restoreLocalBackup();
-                expect(component.restoreError).toContain('missing recovery metadata');
-
-                component.restoreBundle = { path: '/x/y.ndbackup', name: 'y.ndbackup' };
-                component.restoreRecoveryCode = '';
-                component.restoreAdminPassword = 'pw';
-                await component.restoreLocalBackup();
-                expect(component.restoreError).toContain('Recovery Code');
-
-                component.restoreRecoveryCode = 'CODE';
-                component.restoreAdminPassword = '';
-                await component.restoreLocalBackup();
-                expect(component.restoreError).toContain('administrator password');
-                expect((window as any).electron.restoreSystemBackup).not.toHaveBeenCalled();
-            });
-
-            it('maps restore failure codes to user messages', async () => {
-                const restoreSystemBackup = vi.fn(async () => ({ success: false }));
-                setElectron({ restoreSystemBackup });
-                component.restoreBundle = { path: '/x/y.ndbackup', name: 'y.ndbackup' };
-                component.restoreRecoveryCode = 'CODE';
-                component.restoreAdminPassword = 'pw';
-
-                restoreSystemBackup.mockRejectedValueOnce(new Error('INVALID_RECOVERY_CODE'));
-                await component.restoreLocalBackup();
-                expect(component.restoreError).toContain('Recovery Code is incorrect');
-
-                restoreSystemBackup.mockRejectedValueOnce(new Error('INVALID_ADMIN_CREDENTIAL'));
-                await component.restoreLocalBackup();
-                expect(component.restoreError).toContain('administrator password is incorrect');
-                expect(component.isRestoring).toBe(false);
-            });
-
-            it('checks drive status and refreshes when authenticated', async () => {
-                const api = driveApi();
-                api.isAuthenticated.mockResolvedValue(true);
-                api.listBackups.mockResolvedValue([{ id: 'b1' }]);
-                await component.checkDriveStatus();
-                expect(component.success).toBe(true);
-                await flush();
-                expect(component.backups).toEqual([{ id: 'b1' }]);
-
-                api.isAuthenticated.mockResolvedValue(false);
-                await component.checkDriveStatus();
-            });
-        });
-
         describe('external links', () => {
-            it('opens the Drive console and setup guide', async () => {
+            it('opens the setup guide', async () => {
                 const openExternal = vi.fn(async () => undefined);
                 setElectron({ utils: { openExternal } });
                 const event = { preventDefault: vi.fn() } as any;
-                await component.openDriveConsole(event);
                 await component.openSetupGuide(event);
-                expect(event.preventDefault).toHaveBeenCalledTimes(2);
-                expect(openExternal).toHaveBeenCalledTimes(2);
+                expect(event.preventDefault).toHaveBeenCalledOnce();
+                expect(openExternal).toHaveBeenCalledOnce();
             });
         });
 

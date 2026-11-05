@@ -68,7 +68,7 @@ joined computers and removes them, through `/api/admin/join-codes` and
 An admin on any computer also runs the server's Cloud pairing and listing
 (`cloud*` methods), and in Data & Backup sees backup health, the backups in
 `<dataDir>/backups` (`backupList`) and runs one now (`backupRunNow`). The
-backup location, Google Drive and restore stay on the server's own machine:
+backup location, backup copy folder and restore stay on the server's own machine:
 restore with `nalamdesk-server restore`.
 
 Screens refresh from `/api/events`: the Cloud card on `cloud`, Online

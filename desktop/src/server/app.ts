@@ -337,10 +337,6 @@ export class ApiServer {
     private dbService: DatabaseService;
     private staticPath: string;
     private _started = false;
-    private oauthResolver: ((code: string) => void) | null = null;
-    private oauthRejecter: ((err: Error) => void) | null = null;
-    private oauthTimeout: ReturnType<typeof setTimeout> | null = null;
-    private expectedOAuthState: string | null = null;
     private devUiProxyUrl?: string;
     private readonly options: ApiServerOptions;
     private readonly now: () => number;
@@ -505,39 +501,6 @@ export class ApiServer {
         this.fastify.post('/api/auth/login', this.handleLogin.bind(this));
         this.fastify.post('/api/auth/refresh', this.handleRefresh.bind(this));
 
-        // Google Drive OAuth callback (same port as API — avoids a second listener)
-        this.fastify.get('/oauth2callback', async (request, reply) => {
-            const query = request.query as { code?: string; state?: string };
-            const { code, state } = query;
-
-            const resolve = this.oauthResolver;
-            const reject = this.oauthRejecter;
-            const expectedState = this.expectedOAuthState;
-
-            if (!resolve && !reject) {
-                reply.code(400).type('text/html').send('No pending authentication request.');
-                return;
-            }
-
-            if (!expectedState || state !== expectedState) {
-                reply.code(400).type('text/html').send('Invalid OAuth state. Please try again.');
-                return;
-            }
-
-            const capturedResolve = resolve;
-            const capturedReject = reject;
-            this.clearOAuthWait();
-
-            reply.type('text/html').send('Authentication successful! You can close this window.');
-
-            if (code && capturedResolve) {
-                capturedResolve(code);
-                return;
-            }
-
-            capturedReject?.(new Error('No authorization code received'));
-        });
-
         // ABDM callbacks and HIU data pushes reach this computer through the
         // relay's sealed mailbox (#160), never as public routes here.
 
@@ -583,7 +546,7 @@ export class ApiServer {
 
         // SPA Fallback (prod: index.html; dev: proxy to ng serve for LAN access)
         this.fastify.setNotFoundHandler(async (req, reply) => {
-            if (req.method === 'GET' && !req.url.startsWith('/api') && !req.url.startsWith('/oauth2callback')) {
+            if (req.method === 'GET' && !req.url.startsWith('/api')) {
                 const raw = req.url || '/';
                 const queryIndex = raw.indexOf('?');
                 const pathOnly = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
@@ -713,35 +676,6 @@ export class ApiServer {
             this._started = false;
             this.setupCompleted = false;
         }
-    }
-
-    /** Resolves when Google redirects to /oauth2callback on this API server. */
-    waitForOAuthCallback(expectedState: string, timeoutMs = 60_000): Promise<string> {
-        const existingReject = this.oauthRejecter;
-        this.clearOAuthWait();
-        if (existingReject) {
-            existingReject(new Error('A new authentication attempt was started.'));
-        }
-
-        this.expectedOAuthState = expectedState;
-        return new Promise((resolve, reject) => {
-            this.oauthResolver = resolve;
-            this.oauthRejecter = reject;
-            this.oauthTimeout = setTimeout(() => {
-                this.clearOAuthWait();
-                reject(new Error('Authentication timed out. Please try again.'));
-            }, timeoutMs);
-        });
-    }
-
-    private clearOAuthWait(): void {
-        if (this.oauthTimeout) {
-            clearTimeout(this.oauthTimeout);
-            this.oauthTimeout = null;
-        }
-        this.oauthResolver = null;
-        this.oauthRejecter = null;
-        this.expectedOAuthState = null;
     }
 
     // Middleware: Auth

@@ -1990,8 +1990,23 @@ export const MIGRATIONS = [
                 try { db.exec(`UPDATE settings SET ${column} = NULL`); } catch { /* column absent */ }
             }
         }
+    },
+    {
+        version: 56,
+        up: (db: any) => {
+            // HIU consents, their artefacts and the records fetched under them
+            // belong to the facility that asked (its HIU ID); existing rows to facility 1.
+            for (const table of HIU_FACILITY_TABLES) {
+                if (!tableExists(db, table)) continue;
+                addColumn(db, table, 'facility_id INTEGER NOT NULL DEFAULT 1');
+                db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_facility ON ${table}(facility_id)`);
+            }
+        }
     }
 ];
+
+/** HIU tables scoped to the requesting facility by migration v56. */
+export const HIU_FACILITY_TABLES = ['abdm_consents', 'abdm_hiu_artefacts', 'abdm_fetched_records'];
 
 /** Facility-scoped operational tables (#195); existing rows land in facility 1. */
 export const FACILITY_SCOPED_TABLES = [

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DatabaseService } from '../services/DatabaseService';
-import { FACILITY_SCOPED_TABLES, MIGRATIONS } from './migrations';
+import { FACILITY_SCOPED_TABLES, HIU_FACILITY_TABLES, MIGRATIONS } from './migrations';
 import { TestDatabase } from '../testing/TestDatabase';
 
 const FACILITY_MIGRATION = MIGRATIONS.find(m => m.version === 51)!;
@@ -22,6 +22,9 @@ function seedPreFacilityVault(db: TestDatabase) {
     db.prepare("INSERT INTO visits (id, patient_id, doctor_id, diagnosis) VALUES (1, 1, 2, 'Fever')").run();
     db.prepare("INSERT INTO invoices (number, visit_id, patient_id, total) VALUES ('INV-100001', 1, 1, 300)").run();
     db.prepare("INSERT INTO payments (receipt_no, invoice_id, amount) VALUES ('RCT-1', 1, 300)").run();
+    db.prepare("INSERT INTO abdm_consents (id, patient_id, abha_address, hi_types, status) VALUES (1, 1, 'meena@sbx', '[]', 'granted')").run();
+    db.prepare("INSERT INTO abdm_hiu_artefacts (id, consent_id, status) VALUES ('art-1', 1, 'granted')").run();
+    db.prepare("INSERT INTO abdm_fetched_records (consent_id, patient_id, bundle_json) VALUES (1, 1, '{}')").run();
 }
 
 describe('migration v51: organisations and facilities (#195)', () => {
@@ -52,7 +55,7 @@ describe('migration v51: organisations and facilities (#195)', () => {
     });
 
     it('stamps every operational row with facility 1', () => {
-        for (const table of FACILITY_SCOPED_TABLES) {
+        for (const table of [...FACILITY_SCOPED_TABLES, ...HIU_FACILITY_TABLES]) {
             const columns = (db.prepare(`PRAGMA table_info(${table})`).all() as any[]).map(c => c.name);
             expect(columns, table).toContain('facility_id');
             expect((db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE facility_id IS NOT 1`).get() as any).n, table).toBe(0);

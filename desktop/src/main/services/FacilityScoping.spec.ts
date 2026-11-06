@@ -99,6 +99,54 @@ describe('facility scoping (#195)', () => {
         expect(at(BRANCH, () => service.getDailyClose(today)).collected).toBe(500);
     });
 
+    it('reads invoices only in their facility and rejects a non-numeric discount or tax', () => {
+        const mainVisit = finishedVisit(MAIN);
+        const branchVisit = finishedVisit(BRANCH);
+        const branchInvoice = at(BRANCH, () => service.createInvoice({ visitId: branchVisit, items: [{ description: 'Dressing', rate: 200 }] }, 10));
+        expect(() => at(MAIN, () => service.getInvoice(branchInvoice.id))).toThrow('belongs to another facility');
+        expect(at(MAIN, () => service.getVisitInvoices(branchVisit))).toEqual([]);
+        expect(at(BRANCH, () => service.getVisitInvoices(branchVisit)).map((i: any) => i.id)).toEqual([branchInvoice.id]);
+
+        const items = [{ description: 'X-ray', rate: 300 }];
+        expect(() => at(MAIN, () => service.createInvoice({ visitId: mainVisit, items, discount: 'ten' as any }, 10)))
+            .toThrow('Discount must be a number');
+        expect(() => at(MAIN, () => service.createInvoice({ visitId: mainVisit, items, tax: Number.NaN }, 10)))
+            .toThrow('Tax must be a number');
+        expect(() => at(MAIN, () => service.createInvoice({ visitId: mainVisit, items, discount: -5 }, 10)))
+            .toThrow('Discount must be a number');
+        const ok = at(MAIN, () => service.createInvoice({ visitId: mainVisit, items, discount: 50, tax: 10 }, 10));
+        expect(ok.total).toBe(260);
+    });
+
+    it('keeps HIU consents, artefacts and fetched records at the facility that requested them', () => {
+        const consent = at(MAIN, () => service.createConsentRequest(
+            { patientId: 1, abhaAddress: 'meena@sbx', hiTypes: ['Prescription'], gatewayRequestId: 'req-1' }, 10));
+        expect(consent.facility_id).toBe(MAIN);
+        expect(at(BRANCH, () => service.getConsents())).toEqual([]);
+        expect(at(BRANCH, () => service.getConsents(1))).toEqual([]);
+        expect(at(BRANCH, () => service.getConsentById(consent.id))).toBeUndefined();
+        expect(at(BRANCH, () => service.getConsentByRequestId('req-1'))).toBeUndefined();
+        expect(() => at(BRANCH, () => service.updateConsentStatus(consent.id, 'granted', 'h-1', 10))).toThrow('Consent request not found');
+        expect(at(MAIN, () => service.getConsents()).map((c: any) => c.id)).toEqual([consent.id]);
+
+        at(MAIN, () => service.updateConsentStatus(consent.id, 'granted', 'h-1', 10));
+        expect(() => at(BRANCH, () => service.saveHiuArtefacts(consent.id, ['art-1'], 'granted'))).toThrow('Consent request not found');
+        at(MAIN, () => service.saveHiuArtefacts(consent.id, ['art-1'], 'granted'));
+        at(MAIN, () => service.updateHiuArtefact('art-1', { transaction_id: 'txn-1' }));
+        expect(at(MAIN, () => service.findHiuArtefact('transaction_id', 'txn-1'))?.facility_id).toBe(MAIN);
+        expect(at(BRANCH, () => service.findHiuArtefact('transaction_id', 'txn-1'))).toBeNull();
+        expect(at(BRANCH, () => service.updateHiuArtefact('art-1', { status: 'revoked' }))).toBeNull();
+        expect(at(BRANCH, () => service.getHiuArtefacts(consent.id))).toEqual([]);
+
+        const record = { consentId: consent.id, patientId: 1, bundleJson: '{"resourceType":"Bundle"}' };
+        expect(() => at(BRANCH, () => service.storeFetchedRecord(record, 10))).toThrow('Consent request not found');
+        at(MAIN, () => service.storeFetchedRecord(record, 10));
+        expect(at(MAIN, () => service.getFetchedRecords(1)).map((r: any) => r.facility_id)).toEqual([MAIN]);
+        expect(at(BRANCH, () => service.getFetchedRecords(1))).toEqual([]);
+        at(BRANCH, () => service.clearFetchedRecords(1, 10));
+        expect(at(MAIN, () => service.getFetchedRecords(1))).toHaveLength(1);
+    });
+
     it('books appointments and booking requests per facility', () => {
         at(MAIN, () => service.saveAppointment({ patient_id: 1, date: '2026-11-02', time: '10:00', reason: '' }));
         const branchAppt = Number(at(BRANCH, () => service.saveAppointment({

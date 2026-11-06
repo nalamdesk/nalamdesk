@@ -1596,11 +1596,11 @@ export class DatabaseService {
         const result = this.db.prepare(`
             INSERT INTO abdm_consents (
                 patient_id, abha_address, hi_types, date_from, date_to,
-                status, gateway_request_id
-            ) VALUES (?, ?, ?, ?, ?, 'requested', ?)
+                status, gateway_request_id, facility_id
+            ) VALUES (?, ?, ?, ?, ?, 'requested', ?, ?)
         `).run(
             patientId, abhaAddress, JSON.stringify(hiTypes),
-            input?.dateFrom || null, input?.dateTo || null, gatewayRequestId
+            input?.dateFrom || null, input?.dateTo || null, gatewayRequestId, this.facilityId()
         );
         const row = this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?')
             .get(Number(result.lastInsertRowid));
@@ -1609,26 +1609,33 @@ export class DatabaseService {
         return row;
     }
 
+    /**
+     * HIU consents belong to the facility that requested them (its HIU ID);
+     * callbacks arrive in that facility's mailbox, so every read is scoped.
+     */
     getConsents(patientId?: number | null) {
         if (patientId != null) {
             return this.db.prepare(`SELECT * FROM abdm_consents
-                WHERE patient_id = ? ORDER BY id DESC`).all(Number(patientId));
+                WHERE patient_id = ? AND facility_id = ? ORDER BY id DESC`).all(Number(patientId), this.facilityId());
         }
-        return this.db.prepare(`SELECT * FROM abdm_consents ORDER BY id DESC`).all();
+        return this.db.prepare(`SELECT * FROM abdm_consents WHERE facility_id = ? ORDER BY id DESC`)
+            .all(this.facilityId());
     }
 
     getConsentByRequestId(gatewayRequestId: string) {
         const id = String(gatewayRequestId || '').trim();
         if (!id) return null;
         // Our REQUEST-ID first, then the consent manager's own request ID (on-init).
+        const facilityId = this.facilityId();
         return (this.db.prepare(`SELECT * FROM abdm_consents
-            WHERE gateway_request_id = ?`).get(id)
+            WHERE gateway_request_id = ? AND facility_id = ?`).get(id, facilityId)
             ?? this.db.prepare(`SELECT * FROM abdm_consents
-            WHERE consent_request_id = ? ORDER BY id DESC LIMIT 1`).get(id)) as any;
+            WHERE consent_request_id = ? AND facility_id = ? ORDER BY id DESC LIMIT 1`).get(id, facilityId)) as any;
     }
 
     getConsentById(id: number) {
-        return this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?').get(Number(id)) as any;
+        return this.db.prepare('SELECT * FROM abdm_consents WHERE id = ? AND facility_id = ?')
+            .get(Number(id), this.facilityId()) as any;
     }
 
     /** Moves a consent to granted/denied/expired; records the gateway handle. */
@@ -1637,7 +1644,7 @@ export class DatabaseService {
         if (!(DatabaseService.consentStatuses as readonly string[]).includes(next)) {
             throw new Error(`Unknown consent status: ${status}`);
         }
-        const existing = this.db.prepare('SELECT * FROM abdm_consents WHERE id = ?').get(Number(id)) as any;
+        const existing = this.getConsentById(id);
         if (!existing) throw new Error('Consent request not found.');
         // Terminal states never reopen: a replayed grant after deny/expire
         // must not restore fetching. A fresh grant needs a fresh request.
@@ -1655,7 +1662,7 @@ export class DatabaseService {
     /** Records the consent manager's ID for a request it accepted (on-init). */
     setConsentRequestId(id: number, consentRequestId: string) {
         this.db.prepare(`UPDATE abdm_consents SET consent_request_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?`).run(String(consentRequestId).slice(0, 128), Number(id));
+            WHERE id = ? AND facility_id = ?`).run(String(consentRequestId).slice(0, 128), Number(id), this.facilityId());
         return this.getConsentById(id);
     }
 
@@ -1673,18 +1680,22 @@ export class DatabaseService {
     /** Removes a request the gateway never accepted, so it does not linger as pending. */
     discardConsentRequest(id: number) {
         this.db.prepare(`DELETE FROM abdm_consents WHERE id = ? AND status = 'requested'
-            AND consent_request_id IS NULL`).run(Number(id));
+            AND consent_request_id IS NULL AND facility_id = ?`).run(Number(id), this.facilityId());
     }
 
     /** Saves the consent artefacts a grant (or revocation) names; one per HIP. */
     saveHiuArtefacts(consentId: number, artefactIds: string[], status: string) {
+        const consent = this.getConsentById(consentId);
+        if (!consent) throw new Error('Consent request not found.');
         const save = this.db.transaction(() => {
             for (const raw of artefactIds) {
                 const id = String(raw || '').trim().slice(0, 128);
                 if (!id) continue;
-                this.db.prepare(`INSERT INTO abdm_hiu_artefacts (id, consent_id, status) VALUES (?, ?, ?)
+                const owner = this.db.prepare('SELECT facility_id FROM abdm_hiu_artefacts WHERE id = ?').get(id) as any;
+                if (owner && Number(owner.facility_id) !== Number(consent.facility_id)) continue;
+                this.db.prepare(`INSERT INTO abdm_hiu_artefacts (id, consent_id, status, facility_id) VALUES (?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET status = excluded.status, updated_at = CURRENT_TIMESTAMP`)
-                    .run(id, Number(consentId), status);
+                    .run(id, Number(consentId), status, Number(consent.facility_id));
             }
         });
         (save as any).immediate ? (save as any).immediate() : (save as any)();
@@ -1692,23 +1703,23 @@ export class DatabaseService {
     }
 
     getHiuArtefacts(consentId: number) {
-        return this.db.prepare(`SELECT * FROM abdm_hiu_artefacts WHERE consent_id = ? ORDER BY created_at, id`)
-            .all(Number(consentId)) as any[];
+        return this.db.prepare(`SELECT * FROM abdm_hiu_artefacts WHERE consent_id = ? AND facility_id = ?
+            ORDER BY created_at, id`).all(Number(consentId), this.facilityId()) as any[];
     }
 
     /** The artefact a gateway callback refers to, by the REQUEST-ID it echoes or a transfer ID. */
     findHiuArtefact(field: 'id' | 'fetch_request_id' | 'hi_request_id' | 'transaction_id', value: string) {
         const lookups: Record<string, string> = {
-            id: 'SELECT * FROM abdm_hiu_artefacts WHERE id = ? LIMIT 1',
-            fetch_request_id: 'SELECT * FROM abdm_hiu_artefacts WHERE fetch_request_id = ? LIMIT 1',
-            hi_request_id: 'SELECT * FROM abdm_hiu_artefacts WHERE hi_request_id = ? LIMIT 1',
-            transaction_id: 'SELECT * FROM abdm_hiu_artefacts WHERE transaction_id = ? LIMIT 1'
+            id: 'SELECT * FROM abdm_hiu_artefacts WHERE id = ? AND facility_id = ? LIMIT 1',
+            fetch_request_id: 'SELECT * FROM abdm_hiu_artefacts WHERE fetch_request_id = ? AND facility_id = ? LIMIT 1',
+            hi_request_id: 'SELECT * FROM abdm_hiu_artefacts WHERE hi_request_id = ? AND facility_id = ? LIMIT 1',
+            transaction_id: 'SELECT * FROM abdm_hiu_artefacts WHERE transaction_id = ? AND facility_id = ? LIMIT 1'
         };
         const sql = Object.prototype.hasOwnProperty.call(lookups, field) ? lookups[field] : null;
         if (!sql) throw new Error('Unknown artefact lookup.');
         const clean = String(value || '').trim();
         if (!clean) return null;
-        return (this.db.prepare(sql).get(clean) ?? null) as any;
+        return (this.db.prepare(sql).get(clean, this.facilityId()) ?? null) as any;
     }
 
     updateHiuArtefact(id: string, patch: Record<string, string | null>) {
@@ -1725,8 +1736,8 @@ export class DatabaseService {
         };
         this.db.prepare(`UPDATE abdm_hiu_artefacts SET status = ?, hip_id = ?, date_from = ?, date_to = ?,
             data_erase_at = ?, fetch_request_id = ?, hi_request_id = ?, transaction_id = ?, transfer_status = ?,
-            error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-            .run(...columns.map(next), String(id));
+            error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND facility_id = ?`)
+            .run(...columns.map(next), String(id), this.facilityId());
         return this.findHiuArtefact('id', id);
     }
 
@@ -1956,8 +1967,13 @@ export class DatabaseService {
             const bundleJson = String(input?.bundleJson || '');
             if (!bundleJson) throw new Error('A record bundle is required.');
             JSON.parse(bundleJson);
+            const consentId = input?.consentId ?? null;
+            // A record lives at its consent's facility; refuse one for a consent elsewhere.
+            if (consentId != null && !this.getConsentById(Number(consentId))) {
+                throw new Error('Consent request not found.');
+            }
             return {
-                consentId: input?.consentId ?? null,
+                consentId,
                 patientId: input?.patientId ?? null,
                 careContextRef: input?.careContextRef || null,
                 bundleJson,
@@ -1971,15 +1987,16 @@ export class DatabaseService {
                 this.db.prepare(`
                     INSERT INTO abdm_fetched_records (
                         consent_id, patient_id, care_context_ref, bundle_json,
-                        bundle_sha256, status, expires_at
-                    ) VALUES (?, ?, ?, ?, ?, 'cached', ?)
+                        bundle_sha256, status, expires_at, facility_id
+                    ) VALUES (?, ?, ?, ?, ?, 'cached', ?, ?)
                     ON CONFLICT(consent_id, bundle_sha256) DO NOTHING
                 `).run(
                     record.consentId, record.patientId, record.careContextRef,
-                    record.bundleJson, record.sha, record.expiresAt
+                    record.bundleJson, record.sha, record.expiresAt, this.facilityId()
                 );
                 rows.push(this.db.prepare(`SELECT * FROM abdm_fetched_records
-                    WHERE consent_id IS ? AND bundle_sha256 = ?`).get(record.consentId, record.sha));
+                    WHERE consent_id IS ? AND bundle_sha256 = ? AND facility_id = ?`)
+                    .get(record.consentId, record.sha, this.facilityId()));
             }
             return rows;
         });
@@ -1991,8 +2008,8 @@ export class DatabaseService {
 
     getFetchedRecords(patientId: number, includeExpired = false) {
         return this.db.prepare(`SELECT * FROM abdm_fetched_records
-            WHERE patient_id = ? ${includeExpired ? '' : `AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`}
-            ORDER BY id DESC`).all(Number(patientId));
+            WHERE patient_id = ? AND facility_id = ? ${includeExpired ? '' : `AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`}
+            ORDER BY id DESC`).all(Number(patientId), this.facilityId());
     }
 
     /** Sweeps expired cache rows: status flips and the decrypted bundle is
@@ -2008,7 +2025,7 @@ export class DatabaseService {
     /** Explicit patient-initiated wipe of the external-records cache. */
     clearFetchedRecords(patientId: number, actingUserId?: number) {
         const result = this.db.prepare(`DELETE FROM abdm_fetched_records
-            WHERE patient_id = ?`).run(Number(patientId));
+            WHERE patient_id = ? AND facility_id = ?`).run(Number(patientId), this.facilityId());
         this.logAudit('DELETE', 'abdm_fetched_records', Number(patientId),
             actingUserId, 'HIU external-records cache cleared');
         return result;
@@ -2288,6 +2305,7 @@ export class DatabaseService {
     getInvoice(invoiceId: number) {
         const invoice = this.db.prepare('SELECT * FROM invoices WHERE id = ?').get(Number(invoiceId)) as any;
         if (!invoice) throw new Error(`Invoice #${invoiceId} not found.`);
+        this.assertSameFacility(invoice, 'Invoice');
         const items = this.db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC')
             .all(Number(invoiceId));
         const payments = this.db.prepare('SELECT * FROM payments WHERE invoice_id = ? ORDER BY id ASC')
@@ -2296,8 +2314,8 @@ export class DatabaseService {
     }
 
     getVisitInvoices(visitId: number) {
-        const invoices = this.db.prepare('SELECT * FROM invoices WHERE visit_id = ? ORDER BY id ASC')
-            .all(Number(visitId)) as any[];
+        const invoices = this.db.prepare('SELECT * FROM invoices WHERE visit_id = ? AND facility_id = ? ORDER BY id ASC')
+            .all(Number(visitId), this.facilityId()) as any[];
         return invoices.map((invoice: any) => ({
             ...invoice,
             balance: this.invoiceBalance(Number(invoice.id))
@@ -2372,8 +2390,10 @@ export class DatabaseService {
             if (!Number.isFinite(rate) || rate < 0) throw new Error(`Charge line ${index + 1} needs a non-negative rate.`);
             return { description, quantity, rate, amount: Math.round(quantity * rate * 100) / 100 };
         });
-        const discount = Math.max(0, Number(input?.discount || 0));
-        const tax = Math.max(0, Number(input?.tax || 0));
+        const discount = Number(input?.discount ?? 0);
+        const tax = Number(input?.tax ?? 0);
+        if (!Number.isFinite(discount) || discount < 0) throw new Error('Discount must be a number of zero or more.');
+        if (!Number.isFinite(tax) || tax < 0) throw new Error('Tax must be a number of zero or more.');
         const subtotal = Math.round(normalized.reduce((sum, line) => sum + line.amount, 0) * 100) / 100;
         const total = Math.round((subtotal - discount + tax) * 100) / 100;
         if (total < 0) throw new Error('Invoice total cannot be negative.');

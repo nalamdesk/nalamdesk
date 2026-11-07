@@ -6,19 +6,22 @@
  * lines that fail the NRCeS gate are omitted from MedicationRequest entries
  * and reported in `warnings` instead of being silently dropped or invented.
  *
- * Known limitation: bundle `fullUrl` values are document-relative
- * (`Patient/1`, `Composition/record`). An offline desktop has no canonical
- * base URL to absolutize them against; revisit with `urn:uuid` or absolute
- * URLs when a share/upload endpoint defines the addressing scheme.
+ * Every entry is addressed by a `urn:uuid` fullUrl and referenced by it, as
+ * FHIR documents require. The UUIDs are derived from the encounter, so a
+ * re-export of the same record reproduces the same bundle.
+ *
+ * OPConsultRecord bundles declare the NRCES ABDM profiles (ndhm.in) on every
+ * resource; CI checks them with the HL7 validator
+ * (.github/workflows/fhir-validation.yml).
  */
 
 import type {
-    AllergyIntolerance, Bundle, Composition, Condition, Dosage, Encounter,
+    AllergyIntolerance, Bundle, Composition, Condition, Dosage, Encounter, Identifier,
     MedicationRequest, Observation, Organization, Patient, Practitioner,
     Quantity, Resource
 } from './r4';
 import {
-    ExportablePrescriptionLine, FREQUENCY_PATTERN, IPS_SECTIONS, OP_CONSULT_SECTIONS,
+    ExportablePrescriptionLine, FREQUENCY_PATTERN, IPS_SECTIONS, NRCES_PROFILE, OP_CONSULT_SECTIONS,
     isExportableMedicationRequest
 } from './nrces';
 import { parseFrequency, durationEndDate } from '../clinical-timing';
@@ -93,6 +96,26 @@ export interface ExportResult {
 }
 
 const LOINC = 'http://loinc.org';
+const UCUM = 'http://unitsofmeasure.org';
+const SNOMED = 'http://snomed.info/sct';
+const V2_ID_TYPE = 'http://terminology.hl7.org/CodeSystem/v2-0203';
+const NDHM_ID_TYPE = 'https://nrces.in/ndhm/fhir/r4/CodeSystem/ndhm-identifier-type-code';
+
+// Identifier types: [type code system, code, display].
+const ID_TYPES = {
+    MR: [V2_ID_TYPE, 'MR', 'Medical record number'],
+    ABHA: [NDHM_ID_TYPE, 'ABHA', 'Ayushman Bharat Health Account (ABHA) ID'],
+    MD: [V2_ID_TYPE, 'MD', 'Medical License number'],
+    EI: [V2_ID_TYPE, 'EI', 'Employee number'],
+    PRN: [V2_ID_TYPE, 'PRN', 'Provider number'],
+    XX: [V2_ID_TYPE, 'XX', 'Organization identifier']
+} as const;
+
+/** A typed identifier, as every NRCES Patient, Practitioner and Organization needs. */
+function typedId(kind: keyof typeof ID_TYPES, system: string, value: string): Identifier {
+    const [typeSystem, code, display] = ID_TYPES[kind];
+    return { type: { coding: [{ system: typeSystem, code, display }] }, system, value };
+}
 
 function ref(resource: string, id: number | string): { reference: string } {
     return { reference: `${resource}/${id}` };
@@ -181,14 +204,14 @@ function medicationRequest(
     // date has passed exports as completed instead of living on as active.
     const courseEnd = durationEndDate(String(date).slice(0, 10), line.duration);
     if (courseEnd) {
-        request.validityPeriod = { start: String(date).slice(0, 10), end: courseEnd };
+        request.dispenseRequest = { validityPeriod: { start: String(date).slice(0, 10), end: courseEnd } };
         if (courseEnd < new Date().toISOString().slice(0, 10)) {
             request.status = 'completed';
         }
     }
     const supply = supplyDuration(line.duration);
     if (supply) {
-        request.dispenseRequest = { expectedSupplyDuration: supply };
+        request.dispenseRequest = { ...request.dispenseRequest, expectedSupplyDuration: supply };
     } else if (line.duration) {
         // Unparseable durations (e.g. `3-4 days`, `until review`) still
         // travel with the order as text so the duration is never lost.
@@ -232,32 +255,55 @@ function conditionResource(condition: ExportCondition, patientId: number | strin
         clinicalStatus: status
             ? { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-clinical', code: status }] }
             : undefined,
-        code: condition.code ? { coding: [{ system: 'http://hl7.org/fhir/sid/icd-10', code: condition.code }], text: condition.name } : { text: condition.name },
+        code: condition.code
+            ? { coding: [{ system: 'http://hl7.org/fhir/sid/icd-10', code: condition.code, display: condition.name }], text: condition.name }
+            : { text: condition.name },
         subject: ref('Patient', patientId),
         onsetDateTime: condition.onsetDate || undefined
     };
 }
 
-function vitalObservations(vitals: ExportVitals | null | undefined, patientId: number | string): Observation[] {
+// UCUM codes for the units the vitals form records.
+const UCUM_CODES: Record<string, string> = {
+    'mmHg': 'mm[Hg]', 'bpm': '/min', '°F': '[degF]', 'F': '[degF]', '°C': 'Cel', 'C': 'Cel',
+    '%': '%', 'kg': 'kg', 'lb': '[lb_av]', 'lbs': '[lb_av]', 'cm': 'cm'
+};
+
+function ucum(value: number, unit: string): Quantity {
+    const code = UCUM_CODES[unit];
+    return code ? { value, unit, system: UCUM, code } : { value, unit };
+}
+
+function vitalObservations(vitals: ExportVitals | null | undefined, patientId: number | string, date: string): Observation[] {
     if (!vitals) return [];
     const out: Observation[] = [];
-    const push = (code: string, display: string, value: number | null | undefined, unit?: string): void => {
+    const vital = (code: string, display: string): Omit<Observation, 'valueQuantity'> => ({
+        resourceType: 'Observation',
+        status: 'final',
+        category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/observation-category', code: 'vital-signs', display: 'Vital Signs' }] }],
+        code: { coding: [{ system: LOINC, code, display }], text: display },
+        subject: ref('Patient', patientId),
+        effectiveDateTime: date
+    });
+    const push = (code: string, display: string, value: number | null | undefined, unit: string): void => {
         if (value == null || Number.isNaN(Number(value))) return;
-        out.push({
-            resourceType: 'Observation',
-            status: 'final',
-            code: { coding: [{ system: LOINC, code, display }] },
-            subject: ref('Patient', patientId),
-            valueQuantity: { value: Number(value), unit }
-        });
+        out.push({ ...vital(code, display), valueQuantity: ucum(Number(value), unit) });
     };
-    if (vitals.systolic_bp != null && vitals.diastolic_bp != null) {
-        push('8480-6', 'Systolic blood pressure', vitals.systolic_bp, 'mmHg');
-        push('8462-4', 'Diastolic blood pressure', vitals.diastolic_bp, 'mmHg');
+    // Blood pressure is one panel with systolic and diastolic components,
+    // as the FHIR vital-signs profile requires.
+    if (vitals.systolic_bp != null && vitals.diastolic_bp != null
+        && !Number.isNaN(Number(vitals.systolic_bp)) && !Number.isNaN(Number(vitals.diastolic_bp))) {
+        out.push({
+            ...vital('85354-9', 'Blood pressure panel with all children optional'),
+            component: [
+                { code: { coding: [{ system: LOINC, code: '8480-6', display: 'Systolic blood pressure' }] }, valueQuantity: ucum(Number(vitals.systolic_bp), 'mmHg') },
+                { code: { coding: [{ system: LOINC, code: '8462-4', display: 'Diastolic blood pressure' }] }, valueQuantity: ucum(Number(vitals.diastolic_bp), 'mmHg') }
+            ]
+        });
     }
     push('8867-4', 'Heart rate', vitals.pulse, 'bpm');
     push('8310-5', 'Body temperature', vitals.temperature, vitals.temperatureUnits || '°F');
-    push('2708-6', 'Oxygen saturation', vitals.spo2, '%');
+    push('2708-6', 'Oxygen saturation in Arterial blood', vitals.spo2, '%');
     push('29463-7', 'Body weight', vitals.weight, vitals.weightUnits || 'kg');
     push('8302-2', 'Body height', vitals.height, 'cm');
     return out;
@@ -274,13 +320,14 @@ function genderFor(value?: string): 'male' | 'female' | 'other' | 'unknown' {
 }
 
 function patientResource(input: EncounterExportInput): Patient {
-    const identifiers = [];
+    // The clinic's own record number always; the ABHA address when linked.
+    const identifiers = [typedId('MR', 'https://nalamdesk.app/fhir/patient', String(input.patient.id))];
     if (input.patient.abhaAddress) {
-        identifiers.push({ system: 'https://abdm.gov.in/abha', value: input.patient.abhaAddress });
+        identifiers.push(typedId('ABHA', 'https://healthid.abdm.gov.in', input.patient.abhaAddress));
     }
     return {
         resourceType: 'Patient',
-        identifier: identifiers.length > 0 ? identifiers : undefined,
+        identifier: identifiers,
         name: [{ text: input.patient.name }],
         telecom: input.patient.mobile ? [{ system: 'phone', value: input.patient.mobile }] : undefined,
         gender: genderFor(input.patient.gender),
@@ -290,28 +337,25 @@ function patientResource(input: EncounterExportInput): Patient {
 }
 
 function practitionerResource(input: EncounterExportInput): Practitioner {
-    const identifiers = [];
-    if (input.practitioner.licenseNumber) {
-        identifiers.push({ system: 'https://indianmedicalcouncil.gov.in/license', value: input.practitioner.licenseNumber });
-    }
-    // TODO (live reconfirm): confirm the HPR identifier system URL against
-    // the current ABDM registry documentation during live integration.
-    if (input.practitioner.registryId) {
-        identifiers.push({ system: 'https://abdm.gov.in/hpr', value: input.practitioner.registryId });
-    }
+    // The HPR ID uses the system NRCES examples give for it. NRCES requires
+    // one identifier, so the clinic's own user ID is the fallback.
+    const identifiers: Identifier[] = [];
+    if (input.practitioner.registryId) identifiers.push(typedId('MD', 'https://doctor.ndhm.gov.in', input.practitioner.registryId));
+    if (input.practitioner.licenseNumber) identifiers.push(typedId('MD', 'https://indianmedicalcouncil.gov.in/license', input.practitioner.licenseNumber));
+    if (identifiers.length === 0) identifiers.push(typedId('EI', 'https://nalamdesk.app/fhir/practitioner', String(input.practitioner.id)));
     return {
         resourceType: 'Practitioner',
-        identifier: identifiers.length > 0 ? identifiers : undefined,
+        identifier: identifiers,
         name: [{ text: input.practitioner.name }]
     };
 }
 
 function organizationResource(input: EncounterExportInput): Organization {
-    // TODO (live reconfirm): confirm the HFR identifier system URL against
-    // the current ABDM registry documentation during live integration.
+    // The HFR ID uses the system NRCES examples give for it. Without one,
+    // NRCES still requires an identifier, so the clinic's name stands in.
     const identifiers = input.clinic.registryId
-        ? [{ system: 'https://abdm.gov.in/hfr', value: input.clinic.registryId }]
-        : undefined;
+        ? [typedId('PRN', 'https://facility.ndhm.gov.in', input.clinic.registryId)]
+        : [typedId('XX', 'https://nalamdesk.app/fhir/facility', input.clinic.name || 'clinic')];
     return {
         resourceType: 'Organization',
         identifier: identifiers,
@@ -327,14 +371,17 @@ function encounterResource(input: EncounterExportInput, date: string): Encounter
             ? [{ system: 'https://nalamdesk.app/fhir/care-context', value: input.encounter.careContextRef }]
             : undefined,
         status: 'finished',
+        class: { system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode', code: 'AMB', display: 'ambulatory' },
         subject: ref('Patient', input.patient.id),
         participant: [{ individual: ref('Practitioner', input.practitioner.id) }],
         period: { start: date }
     };
 }
 
-function textNarrative(lines: string[]): { status: string; div: string } {
+function textNarrative(lines: string[]): { status: string; div: string } | undefined {
     const items = lines.map((line) => line.trim()).filter((line) => line);
+    // An empty narrative breaks txt-2; a section with entries needs none.
+    if (items.length === 0) return undefined;
     return {
         status: 'generated',
         div: `<div xmlns="http://www.w3.org/1999/xhtml">${items.map((line) => `<p>${escXml(line)}</p>`).join('')}</div>`
@@ -356,10 +403,11 @@ function compositionResource(
 ): Composition {
     return {
         resourceType: 'Composition',
+        identifier: { system: 'https://nalamdesk.app/fhir/composition', value: `${profile}-${input.encounter.id}` },
         status: 'final',
         type: profile === 'ips'
             ? { coding: [{ system: 'http://loinc.org', code: '60591-5', display: 'Patient summary Document' }] }
-            : { text: 'OP Consultation Record' },
+            : { coding: [{ system: SNOMED, code: '371530004', display: 'Clinical consultation report' }], text: 'OP Consultation Record' },
         subject: ref('Patient', input.patient.id),
         encounter: ref('Encounter', input.encounter.id),
         date,
@@ -367,13 +415,51 @@ function compositionResource(
         title: profile === 'ips'
             ? `Patient Summary - ${input.patient.name}`
             : `OP Consultation - ${input.patient.name}`,
+        custodian: { reference: 'Organization/clinic' },
         section: sections.map((section) => ({
             title: section.title,
             code: section.code ? { coding: [section.code] } : undefined,
-            entry: section.refs.map((r) => ({ reference: r })),
+            entry: section.refs.length > 0 ? section.refs.map((r) => ({ reference: r })) : undefined,
             text: textNarrative(section.narrative)
         }))
     };
+}
+
+// Deterministic, name-derived UUID (cyrb128 over the seed), so the same
+// record always gets the same fullUrls. Pure JS: this runs in the renderer.
+function stableUuid(seed: string): string {
+    let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+    for (let i = 0; i < seed.length; i++) {
+        const k = seed.charCodeAt(i);
+        h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+        h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+        h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+        h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+    }
+    h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+    h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+    h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+    h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+    h1 ^= h2 ^ h3 ^ h4; h2 ^= h1; h3 ^= h1; h4 ^= h1;
+    const hex = [h1, h2, h3, h4].map((h) => (h >>> 0).toString(16).padStart(8, '0')).join('');
+    // RFC 4122 layout: version nibble 4, variant bits 10.
+    const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+// Points every `reference` that names an entry at that entry's urn:uuid.
+function rewriteReferences(value: unknown, urls: Map<string, string>): void {
+    if (Array.isArray(value)) {
+        for (const item of value) rewriteReferences(item, urls);
+        return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const record = value as { reference?: unknown };
+    if (typeof record.reference === 'string') {
+        const url = urls.get(record.reference);
+        if (url) record.reference = url;
+    }
+    for (const child of Object.values(record)) rewriteReferences(child, urls);
 }
 
 function bundleFor(
@@ -410,7 +496,7 @@ function bundleFor(
     }
 
     const observationRefs: string[] = [];
-    for (const observation of vitalObservations(input.vitals, input.patient.id)) {
+    for (const observation of vitalObservations(input.vitals, input.patient.id, date)) {
         observationRefs.push(push(observation, `observation-${entries.length}`));
     }
 
@@ -425,60 +511,78 @@ function bundleFor(
         prescriptionRefs.push(push(built, `medicationrequest-${entries.length}`));
     }
 
-    // Findings narrative: symptoms, diagnosis, and exam notes ride in their
-    // own sections so the record carries what the receipt showed. IPS uses
-    // its own coded sections rather than the OPConsult layout.
+    // IPS keeps its own LOINC-coded sections. OPConsultRecord uses the NRCES
+    // section slices, each holding only the resource type that slice allows;
+    // Patient, Practitioner and Encounter are reached from the Composition.
     const loincSection = (code: string, display: string) => ({
         system: 'http://loinc.org', code, display
     });
+    const opSection = (index: number) => {
+        const spec = OP_CONSULT_SECTIONS[index];
+        return { title: spec.title, code: { system: SNOMED, code: spec.code, display: spec.display } };
+    };
+    const diagnosis = input.encounter.diagnosis
+        ? [`Diagnosis: ${input.encounter.diagnosis}${input.encounter.diagnosisType ? ` (${input.encounter.diagnosisType})` : ''}`]
+        : [];
     const sections: SectionPlan[] = profile === 'ips'
         ? [
             { title: IPS_SECTIONS[0].title, code: loincSection(IPS_SECTIONS[0].code, IPS_SECTIONS[0].title), refs: [...coreRefs, ...prescriptionRefs], narrative: [] },
             { title: IPS_SECTIONS[1].title, code: loincSection(IPS_SECTIONS[1].code, IPS_SECTIONS[1].title), refs: [...coreRefs, ...allergyRefs], narrative: [] },
-            {
-                title: IPS_SECTIONS[2].title, code: loincSection(IPS_SECTIONS[2].code, IPS_SECTIONS[2].title), refs: [...coreRefs, ...conditionRefs],
-                narrative: [
-                    ...(input.encounter.diagnosis ? [`Diagnosis: ${input.encounter.diagnosis}${input.encounter.diagnosisType ? ` (${input.encounter.diagnosisType})` : ''}`] : [])
-                ]
-            },
+            { title: IPS_SECTIONS[2].title, code: loincSection(IPS_SECTIONS[2].code, IPS_SECTIONS[2].title), refs: [...coreRefs, ...conditionRefs], narrative: diagnosis },
             { title: IPS_SECTIONS[3].title, code: loincSection(IPS_SECTIONS[3].code, IPS_SECTIONS[3].title), refs: [...coreRefs, ...observationRefs], narrative: [] }
         ]
         : [
-        {
-            title: OP_CONSULT_SECTIONS[0],
-            refs: [...coreRefs, ...conditionRefs, ...observationRefs],
-            narrative: [
-                ...(input.encounter.symptoms ? [`Complaints: ${input.encounter.symptoms}`] : []),
-                ...(input.encounter.examinationNotes ? [`Examination: ${input.encounter.examinationNotes}`] : [])
-            ]
-        },
-        { title: OP_CONSULT_SECTIONS[1], refs: [...coreRefs, ...observationRefs], narrative: [] },
-        {
-            title: OP_CONSULT_SECTIONS[2],
-            refs: [...coreRefs, ...conditionRefs],
-            narrative: [
-                ...(input.encounter.diagnosis ? [`Diagnosis: ${input.encounter.diagnosis}${input.encounter.diagnosisType ? ` (${input.encounter.diagnosisType})` : ''}`] : [])
-            ]
-        },
-        { title: OP_CONSULT_SECTIONS[3], refs: [...coreRefs, ...prescriptionRefs], narrative: [] },
-        { title: OP_CONSULT_SECTIONS[4], refs: [...coreRefs, ...allergyRefs], narrative: [] }
-    ];
+            {
+                ...opSection(0), refs: [],
+                narrative: [
+                    ...(input.encounter.symptoms ? [`Complaints: ${input.encounter.symptoms}`] : []),
+                    ...diagnosis
+                ]
+            },
+            {
+                ...opSection(1), refs: observationRefs,
+                narrative: input.encounter.examinationNotes ? [`Examination: ${input.encounter.examinationNotes}`] : []
+            },
+            { ...opSection(2), refs: allergyRefs, narrative: [] },
+            { ...opSection(3), refs: conditionRefs, narrative: [] },
+            { ...opSection(4), refs: prescriptionRefs, narrative: [] }
+        ];
+    // A Composition needs at least one section, and a section needs entries
+    // or text: drop the empty ones, keeping chief complaints as the floor.
+    let kept = sections.filter((section) => section.refs.length > 0 || section.narrative.some((line) => line.trim()));
+    if (kept.length === 0) kept = [{ ...sections[0], narrative: ['No findings recorded.'] }];
+    if (profile === 'ips') kept = sections;
 
-    const composition = compositionResource(input, date, profile, sections);
+    const composition = compositionResource(input, date, profile, kept);
+    const all: Array<{ fullUrl: string; resource: Resource }> = [
+        { fullUrl: 'Composition/record', resource: composition },
+        ...entries
+    ];
+    // Absolute fullUrls, derived from the record so re-exports agree.
+    const seed = `${profile}|${input.clinic.registryId || input.clinic.name}|${input.encounter.id}`;
+    const urls = new Map(all.map((entry) => [entry.fullUrl, `urn:uuid:${stableUuid(`${seed}|${entry.fullUrl}`)}`]));
+    for (const entry of all) rewriteReferences(entry.resource, urls);
+    if (profile === 'op-consult') {
+        for (const entry of all) {
+            const name = NRCES_PROFILE[entry.resource.resourceType];
+            if (name) entry.resource.meta = { profile: [name] };
+        }
+    }
+
     // bdl-9: document bundles carry an identifier. Deterministic per
     // encounter and profile so re-exports of the same record agree.
     const bundle: Bundle = {
         resourceType: 'Bundle',
+        ...(profile === 'op-consult'
+            ? { meta: { versionId: '1', lastUpdated: date, profile: [NRCES_PROFILE['Bundle'] as string] } }
+            : {}),
         identifier: {
             system: 'https://nalamdesk.app/fhir/document',
             value: `${profile}-${input.encounter.id}-${date}`
         },
         type: 'document',
         timestamp: date,
-        entry: [
-            { fullUrl: 'Composition/record', resource: composition },
-            ...entries
-        ]
+        entry: all.map((entry) => ({ fullUrl: urls.get(entry.fullUrl), resource: entry.resource }))
     };
     return { bundle, warnings };
 }

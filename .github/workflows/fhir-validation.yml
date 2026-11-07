@@ -75,13 +75,13 @@ jobs:
 
       - name: Build sample bundles
         working-directory: ./desktop
-        run: npx --yes tsx@4.19.2 scripts/fhir/write-samples.ts "$RUNNER_TEMP/fhir"
+        run: npx --yes tsx@4.19.2 scripts/fhir/write-samples.ts
 
       - name: Validate against NRCES profiles
         shell: bash
         run: |
           java -jar ~/fhir-validator/validator_cli-${VALIDATOR_VERSION}.jar \
-            "$RUNNER_TEMP"/fhir/*.json \
+            desktop/build/fhir-samples/*.json \
             -version 4.0.1 \
             -ig "$NRCES_IG" \
             -profile "$DOCUMENT_BUNDLE" \
@@ -94,5 +94,5 @@ jobs:
         with:
           name: fhir-validation
           path: |
-            ${{ runner.temp }}/fhir
-            ${{ runner.temp }}/fhir-results.*
+            desktop/build/fhir-samples
+            ${{ runner.temp }}/fhir-results.txt

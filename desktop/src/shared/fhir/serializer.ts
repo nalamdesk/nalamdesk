@@ -16,7 +16,7 @@
  */
 
 import type {
-    AllergyIntolerance, Bundle, Composition, Condition, Dosage, Encounter,
+    AllergyIntolerance, Bundle, Composition, Condition, Dosage, Encounter, Identifier,
     MedicationRequest, Observation, Organization, Patient, Practitioner,
     Quantity, Resource
 } from './r4';
@@ -101,8 +101,20 @@ const SNOMED = 'http://snomed.info/sct';
 const V2_ID_TYPE = 'http://terminology.hl7.org/CodeSystem/v2-0203';
 const NDHM_ID_TYPE = 'https://nrces.in/ndhm/fhir/r4/CodeSystem/ndhm-identifier-type-code';
 
-function idType(system: string, code: string, display: string): { coding: Array<{ system: string; code: string; display: string }> } {
-    return { coding: [{ system, code, display }] };
+// Identifier types: [type code system, code, display].
+const ID_TYPES = {
+    MR: [V2_ID_TYPE, 'MR', 'Medical record number'],
+    ABHA: [NDHM_ID_TYPE, 'ABHA', 'Ayushman Bharat Health Account (ABHA) ID'],
+    MD: [V2_ID_TYPE, 'MD', 'Medical License number'],
+    EI: [V2_ID_TYPE, 'EI', 'Employee number'],
+    PRN: [V2_ID_TYPE, 'PRN', 'Provider number'],
+    XX: [V2_ID_TYPE, 'XX', 'Organization identifier']
+} as const;
+
+/** A typed identifier, as every NRCES Patient, Practitioner and Organization needs. */
+function typedId(kind: keyof typeof ID_TYPES, system: string, value: string): Identifier {
+    const [typeSystem, code, display] = ID_TYPES[kind];
+    return { type: { coding: [{ system: typeSystem, code, display }] }, system, value };
 }
 
 function ref(resource: string, id: number | string): { reference: string } {
@@ -309,17 +321,9 @@ function genderFor(value?: string): 'male' | 'female' | 'other' | 'unknown' {
 
 function patientResource(input: EncounterExportInput): Patient {
     // The clinic's own record number always; the ABHA address when linked.
-    const identifiers = [{
-        type: idType(V2_ID_TYPE, 'MR', 'Medical record number'),
-        system: 'https://nalamdesk.app/fhir/patient',
-        value: String(input.patient.id)
-    }];
+    const identifiers = [typedId('MR', 'https://nalamdesk.app/fhir/patient', String(input.patient.id))];
     if (input.patient.abhaAddress) {
-        identifiers.push({
-            type: idType(NDHM_ID_TYPE, 'ABHA', 'Ayushman Bharat Health Account (ABHA) ID'),
-            system: 'https://healthid.abdm.gov.in',
-            value: input.patient.abhaAddress
-        });
+        identifiers.push(typedId('ABHA', 'https://healthid.abdm.gov.in', input.patient.abhaAddress));
     }
     return {
         resourceType: 'Patient',
@@ -333,30 +337,12 @@ function patientResource(input: EncounterExportInput): Patient {
 }
 
 function practitionerResource(input: EncounterExportInput): Practitioner {
-    const identifiers = [];
-    // The HPR ID uses the system NRCES examples give for it.
-    if (input.practitioner.registryId) {
-        identifiers.push({
-            type: idType(V2_ID_TYPE, 'MD', 'Medical License number'),
-            system: 'https://doctor.ndhm.gov.in',
-            value: input.practitioner.registryId
-        });
-    }
-    if (input.practitioner.licenseNumber) {
-        identifiers.push({
-            type: idType(V2_ID_TYPE, 'MD', 'Medical License number'),
-            system: 'https://indianmedicalcouncil.gov.in/license',
-            value: input.practitioner.licenseNumber
-        });
-    }
-    // NRCES requires one identifier: fall back to the clinic's own user ID.
-    if (identifiers.length === 0) {
-        identifiers.push({
-            type: idType(V2_ID_TYPE, 'EI', 'Employee number'),
-            system: 'https://nalamdesk.app/fhir/practitioner',
-            value: String(input.practitioner.id)
-        });
-    }
+    // The HPR ID uses the system NRCES examples give for it. NRCES requires
+    // one identifier, so the clinic's own user ID is the fallback.
+    const identifiers: Identifier[] = [];
+    if (input.practitioner.registryId) identifiers.push(typedId('MD', 'https://doctor.ndhm.gov.in', input.practitioner.registryId));
+    if (input.practitioner.licenseNumber) identifiers.push(typedId('MD', 'https://indianmedicalcouncil.gov.in/license', input.practitioner.licenseNumber));
+    if (identifiers.length === 0) identifiers.push(typedId('EI', 'https://nalamdesk.app/fhir/practitioner', String(input.practitioner.id)));
     return {
         resourceType: 'Practitioner',
         identifier: identifiers,
@@ -368,8 +354,8 @@ function organizationResource(input: EncounterExportInput): Organization {
     // The HFR ID uses the system NRCES examples give for it. Without one,
     // NRCES still requires an identifier, so the clinic's name stands in.
     const identifiers = input.clinic.registryId
-        ? [{ type: idType(V2_ID_TYPE, 'PRN', 'Provider number'), system: 'https://facility.ndhm.gov.in', value: input.clinic.registryId }]
-        : [{ type: idType(V2_ID_TYPE, 'XX', 'Organization identifier'), system: 'https://nalamdesk.app/fhir/facility', value: input.clinic.name || 'clinic' }];
+        ? [typedId('PRN', 'https://facility.ndhm.gov.in', input.clinic.registryId)]
+        : [typedId('XX', 'https://nalamdesk.app/fhir/facility', input.clinic.name || 'clinic')];
     return {
         resourceType: 'Organization',
         identifier: identifiers,
@@ -468,14 +454,12 @@ function rewriteReferences(value: unknown, urls: Map<string, string>): void {
         return;
     }
     if (!value || typeof value !== 'object') return;
-    const record = value as Record<string, unknown>;
-    for (const [key, child] of Object.entries(record)) {
-        if (key === 'reference' && typeof child === 'string' && urls.has(child)) {
-            record[key] = urls.get(child);
-        } else {
-            rewriteReferences(child, urls);
-        }
+    const record = value as { reference?: unknown };
+    if (typeof record.reference === 'string') {
+        const url = urls.get(record.reference);
+        if (url) record.reference = url;
     }
+    for (const child of Object.values(record)) rewriteReferences(child, urls);
 }
 
 function bundleFor(

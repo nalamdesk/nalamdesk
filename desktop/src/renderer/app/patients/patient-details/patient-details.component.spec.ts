@@ -536,7 +536,9 @@ describe('PatientDetailsComponent', () => {
         expect(JSON.stringify(bundle)).toContain('MED-OLD');
         expect(JSON.stringify(bundle)).not.toContain('Admin User');
         const request = bundle.entry.find((e: any) => e.resource?.resourceType === 'MedicationRequest').resource;
-        expect(request.requester).toMatchObject({ reference: 'Practitioner/10' });
+        const practitioner = bundle.entry.find((e: any) => e.resource?.resourceType === 'Practitioner');
+        expect(request.requester).toMatchObject({ reference: practitioner.fullUrl });
+        expect(JSON.stringify(practitioner.resource.identifier)).toContain('MED-OLD');
     });
 
     it('defaults timestamps to the encounter date, not export time', () => {

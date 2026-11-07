@@ -43,8 +43,9 @@ describe('buildOpConsultRecord', () => {
         expect(composition.resourceType).toBe('Composition');
         expect(composition.title).toContain('OP Consultation');
         expect(composition.section.map((s: any) => s.title)).toEqual([
-            'Chief Complaints', 'Observations', 'Diagnosis', 'Prescription', 'Advice'
+            'Chief complaints', 'Physical examination', 'Allergies', 'Medical history', 'Medications'
         ]);
+        expect(composition.type.coding[0]).toMatchObject({ system: 'http://snomed.info/sct', code: '371530004' });
         expect(warnings.join(' ')).toContain('SOS');
     });
 
@@ -62,13 +63,23 @@ describe('buildOpConsultRecord', () => {
             .filter((e) => e.resource?.resourceType === 'Observation')
             .map((e) => e.resource);
         const codes = observations.flatMap((o) => o.code?.coding?.map((c: any) => c.code) || []);
-        expect(codes).toEqual(expect.arrayContaining(['8480-6', '8462-4', '8867-4', '8310-5', '2708-6', '29463-7', '8302-2']));
+        expect(codes).toEqual(expect.arrayContaining(['85354-9', '8867-4', '8310-5', '2708-6', '29463-7', '8302-2']));
+        const bp = observations.find((o) => o.code.coding[0].code === '85354-9');
+        expect(bp.component.map((c: any) => [c.code.coding[0].code, c.valueQuantity.value, c.valueQuantity.code]))
+            .toEqual([['8480-6', 120, 'mm[Hg]'], ['8462-4', 80, 'mm[Hg]']]);
+        const pulse = observations.find((o) => o.code.coding[0].code === '8867-4');
+        expect(pulse).toMatchObject({
+            category: [{ coding: [{ code: 'vital-signs' }] }],
+            effectiveDateTime: '2026-09-20T10:00:00.000Z',
+            valueQuantity: { value: 72, system: 'http://unitsofmeasure.org', code: '/min' }
+        });
         const requests: any[] = bundle.entry
             .filter((e) => e.resource?.resourceType === 'MedicationRequest')
             .map((e) => e.resource);
         expect(requests).toHaveLength(2);
         expect(requests[0].dosageInstruction[0].timing.repeat).toMatchObject({ frequency: 2, periodUnit: 'd' });
-        expect(requests[0].requester).toMatchObject({ reference: 'Practitioner/10' });
+        const practitionerUrl = bundle.entry.find((e) => e.resource?.resourceType === 'Practitioner')?.fullUrl;
+        expect(requests[0].requester).toMatchObject({ reference: practitionerUrl });
     });
 
     it('keeps unmapped frequencies as text with a warning instead of dropping', () => {
@@ -133,14 +144,32 @@ describe('buildOpConsultRecord', () => {
         expect(allergy.reaction[0].manifestation[0].text).toBe('Rash');
     });
 
-    it('keeps every entry paired with its own reference', () => {
+    it('addresses every entry by a stable urn:uuid that all references use', () => {
         const { bundle } = buildOpConsultRecord(fixture(), '2026-09-20T10:00:00.000Z');
-        const byUrl = new Map(bundle.entry.map((e) => [e.fullUrl, e.resource?.resourceType]));
-        expect(byUrl.get('Composition/record')).toBe('Composition');
-        for (const [url, kind] of byUrl) {
-            if (url === 'Composition/record') continue;
-            expect(url.startsWith(`${kind}/`)).toBe(true);
-        }
+        const urls = bundle.entry.map((e) => e.fullUrl as string);
+        expect(urls.every((u) => /^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(u))).toBe(true);
+        expect(new Set(urls).size).toBe(urls.length);
+        expect(bundle.entry[0].resource?.resourceType).toBe('Composition');
+        const references = JSON.stringify(bundle).match(/"reference":"[^"]*"/g) || [];
+        expect(references.length).toBeGreaterThan(0);
+        for (const ref of references) expect(urls).toContain(ref.slice(13, -1));
+        // Same record, same addresses.
+        const again = buildOpConsultRecord(fixture(), '2026-09-20T10:00:00.000Z').bundle;
+        expect(again.entry.map((e) => e.fullUrl)).toEqual(urls);
+    });
+
+    it('declares the NRCES profiles on the bundle and every resource', () => {
+        const { bundle } = buildOpConsultRecord(fixture(), '2026-09-20T10:00:00.000Z');
+        const nrces = 'https://nrces.in/ndhm/fhir/r4/StructureDefinition/';
+        expect(bundle.meta).toMatchObject({ versionId: '1', profile: [`${nrces}DocumentBundle`] });
+        const profiles = bundle.entry.map((e) => [e.resource?.resourceType, (e.resource as any).meta?.profile?.[0]]);
+        expect(profiles).toEqual(expect.arrayContaining([
+            ['Composition', `${nrces}OPConsultRecord`],
+            ['Patient', `${nrces}Patient`],
+            ['Observation', `${nrces}ObservationVitalSigns`],
+            ['MedicationRequest', `${nrces}MedicationRequest`]
+        ]));
+        expect(profiles.every(([, profile]) => typeof profile === 'string')).toBe(true);
     });
 
     it('gives each section its own entries plus the findings narrative', () => {
@@ -149,19 +178,37 @@ describe('buildOpConsultRecord', () => {
         const byTitle = new Map(composition.section.map((s: any) => [s.title, s]));
         // Every section entry must resolve to a real bundle entry.
         const known = new Set(bundle.entry.map((e) => e.fullUrl));
+        const kindOf = new Map(bundle.entry.map((e) => [e.fullUrl, e.resource?.resourceType]));
         for (const section of composition.section) {
-            for (const entry of section.entry) {
+            for (const entry of section.entry || []) {
                 expect(known.has(entry.reference)).toBe(true);
             }
         }
-        const prescription = byTitle.get('Prescription');
-        const rxRefs = prescription.entry.map((e: any) => e.reference);
-        expect(rxRefs.some((r: string) => r.startsWith('MedicationRequest/'))).toBe(true);
-        expect(rxRefs.some((r: string) => r.startsWith('Patient/'))).toBe(true);
-        const diagnosis = byTitle.get('Diagnosis');
-        expect(diagnosis.text.div).toContain('Acute pharyngitis');
-        const complaints = byTitle.get('Chief Complaints');
+        // Each NRCES slice holds only the resource type it allows.
+        const kinds = (title: string) => [...new Set((byTitle.get(title) as any).entry.map((e: any) => kindOf.get(e.reference)))];
+        expect(kinds('Medications')).toEqual(['MedicationRequest']);
+        expect(kinds('Physical examination')).toEqual(['Observation']);
+        expect(kinds('Allergies')).toEqual(['AllergyIntolerance']);
+        expect(kinds('Medical history')).toEqual(['Condition']);
+        const complaints: any = byTitle.get('Chief complaints');
+        expect(complaints.entry).toBeUndefined();
         expect(complaints.text.div).toContain('Sore throat');
+        expect(complaints.text.div).toContain('Acute pharyngitis');
+        expect((byTitle.get('Physical examination') as any).text.div).toContain('Throat congested');
+    });
+
+    it('drops empty sections and keeps chief complaints when nothing was recorded', () => {
+        const input = fixture();
+        input.prescriptions = [];
+        input.allergies = [];
+        input.conditions = [];
+        input.vitals = null;
+        input.encounter = { id: 7, date: '2026-09-20T10:00:00.000Z' };
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const composition: any = bundle.entry[0].resource;
+        expect(composition.section).toHaveLength(1);
+        expect(composition.section[0].title).toBe('Chief complaints');
+        expect(composition.section[0].text.div).toContain('No findings recorded.');
     });
 
     it('defaults all timestamps to the encounter date', () => {
@@ -190,7 +237,7 @@ describe('buildOpConsultRecord', () => {
         input.encounter.symptoms = 'nausea & vomiting <severe>';
         const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
         const composition: any = bundle.entry[0].resource;
-        const complaints = composition.section.find((s: any) => s.title === 'Chief Complaints');
+        const complaints = composition.section.find((s: any) => s.title === 'Chief complaints');
         expect(complaints.text.div).toContain('xmlns="http://www.w3.org/1999/xhtml"');
         expect(complaints.text.div).toContain('nausea &amp; vomiting &lt;severe&gt;');
         expect(complaints.text.div).not.toContain('<severe>');
@@ -228,7 +275,8 @@ describe('buildOpConsultRecord', () => {
         const { bundle } = buildOpConsultRecord(input, today);
         const request: any = bundle.entry
             .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
-        expect(request.validityPeriod).toMatchObject({ start, end: expected.toISOString().slice(0, 10) });
+        expect(request.dispenseRequest.validityPeriod).toMatchObject({ start, end: expected.toISOString().slice(0, 10) });
+        expect(request.validityPeriod).toBeUndefined();
         expect(request.status).toBe('active');
     });
 
@@ -240,7 +288,7 @@ describe('buildOpConsultRecord', () => {
         const { bundle } = buildOpConsultRecord(input, '2020-01-01T10:00:00.000Z');
         const request: any = bundle.entry
             .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
-        expect(request.validityPeriod).toMatchObject({ start: '2020-01-01', end: '2020-01-04' });
+        expect(request.dispenseRequest.validityPeriod).toMatchObject({ start: '2020-01-01', end: '2020-01-04' });
         expect(request.status).toBe('completed');
     });
 
@@ -252,7 +300,7 @@ describe('buildOpConsultRecord', () => {
         const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
         const request: any = bundle.entry
             .find((e) => e.resource?.resourceType === 'MedicationRequest')?.resource;
-        expect(request.validityPeriod).toBeUndefined();
+        expect(request.dispenseRequest?.validityPeriod).toBeUndefined();
         expect(request.status).toBe('active');
     });
 
@@ -303,11 +351,17 @@ describe('buildOpConsultRecord', () => {
             expect.arrayContaining([expect.objectContaining({ value: 'HPR-67890' })]));
     });
 
-    it('omits registry identifiers when unconfigured', () => {
-        const { bundle } = buildOpConsultRecord(fixture(), '2026-09-20T10:00:00.000Z');
-        const organization: any = bundle.entry
-            .find((e) => e.resource?.resourceType === 'Organization')?.resource;
-        expect(organization.identifier).toBeUndefined();
+    it('falls back to local identifiers when registry IDs are unconfigured', () => {
+        const input = fixture();
+        delete (input.practitioner as any).licenseNumber;
+        const { bundle } = buildOpConsultRecord(input, '2026-09-20T10:00:00.000Z');
+        const find = (kind: string): any => bundle.entry.find((e) => e.resource?.resourceType === kind)?.resource;
+        expect(find('Organization').identifier).toEqual([expect.objectContaining({ system: 'https://nalamdesk.app/fhir/facility', value: 'Nalam Clinic' })]);
+        expect(find('Practitioner').identifier).toEqual([expect.objectContaining({ system: 'https://nalamdesk.app/fhir/practitioner', value: '10' })]);
+        // Every identifier is typed, as the NRCES profiles require.
+        for (const kind of ['Organization', 'Practitioner', 'Patient']) {
+            for (const id of find(kind).identifier) expect(id.type.coding[0].code).toBeTruthy();
+        }
     });
 
     it('identifies the encounter with its care context reference', () => {
@@ -330,7 +384,9 @@ describe('buildOpConsultRecord', () => {
         expect(byTitle.get('Medication Summary').code.coding[0].code).toBe('10160-0');
         expect(byTitle.get('Allergies and Intolerances').code.coding[0].code).toBe('48765-2');
         const meds = byTitle.get('Medication Summary');
-        expect(meds.entry.every((e: any) => e.reference.startsWith('MedicationRequest/') || e.reference.startsWith('Patient/') || e.reference.startsWith('Practitioner/') || e.reference.startsWith('Encounter/'))).toBe(true);
+        const kindOf = new Map(bundle.entry.map((e) => [e.fullUrl, e.resource?.resourceType]));
+        expect(meds.entry.every((e: any) => ['MedicationRequest', 'Patient', 'Practitioner', 'Encounter'].includes(kindOf.get(e.reference) as string))).toBe(true);
+        expect(meds.entry.some((e: any) => kindOf.get(e.reference) === 'MedicationRequest')).toBe(true);
     });
 });
 

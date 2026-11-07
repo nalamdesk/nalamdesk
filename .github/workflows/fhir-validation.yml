@@ -1,0 +1,98 @@
+name: FHIR validation
+
+# Checks the FHIR bundles NalamDesk sends to ABDM against the NRCES ABDM
+# implementation guide (package ndhm.in) with the official HL7 validator.
+# Runs only when the FHIR code, its HIP caller, or this check changes.
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'desktop/src/shared/fhir/**'
+      - 'desktop/src/shared/clinical-timing.ts'
+      - 'desktop/src/main/services/HipService.ts'
+      - 'desktop/scripts/fhir/**'
+      - '.github/workflows/fhir-validation.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'desktop/src/shared/fhir/**'
+      - 'desktop/src/shared/clinical-timing.ts'
+      - 'desktop/scripts/fhir/**'
+      - '.github/workflows/fhir-validation.yml'
+
+concurrency:
+  group: fhir-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Pinned and checksummed; bump both together.
+  VALIDATOR_VERSION: 6.7.10
+  VALIDATOR_SHA256: 48c11cff26071d99fae04ca4337ebcb6bad8313193efa6c09b286b4ec5f27df5
+  # NRCES "FHIR Implementation Guide for ABDM".
+  NRCES_IG: ndhm.in#6.5.0
+  DOCUMENT_BUNDLE: https://nrces.in/ndhm/fhir/r4/StructureDefinition/DocumentBundle
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache validator and FHIR packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.fhir/packages
+            ~/fhir-validator
+          key: fhir-${{ env.VALIDATOR_VERSION }}-${{ env.NRCES_IG }}
+
+      - name: Download HL7 validator
+        run: |
+          mkdir -p ~/fhir-validator
+          jar=~/fhir-validator/validator_cli-${VALIDATOR_VERSION}.jar
+          if [ ! -f "$jar" ]; then
+            curl -fsSL --retry 3 -o "$jar" \
+              "https://github.com/hapifhir/org.hl7.fhir.core/releases/download/${VALIDATOR_VERSION}/validator_cli.jar"
+          fi
+          echo "${VALIDATOR_SHA256}  $jar" | sha256sum -c -
+
+      - name: Build sample bundles
+        working-directory: ./desktop
+        run: npx --yes tsx@4.19.2 scripts/fhir/write-samples.ts "$RUNNER_TEMP/fhir"
+
+      - name: Validate against NRCES profiles
+        shell: bash
+        run: |
+          java -jar ~/fhir-validator/validator_cli-${VALIDATOR_VERSION}.jar \
+            "$RUNNER_TEMP"/fhir/*.json \
+            -version 4.0.1 \
+            -ig "$NRCES_IG" \
+            -profile "$DOCUMENT_BUNDLE" \
+            -tx n/a \
+            | tee "$RUNNER_TEMP/fhir-results.txt"
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fhir-validation
+          path: |
+            ${{ runner.temp }}/fhir
+            ${{ runner.temp }}/fhir-results.*

@@ -1,0 +1,11 @@
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "nalamdesk-www-redirect",
+	"main": "./worker.js",
+	"compatibility_date": "2026-10-01",
+	// Attaching www.nalamdesk.com as a custom domain creates its proxied DNS
+	// record and certificate. Deploy fails if a manual www record already
+	// exists in the zone: delete that record once, then rerun the deploy.
+	"routes": [{ "pattern": "www.nalamdesk.com", "custom_domain": true }],
+	"workers_dev": false
+}

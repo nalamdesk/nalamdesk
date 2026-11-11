@@ -10,7 +10,9 @@
     "preview": "astro preview",
     "generate-types": "wrangler types",
     "deploy": "wrangler deploy",
-    "deploy:dry-run": "wrangler deploy --dry-run"
+    "deploy:dry-run": "wrangler deploy --dry-run",
+    "deploy:www": "wrangler deploy -c www-redirect/wrangler.jsonc",
+    "deploy:www:dry-run": "wrangler deploy --dry-run -c www-redirect/wrangler.jsonc"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.3.3",

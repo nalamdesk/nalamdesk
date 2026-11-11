@@ -52,7 +52,7 @@ jobs:
         run: npx wrangler deploy --dry-run
 
       - name: Validate www redirect Worker config (no credentials)
-        run: npx wrangler deploy --dry-run -c www-redirect/wrangler.jsonc
+        run: npm run deploy:www:dry-run
 
       - name: Deploy to Cloudflare
         if: github.event_name == 'push'
@@ -63,7 +63,7 @@ jobs:
 
       - name: Deploy www redirect to Cloudflare
         if: github.event_name == 'push'
-        run: npx wrangler deploy -c www-redirect/wrangler.jsonc
+        run: npm run deploy:www
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

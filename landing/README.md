@@ -58,7 +58,7 @@ the certificate; the worker serves `<name>.workers.dev` until then.
 `www.nalamdesk.com` is served by a separate tiny worker,
 `nalamdesk-www-redirect` (`www-redirect/`), which 301s every request to
 the same path on `nalamdesk.com`. The same pipeline deploys it with
-`wrangler deploy -c www-redirect/wrangler.jsonc`. If the zone already has
+`npm run deploy:www`. If the zone already has
 a manual `www` DNS record, the first deploy fails on the custom-domain
 conflict: delete that record in Cloudflare DNS and rerun the deploy.
 

@@ -29,13 +29,17 @@ import '../styles/global.css';
   <meta name="twitter:title" content={title}>
   <meta name="twitter:description" content={description}>
   <meta name="twitter:image" content="https://nalamdesk.com/og.png">
-  <link rel="icon" type="image/png" href="/logo-192.png">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
   <link rel="preload" href="/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "NalamDesk",
+    "image": "https://nalamdesk.com/brand/nalamdesk-icon-512.png",
     "applicationCategory": "BusinessApplication",
     "operatingSystem": "Windows, macOS, Linux",
     "license": "https://www.gnu.org/licenses/agpl-3.0.html",

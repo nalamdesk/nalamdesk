@@ -94,7 +94,7 @@ jobs:
         if: steps.config.outputs.ready == 'true'
         run: |
           for dir in cloud/shared cloud/core cloud/relay; do
-            (cd "$dir" && npm ci --prefer-offline --no-audit --no-fund)
+            (cd "$dir" && npm ci --ignore-scripts --prefer-offline --no-audit --no-fund)
           done
 
       # The same checks as Feature Branch CI, so nothing untested reaches AWS
@@ -108,7 +108,8 @@ jobs:
 
       - name: Get temporary AWS credentials
         if: steps.config.outputs.ready == 'true'
-        uses: aws-actions/configure-aws-credentials@v6
+        # Pinned by commit: this step holds the AWS session.
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: nalamdesk-deploy-${{ github.run_id }}

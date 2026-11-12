@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  NalamDesk Cloud: lets the "Deploy Cloud" GitHub Actions workflow deploy the
+  Core and relay stacks with short-lived credentials (GitHub OIDC). No access
+  key exists anywhere. Deploy once per AWS account, by hand, after
+  `cdk bootstrap` (see docs/architecture/cloud-relay.md).
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: nalamdesk/nalamdesk
+    Description: owner/name of the repository whose workflow may assume the role.
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: Use false when the account already has the token.actions.githubusercontent.com provider.
+  CdkQualifier:
+    Type: String
+    Default: hnb659fds
+    Description: The CDK bootstrap qualifier (the default unless bootstrap was run with --qualifier).
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  # One role per stage. The trust policy only accepts a token minted for a job
+  # running in that GitHub environment, so a pull request, a fork or another
+  # branch cannot assume it, and production can be gated by environment
+  # reviewers in the repository settings.
+  SandboxDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: nalamdesk-github-deploy-sandbox
+      Description: GitHub Actions deploys of the NalamDesk sandbox stacks
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:sandbox
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Everything CloudFormation does runs as the CDK bootstrap roles,
+              # which the account's admin created with `cdk bootstrap`.
+              - Sid: AssumeCdkBootstrapRoles
+                Effect: Allow
+                Action: [sts:AssumeRole, sts:TagSession]
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-*
+              # The pre-flight check only asks whether the hand-made relay
+              # parameters exist; it never decrypts them.
+              - Sid: CheckRelayParameters
+                Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/sandbox/relay/*
+
+  ProductionDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: nalamdesk-github-deploy-production
+      Description: GitHub Actions deploys of the NalamDesk production stacks
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:production
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AssumeCdkBootstrapRoles
+                Effect: Allow
+                Action: [sts:AssumeRole, sts:TagSession]
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-*
+              - Sid: CheckRelayParameters
+                Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/production/relay/*
+
+Outputs:
+  SandboxRoleArn:
+    Description: Set as the AWS_DEPLOY_ROLE_ARN secret of the GitHub "sandbox" environment
+    Value: !GetAtt SandboxDeployRole.Arn
+  ProductionRoleArn:
+    Description: Set as the AWS_DEPLOY_ROLE_ARN secret of the GitHub "production" environment
+    Value: !GetAtt ProductionDeployRole.Arn

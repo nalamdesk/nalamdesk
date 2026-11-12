@@ -113,7 +113,10 @@ aws ssm put-parameter --region ap-south-1 --type SecureString --name /nalamdesk/
 aws ssm put-parameter --region ap-south-1 --type SecureString --name /nalamdesk/sandbox/relay/pairing-pepper     --value "$(openssl rand -base64 48)"
 ```
 
-Deploy `cloud/core` first, then:
+CI deploys both stacks with temporary AWS credentials: see
+[docs/architecture/cloud-relay.md](../../docs/architecture/cloud-relay.md) for the design, the
+diagrams, the `Deploy Cloud` workflow and its one-time setup. To deploy by hand, deploy
+`cloud/core` first, then:
 
 ```sh
 npm run deploy -- -c zoneName=<zone> [-c stage=production] [-c gatewayIssuer=<iss>]

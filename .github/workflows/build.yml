@@ -110,6 +110,11 @@ jobs:
     defaults:
       run:
         working-directory: ./desktop
+    # The NalamDesk Cloud relay this release pairs with: the BridgeUrl of the
+    # stage clinics should use (docs/architecture/cloud-relay.md). Stamped
+    # into build-identity.json; a build without it cannot pair.
+    env:
+      NALAMDESK_RELAY_URL: ${{ vars.NALAMDESK_RELAY_URL }}
     strategy:
       # One OS failing must not cancel the others mid-upload.
       fail-fast: false
@@ -131,6 +136,15 @@ jobs:
 
       - name: Install Dependencies
         run: npm ci
+
+      - name: Check the relay address
+        shell: bash
+        run: |
+          if [ -z "$NALAMDESK_RELAY_URL" ]; then
+            echo "::warning::The repository variable NALAMDESK_RELAY_URL is not set, so this release cannot pair with NalamDesk Cloud."
+          else
+            echo "Relay: $NALAMDESK_RELAY_URL"
+          fi
 
       - name: Build Angular
         env:

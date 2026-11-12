@@ -135,13 +135,14 @@ Details (rate limits, retries, revocation, key rotation):
 
 ## Stages
 
-| Stage | Bridge URL | Deployed by |
-| --- | --- | --- |
-| `sandbox` | `https://abdm-sandbox.<zone>` | Every merge to master that touches `cloud/core`, `cloud/relay` or `cloud/shared`, or a manual run |
-| `production` | `https://abdm.<zone>` | Manual run only, behind the `production` environment's reviewers |
+| Stage | Bridge URL | NalamBook | Deployed by |
+| --- | --- | --- | --- |
+| `sandbox` | `https://abdm-sandbox.<zone>` | `https://book-sandbox.<zone>` | Every merge to master that touches `cloud/core`, `cloud/relay`, `cloud/shared` or `cloud/booking`, or a manual run |
+| `production` | `https://abdm.<zone>` | `https://book.<zone>` | Manual run only, behind the `production` environment's reviewers |
 
 Each stage has its own stacks (`NalamdeskCoreEdge-<stage>`,
-`NalamdeskCore-<stage>`, `NalamdeskRelay-<stage>`), its own parameters under
+`NalamdeskCore-<stage>`, `NalamdeskRelay-<stage>`, `NalamdeskBooking-<stage>`),
+its own parameters under
 `/nalamdesk/<stage>/` and its own GitHub environment and AWS role.
 
 ## Deployment pipeline
@@ -157,13 +158,16 @@ flowchart TD
     A["Merge to master<br/>(cloud/* changed)"] --> C
     B["Run workflow<br/>stage = production"] --> E{"production<br/>environment<br/>reviewer approves"}
     E --> C
-    C["Check environment settings<br/>(skip with a warning on a merge<br/>if not set up yet)"] --> T["Install, typecheck and test<br/>shared, core, relay"]
+    C["Check environment settings<br/>(skip with a warning on a merge<br/>if not set up yet)"] --> T["Install, typecheck and test<br/>shared, core, relay, booking;<br/>build the NalamBook site"]
     T --> O["configure-aws-credentials<br/>OIDC token → 1-hour STS session<br/>on nalamdesk-github-deploy-&lt;stage&gt;"]
     O --> K["cdk deploy --all (cloud/core)<br/>CoreEdge in us-east-1, Core in ap-south-1"]
     K --> P["Check the three hand-made<br/>relay parameters exist"]
     P --> R["cdk deploy (cloud/relay)<br/>bundle, upload, new revision"]
     R --> H["Smoke test GET /health<br/>until 200 (5 minutes)"]
-    H --> S["Job summary: bridge URL<br/>and ops console URL"]
+    H --> BP["Check the booking<br/>phone-pepper parameter exists"]
+    BP --> BK["cdk deploy (cloud/booking/infra)<br/>API Web Function, site to S3"]
+    BK --> BH["Smoke test book-*/ and<br/>/api/health until 200"]
+    BH --> S["Job summary: bridge URL,<br/>ops console and NalamBook URLs"]
 
     subgraph IAM["Inside AWS"]
         O -. "sts:AssumeRoleWithWebIdentity" .-> ROLE["GitHub deploy role<br/>can only assume the<br/>CDK bootstrap roles"]
@@ -176,8 +180,10 @@ Why this shape:
 - **The GitHub role is thin.** It can only assume the CDK bootstrap roles
   and check that the relay parameters exist. CloudFormation acts through the
   bootstrap execution role, which the account admin controls.
-- **Core before relay.** The relay reads Core's table, bucket and IoT names
+- **Core before relay and NalamBook.** Both read Core's table, bucket and IoT names
   from Parameter Store at deploy time. An unchanged Core deploy is a no-op.
+- **One job, three parts.** A manual run can pick `all`, `relay` or
+  `booking`; a merge deploys all of them, and an unchanged stack is a no-op.
 - **No cancelling.** Deploys of one stage queue; a cancelled CloudFormation
   update would roll back half way.
 - **Health is checked, not assumed.** A revision can show Active while the
@@ -213,7 +219,12 @@ Done once per AWS account, from a computer with admin credentials.
 3. **Create the relay parameters** for each stage (see
    [`cloud/relay/README.md`](../../cloud/relay/README.md#infrastructure-infra)):
    `abdm-client-id`, `abdm-client-secret`, `pairing-pepper` under
-   `/nalamdesk/<stage>/relay/`.
+   `/nalamdesk/<stage>/relay/`. For NalamBook, create its phone-limit key once
+   per stage (never overwrite it; that resets every open-request count):
+   ```sh
+   aws ssm put-parameter --region ap-south-1 --type SecureString \
+     --name /nalamdesk/<stage>/booking/phone-pepper --value "$(openssl rand -base64 48)"
+   ```
 4. **DNS.** If the zone already exists in Route 53, set
    `NALAMDESK_HOSTED_ZONE_ID`. Otherwise the first Core deploy creates it and
    waits on certificate validation until the domain's NS records point at
@@ -233,6 +244,11 @@ Done once per AWS account, from a computer with admin credentials.
 6. **Repository variable** `NALAMDESK_RELAY_URL` for desktop releases.
 7. After the first deploy: confirm the SNS email subscription, add staff to
    the ops pool (relay README), and register the bridge URL for the Client ID.
+   For NalamBook, subscribe its CloudFront distribution to the Free flat-rate
+   plan and add the `/api/book` rate rule (cloud/booking/README.md, Deploy notes).
+
+If the deploy roles were created before NalamBook joined the workflow,
+redeploy the template in step 2 so they can check the booking parameter.
 
 ## Operating it
 

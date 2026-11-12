@@ -65,6 +65,12 @@ serves; these make silent tampering hard, not impossible.
 
 ## Deploy notes
 
+CI deploys NalamBook with the relay in the `Deploy Cloud` workflow, with temporary AWS
+credentials: sandbox on every merge that touches `cloud/booking`, production by hand. The setup
+(including creating the phone pepper once per stage) is in
+[docs/architecture/cloud-relay.md](../../docs/architecture/cloud-relay.md).
+`scripts/deploy.sh` remains for a deploy by hand.
+
 The API puts each sealed request in the Core mailbox and rings the clinic's doorbell
 (`cloud/shared`, #155); until the Core names reach it, `api/src/server.ts` serves a 503 holding app
 whose `/api/health` names what is missing. A paired desktop signs its calls (#154) and

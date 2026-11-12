@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   NalamDesk Cloud: lets the "Deploy Cloud" GitHub Actions workflow deploy the
-  Core and relay stacks with short-lived credentials (GitHub OIDC). No access
+  Core, relay and NalamBook stacks with short-lived credentials (GitHub OIDC). No access
   key exists anywhere. Deploy once per AWS account, by hand, after
   `cdk bootstrap` (see docs/architecture/cloud-relay.md).
 
@@ -63,12 +63,14 @@ Resources:
                 Effect: Allow
                 Action: [sts:AssumeRole, sts:TagSession]
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-*
-              # The pre-flight check only asks whether the hand-made relay
-              # parameters exist; it never decrypts them.
-              - Sid: CheckRelayParameters
+              # The pre-flight checks only ask whether the hand-made relay and booking
+              # parameters exist; they never decrypt them.
+              - Sid: CheckHandMadeParameters
                 Effect: Allow
                 Action: ssm:GetParameters
-                Resource: !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/sandbox/relay/*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/sandbox/relay/*
+                  - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/sandbox/booking/*
 
   ProductionDeployRole:
     Type: AWS::IAM::Role
@@ -96,10 +98,12 @@ Resources:
                 Effect: Allow
                 Action: [sts:AssumeRole, sts:TagSession]
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-*
-              - Sid: CheckRelayParameters
+              - Sid: CheckHandMadeParameters
                 Effect: Allow
                 Action: ssm:GetParameters
-                Resource: !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/production/relay/*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/production/relay/*
+                  - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/production/booking/*
 
 Outputs:
   SandboxRoleArn:

@@ -1,0 +1,178 @@
+name: Deploy Cloud
+
+# Deploys the NalamDesk Cloud stacks (cloud/core, then cloud/relay) to AWS
+# with short-lived credentials from GitHub OIDC; no AWS key is stored here.
+# Design and one-time setup: docs/architecture/cloud-relay.md.
+#
+# - A merge to master that touches the cloud code deploys the sandbox.
+# - Production deploys only by hand (Run workflow, stage: production), and
+#   the "production" environment should require a reviewer.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'cloud/core/**'
+      - 'cloud/relay/**'
+      - 'cloud/shared/**'
+      - '.github/workflows/deploy-cloud.yml'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Which stage to deploy
+        type: choice
+        options: [sandbox, production]
+        default: sandbox
+      stacks:
+        description: core-and-relay deploys both; relay skips the Core stacks
+        type: choice
+        options: [core-and-relay, relay]
+        default: core-and-relay
+
+# One deploy per stage at a time, and never cancel one half way: a cancelled
+# CloudFormation update rolls back and can leave the next run waiting.
+concurrency:
+  group: deploy-cloud-${{ inputs.stage || 'sandbox' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.stage || 'sandbox' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The environment holds the stage's secrets and variables, and the AWS
+    # role only trusts tokens minted for a job in this environment.
+    environment:
+      name: ${{ inputs.stage || 'sandbox' }}
+      url: ${{ steps.relay.outputs.bridge_url }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      STAGE: ${{ inputs.stage || 'sandbox' }}
+      DEPLOY_CORE: ${{ inputs.stacks != 'relay' }}
+      ZONE_NAME: ${{ vars.NALAMDESK_ZONE_NAME }}
+      HOSTED_ZONE_ID: ${{ vars.NALAMDESK_HOSTED_ZONE_ID }}
+      GATEWAY_ISSUER: ${{ vars.ABDM_GATEWAY_ISSUER }}
+      BUDGET_EMAIL: ${{ secrets.NALAMDESK_BUDGET_EMAIL }}
+      HAS_ROLE: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
+    steps:
+      # Until the environment is set up, a merge skips the deploy with a
+      # warning instead of failing; a manual run fails and says what is missing.
+      - name: Check the environment's settings
+        id: config
+        run: |
+          missing=()
+          [ "$HAS_ROLE" = "true" ] || missing+=("secret AWS_DEPLOY_ROLE_ARN")
+          [ -n "$ZONE_NAME" ] || missing+=("variable NALAMDESK_ZONE_NAME")
+          if [ "$DEPLOY_CORE" = "true" ] && [ -z "$BUDGET_EMAIL" ]; then missing+=("secret NALAMDESK_BUDGET_EMAIL"); fi
+          if [ ${#missing[@]} -eq 0 ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          msg="The $STAGE environment is missing: ${missing[*]}. See docs/architecture/cloud-relay.md."
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then echo "::warning::$msg Skipping this deploy."; exit 0; fi
+          echo "::error::$msg"; exit 1
+
+      - name: Checkout code
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            cloud/core/package-lock.json
+            cloud/relay/package-lock.json
+            cloud/shared/package-lock.json
+
+      - name: Install dependencies
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          for dir in cloud/shared cloud/core cloud/relay; do
+            (cd "$dir" && npm ci --prefer-offline --no-audit --no-fund)
+          done
+
+      # The same checks as Feature Branch CI, so nothing untested reaches AWS
+      # even from a manual run on another ref.
+      - name: Test
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          (cd cloud/shared && npm run typecheck && npm test)
+          (cd cloud/core && npm run typecheck && npm test)
+          (cd cloud/relay && npm run typecheck && npm test)
+
+      - name: Get temporary AWS credentials
+        if: steps.config.outputs.ready == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: nalamdesk-deploy-${{ github.run_id }}
+          role-duration-seconds: 3600
+          aws-region: ap-south-1
+          mask-aws-account-id: true
+
+      - name: Deploy Core stacks
+        if: steps.config.outputs.ready == 'true' && env.DEPLOY_CORE == 'true'
+        working-directory: ./cloud/core
+        run: |
+          args=(-c "stage=$STAGE" -c "zoneName=$ZONE_NAME" -c "budgetEmail=$BUDGET_EMAIL")
+          [ -n "$HOSTED_ZONE_ID" ] && args+=(-c "hostedZoneId=$HOSTED_ZONE_ID")
+          npx cdk deploy --all --require-approval never --progress events "${args[@]}"
+
+      # CloudFormation cannot create SecureStrings, so these three are made
+      # by hand once per stage. Without them the relay starts but cannot work.
+      - name: Check the relay's hand-made parameters
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          names=(/nalamdesk/$STAGE/relay/abdm-client-id /nalamdesk/$STAGE/relay/abdm-client-secret /nalamdesk/$STAGE/relay/pairing-pepper)
+          invalid=$(aws ssm get-parameters --names "${names[@]}" --query 'InvalidParameters' --output text)
+          if [ -n "$invalid" ] && [ "$invalid" != "None" ]; then
+            echo "::error::Create these Parameter Store values first (docs/architecture/cloud-relay.md): $invalid"
+            exit 1
+          fi
+
+      - name: Deploy relay stack
+        id: relay
+        if: steps.config.outputs.ready == 'true'
+        working-directory: ./cloud/relay
+        run: |
+          args=(-c "stage=$STAGE" -c "zoneName=$ZONE_NAME")
+          [ -n "$GATEWAY_ISSUER" ] && args+=(-c "gatewayIssuer=$GATEWAY_ISSUER")
+          npx cdk deploy --require-approval never --progress events --outputs-file "$RUNNER_TEMP/relay-outputs.json" "${args[@]}"
+          bridge=$(node -e 'const o = require(process.argv[1]); console.log(Object.values(o)[0].BridgeUrl)' "$RUNNER_TEMP/relay-outputs.json")
+          echo "bridge_url=$bridge" >> "$GITHUB_OUTPUT"
+
+      # A revision can show Active while the app fails to start, and a relay
+      # missing an adapter answers 503 with what is missing, so check it.
+      - name: Smoke test /health
+        if: steps.config.outputs.ready == 'true'
+        env:
+          BRIDGE_URL: ${{ steps.relay.outputs.bridge_url }}
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            body=$(curl -sS --max-time 15 -w '\n%{http_code}' "$BRIDGE_URL/health" || true)
+            code=${body##*$'\n'}
+            echo "Attempt $attempt: HTTP $code ${body%$'\n'*}"
+            [ "$code" = "200" ] && exit 0
+            sleep 30
+          done
+          echo "::error::$BRIDGE_URL/health did not answer 200"
+          exit 1
+
+      - name: Summary
+        if: steps.config.outputs.ready == 'true'
+        env:
+          BRIDGE_URL: ${{ steps.relay.outputs.bridge_url }}
+        run: |
+          {
+            echo "### Relay ($STAGE) deployed from \`${GITHUB_SHA::7}\`"
+            echo
+            echo "- Bridge URL: $BRIDGE_URL (register it for the ABDM Client ID)"
+            echo "- Ops console: $BRIDGE_URL/ops/"
+            echo "- Desktop releases use the repository variable \`NALAMDESK_RELAY_URL\`; set it to the bridge URL of the stage clinics should pair with."
+          } >> "$GITHUB_STEP_SUMMARY"

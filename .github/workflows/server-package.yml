@@ -44,6 +44,9 @@ permissions:
 
 env:
   IMAGE: ghcr.io/nalamdesk/nalamdesk-server
+  # The NalamDesk Cloud relay the packages pair with (docs/architecture/cloud-relay.md).
+  # build:web stamps it into build-identity.json; empty means pairing is off.
+  NALAMDESK_RELAY_URL: ${{ vars.NALAMDESK_RELAY_URL }}
   # WinSW 2.12.0 (https://github.com/winsw/winsw), pinned by checksum.
   WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe
   WINSW_SHA256: 05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da
@@ -157,6 +160,7 @@ jobs:
           build-args: |
             VERSION=${{ inputs.tag || github.sha }}
             NALAMDESK_BUILD_COMMIT=${{ github.sha }}
+            NALAMDESK_RELAY_URL=${{ vars.NALAMDESK_RELAY_URL }}
           cache-from: type=gha,scope=server-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=server-${{ matrix.arch }}
 
@@ -248,6 +252,7 @@ jobs:
           build-args: |
             VERSION=${{ inputs.tag }}
             NALAMDESK_BUILD_COMMIT=${{ github.sha }}
+            NALAMDESK_RELAY_URL=${{ vars.NALAMDESK_RELAY_URL }}
           cache-from: type=gha,scope=server-${{ matrix.arch }}
 
   docker-manifest:

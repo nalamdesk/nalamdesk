@@ -145,6 +145,16 @@ Each stage has its own stacks (`NalamdeskCoreEdge-<stage>`,
 its own parameters under
 `/nalamdesk/<stage>/` and its own GitHub environment and AWS role.
 
+**The two stages share one hosted zone.** The zone is a subdomain of the
+`nalamdesk.com` zone that Cloudflare serves, delegated to Route 53 by a set
+of NS records at Cloudflare; the stages differ only in the host names inside
+it (`abdm-sandbox.` and `abdm.`). The zone is therefore made by hand, not by
+CloudFormation: CloudFormation cannot create the same zone name twice, and
+the certificate cannot be validated until the delegation exists, so a
+CloudFormation-created zone would leave the first deploy waiting. Both stages
+import the zone with `-c hostedZoneId=<id>`, which is why
+`NALAMDESK_HOSTED_ZONE_ID` is the same in both environments.
+
 ## Deployment pipeline
 
 [`.github/workflows/deploy-cloud.yml`](../../.github/workflows/deploy-cloud.yml)
@@ -160,7 +170,8 @@ flowchart TD
     E --> C
     C["Check environment settings<br/>(skip with a warning on a merge<br/>if not set up yet)"] --> T["Install, typecheck and test<br/>shared, core, relay, booking;<br/>build the NalamBook site"]
     T --> O["configure-aws-credentials<br/>OIDC token → 1-hour STS session<br/>on nalamdesk-github-deploy-&lt;stage&gt;"]
-    O --> K["cdk deploy --all (cloud/core)<br/>CoreEdge in us-east-1, Core in ap-south-1"]
+    O --> Z["Check the hosted zone exists<br/>(shared by both stages)"]
+    Z --> K["cdk deploy --all (cloud/core)<br/>CoreEdge in us-east-1, Core in ap-south-1"]
     K --> P["Check the three hand-made<br/>relay parameters exist"]
     P --> R["cdk deploy (cloud/relay)<br/>bundle, upload, new revision"]
     R --> H["Smoke test GET /health<br/>until 200 (5 minutes)"]
@@ -177,11 +188,14 @@ flowchart TD
 
 Why this shape:
 
-- **The GitHub role is thin.** It can only assume the CDK bootstrap roles
-  and check that the relay parameters exist. CloudFormation acts through the
+- **The GitHub role is thin.** It can only assume the CDK bootstrap roles,
+  read the hand-made parameters to see that they exist, and read the hosted
+  zone to see that the zone ID is right. CloudFormation acts through the
   bootstrap execution role, which the account admin controls.
 - **Core before relay and NalamBook.** Both read Core's table, bucket and IoT names
   from Parameter Store at deploy time. An unchanged Core deploy is a no-op.
+- **The zone is imported, never created.** Both stages deploy against the same
+  hosted zone, so CloudFormation must not create it.
 - **One job, three parts.** A manual run can pick `all`, `relay` or
   `booking`; a merge deploys all of them, and an unchanged stack is a no-op.
 - **No cancelling.** Deploys of one stage queue; a cancelled CloudFormation
@@ -203,11 +217,25 @@ environment overrides the stamped value.
 
 ## One-time setup
 
-Done once per AWS account, from a computer with admin credentials.
+Done once per AWS account, from a computer with admin credentials. The
+script does the AWS half and prints the GitHub and Cloudflare steps:
+
+```sh
+./cloud/deploy/setup-aws.sh sandbox cloud.nalamdesk.com
+```
+
+It bootstraps CDK in both regions, creates the hosted zone and the two
+deploy roles, creates the Parameter Store values that CloudFormation cannot,
+and prints the exact `gh` commands to run afterwards. Every step is safe to
+repeat. The steps it covers, in order:
 
 1. **Bootstrap CDK** in both regions:
    `npx cdk bootstrap aws://<account>/ap-south-1 aws://<account>/us-east-1`
-2. **Create the GitHub deploy roles** from
+2. **Create the hosted zone** for the zone name. The script prints the four
+   name servers; add them as NS records at Cloudflare for that subdomain
+   (DNS only, proxy off). Until this is done the certificate cannot validate
+   and the bridge and booking names do not resolve.
+3. **Create the GitHub deploy roles** from
    [`cloud/deploy/github-deploy-role.yaml`](../../cloud/deploy/github-deploy-role.yaml):
    ```sh
    aws cloudformation deploy --region ap-south-1 --stack-name nalamdesk-github-deploy \
@@ -216,7 +244,7 @@ Done once per AWS account, from a computer with admin credentials.
    ```
    Add `CreateOidcProvider=false` if the account already has the GitHub
    OIDC provider. The outputs are the two role ARNs.
-3. **Create the relay parameters** for each stage (see
+4. **Create the relay parameters** for each stage (see
    [`cloud/relay/README.md`](../../cloud/relay/README.md#infrastructure-infra)):
    `abdm-client-id`, `abdm-client-secret`, `pairing-pepper` under
    `/nalamdesk/<stage>/relay/`. For NalamBook, create its phone-limit key once
@@ -225,22 +253,20 @@ Done once per AWS account, from a computer with admin credentials.
    aws ssm put-parameter --region ap-south-1 --type SecureString \
      --name /nalamdesk/<stage>/booking/phone-pepper --value "$(openssl rand -base64 48)"
    ```
-4. **DNS.** If the zone already exists in Route 53, set
-   `NALAMDESK_HOSTED_ZONE_ID`. Otherwise the first Core deploy creates it and
-   waits on certificate validation until the domain's NS records point at
-   it, so make that first deploy by hand or delegate quickly.
 5. **GitHub environments** `sandbox` and `production` (Settings →
    Environments), each with:
 
    | Name | Kind | Value |
    | --- | --- | --- |
-   | `AWS_DEPLOY_ROLE_ARN` | secret | That stage's role ARN from step 2 |
+   | `AWS_DEPLOY_ROLE_ARN` | secret | That stage's role ARN from step 3 |
    | `NALAMDESK_BUDGET_EMAIL` | secret | Where budget and IoT alarm emails go |
-   | `NALAMDESK_ZONE_NAME` | variable | The DNS zone, such as `nalamdesk.com` |
-   | `NALAMDESK_HOSTED_ZONE_ID` | variable, optional | Existing Route 53 zone ID |
+   | `NALAMDESK_ZONE_NAME` | variable | The DNS zone, such as `cloud.nalamdesk.com` |
+   | `NALAMDESK_HOSTED_ZONE_ID` | variable | The hosted zone ID from step 2, the same in both stages |
    | `ABDM_GATEWAY_ISSUER` | variable, optional | Callback JWT `iss`, once NHA confirms it |
 
-   Give `production` a required reviewer and limit it to the `master` branch.
+   `production` has a required reviewer and is limited to the `master` branch.
+   `sandbox` has no branch limit, so a deploy can be re-run from an earlier
+   commit to roll back.
 6. **Repository variable** `NALAMDESK_RELAY_URL` for desktop releases.
 7. After the first deploy: confirm the SNS email subscription, add staff to
    the ops pool (relay README), and register the bridge URL for the Client ID.
@@ -248,7 +274,7 @@ Done once per AWS account, from a computer with admin credentials.
    plan and add the `/api/book` rate rule (cloud/booking/README.md, Deploy notes).
 
 If the deploy roles were created before NalamBook joined the workflow,
-redeploy the template in step 2 so they can check the booking parameter.
+redeploy the template in step 3 so they can check the booking parameter.
 
 ## Operating it
 

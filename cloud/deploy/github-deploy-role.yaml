@@ -71,6 +71,13 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/sandbox/relay/*
                   - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/sandbox/booking/*
+              # Read-only, and only to tell a wrong zone ID from a right one
+              # before CloudFormation does. Route 53 does not support a
+              # resource-level permission for this action.
+              - Sid: CheckTheHostedZone
+                Effect: Allow
+                Action: route53:GetHostedZone
+                Resource: '*'
 
   ProductionDeployRole:
     Type: AWS::IAM::Role
@@ -104,6 +111,13 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/production/relay/*
                   - !Sub arn:${AWS::Partition}:ssm:ap-south-1:${AWS::AccountId}:parameter/nalamdesk/production/booking/*
+              # Read-only, and only to tell a wrong zone ID from a right one
+              # before CloudFormation does. Route 53 does not support a
+              # resource-level permission for this action.
+              - Sid: CheckTheHostedZone
+                Effect: Allow
+                Action: route53:GetHostedZone
+                Resource: '*'
 
 Outputs:
   SandboxRoleArn:

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { app, dialog } from 'electron';
 import { CrashService } from './CrashService';
 
 // Mock Electron
@@ -8,6 +9,7 @@ vi.mock('electron', () => ({
         getVersion: vi.fn().mockReturnValue('1.0.0'),
         relaunch: vi.fn(),
         exit: vi.fn(),
+        isReady: vi.fn().mockReturnValue(true),
         on: vi.fn() // For process listeners
     },
     dialog: {
@@ -57,5 +59,43 @@ describe('CrashService', () => {
         // Access private method via casting to test logic
         const sanitized = (service as any).sanitize('/mock/home/documents/secret.txt');
         expect(sanitized).toBe('$HOME/documents/secret.txt');
+    });
+
+    // A crash before the app is ready used to throw from the dialog module,
+    // and that throw became another unhandled rejection: the handler called
+    // itself for ever and the app never finished starting.
+    describe('a crash before the app is ready', () => {
+        let handler: (reason: any) => void;
+
+        beforeEach(() => {
+            const call = processOnSpy.mock.calls.find((c: any[]) => c[0] === 'unhandledRejection');
+            handler = call![1];
+            (app.isReady as any).mockReturnValue(false);
+        });
+
+        it('does not open a dialog', async () => {
+            handler(new Error('boom'));
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(dialog.showMessageBox).not.toHaveBeenCalled();
+        });
+
+        it('does not call itself again', async () => {
+            handler(new Error('boom'));
+            await new Promise((resolve) => setImmediate(resolve));
+            expect((app.isReady as any).mock.calls.length).toBe(1);
+        });
+    });
+
+    it('does not start a second dialog while one is open', async () => {
+        const call = processOnSpy.mock.calls.find((c: any[]) => c[0] === 'unhandledRejection');
+        const handler = call![1];
+        (app.isReady as any).mockReturnValue(true);
+        (dialog.showMessageBox as any).mockImplementation(() => new Promise(() => { /* stays open */ }));
+
+        handler(new Error('boom'));
+        handler(new Error('boom again'));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
     });
 });

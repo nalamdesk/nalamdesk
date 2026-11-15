@@ -351,8 +351,11 @@ describe('nalamdesk-server CLI', () => {
     it('key add refuses DPAPI off Windows and a KMS slot without a command', async () => {
         await runCli(['init'], makeIo({ ...env, NALAMDESK_ADMIN_PASSWORD: 'a-strong-admin-password' }).io, deps);
         const dpapi = makeIo(env);
-        expect(await runCli(['key', 'add', '--provider', 'dpapi', '--dpapi-blob', path.join(directory, 'k.dpapi')], dpapi.io, deps)).toBe(1);
-        expect(dpapi.err.join()).toMatch(process.platform === 'win32' ? /DPAPI/ : /only available on Windows/);
+        // DPAPI is Windows-only. Pretending to be another platform makes the
+        // refusal the same check on every runner, Windows included.
+        const offWindows = { ...deps, platform: 'linux' as NodeJS.Platform };
+        expect(await runCli(['key', 'add', '--provider', 'dpapi', '--dpapi-blob', path.join(directory, 'k.dpapi')], dpapi.io, offWindows)).toBe(1);
+        expect(dpapi.err.join()).toMatch(/only available on Windows/);
         const kms = makeIo(env);
         expect(await runCli(['key', 'add', '--provider', 'kms'], kms.io, deps)).toBe(1);
         expect(kms.err.join()).toMatch(/--key-command/);

@@ -4,12 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { CoreEdgeStack } from '../lib/edge-stack.js';
 import { CoreStack } from '../lib/core-stack.js';
 
-function synth() {
+function synth(hostedZoneId?: string) {
     const app = new App();
     const env = { account: '123456789012' };
     const edge = new CoreEdgeStack(app, 'Edge', {
         env: { ...env, region: 'us-east-1' }, crossRegionReferences: true,
-        zoneName: 'example.in', bridgeDomain: 'abdm-sandbox.example.in', bookingDomain: 'book-sandbox.example.in'
+        zoneName: 'example.in', bridgeDomain: 'abdm-sandbox.example.in', bookingDomain: 'book-sandbox.example.in',
+        hostedZoneId
     });
     const core = new CoreStack(app, 'Core', {
         env: { ...env, region: 'ap-south-1' }, crossRegionReferences: true,
@@ -134,5 +135,32 @@ describe('Core stacks', () => {
             'mailbox-table-name', 'mailbox-bucket-name', 'iot-data-endpoint', 'iot-policy-name', 'doorbell-topic-prefix', 'device-presence-table-name']) {
             core.hasResourceProperties('AWS::SSM::Parameter', { Name: `/nalamdesk/sandbox/core/${name}` });
         }
+    });
+});
+
+describe('Core stacks with an imported hosted zone', () => {
+    // Both stages share one zone, so the second stage imports it instead of
+    // creating a second zone with a name Route 53 already has.
+    const { edge, core } = synth('Z0123456789ABCDEFGHI');
+
+    it('creates no hosted zone', () => {
+        edge.resourceCountIs('AWS::Route53::HostedZone', 0);
+    });
+
+    it('still validates the certificates against that zone', () => {
+        for (const domain of ['abdm-sandbox.example.in', 'book-sandbox.example.in']) {
+            edge.hasResourceProperties('AWS::CertificateManager::Certificate', {
+                DomainName: domain,
+                ValidationMethod: 'DNS',
+                DomainValidationOptions: Match.arrayWith([Match.objectLike({ HostedZoneId: 'Z0123456789ABCDEFGHI' })])
+            });
+        }
+    });
+
+    it('publishes the imported zone ID so the relay and booking stacks find it', () => {
+        core.hasResourceProperties('AWS::SSM::Parameter', {
+            Name: '/nalamdesk/sandbox/core/hosted-zone-id',
+            Value: 'Z0123456789ABCDEFGHI'
+        });
     });
 });

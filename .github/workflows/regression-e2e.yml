@@ -28,7 +28,6 @@ on:
 
 jobs:
   regression-e2e:
-    if: ${{ true }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
@@ -66,8 +65,8 @@ jobs:
         run: |
           sudo apt-get install -y gnome-keyring dbus-x11
           eval "$(dbus-launch --sh-syntax)"
-          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
-          echo "DBUS_SESSION_BUS_PID=$DBUS_SESSION_BUS_PID" >> $GITHUB_ENV
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_PID=$DBUS_SESSION_BUS_PID" >> "$GITHUB_ENV"
           printf 'nalamdesk-ci' | gnome-keyring-daemon --daemonize --login --components=secrets
           sleep 1
           printf 'nalamdesk-ci' | gnome-keyring-daemon --replace --unlock --components=secrets
@@ -88,14 +87,37 @@ jobs:
           NODE_ENV: test
           NALAMDESK_E2E_USER_DATA: /tmp/e2e-preflight
           ELECTRON_ENABLE_LOGGING: 1
+          # The preflight app gets its own API port. It outlives this step
+          # (see the step below), and the suite needs :3002 for itself.
+          NALAMDESK_DESKTOP_DEV_API_PORT: 3999
         run: |
           npm run build:main
           # NB: `|| code=$?` — without it, `set -e` kills the step on
-          # timeout's 124 before the diagnostics below can run.
+          # timeout's 124 before the diagnostics below can run. `code` starts
+          # at 0 so a clean exit is still seen as an early exit.
+          code=0
           timeout 25 xvfb-run -a node_modules/.bin/electron dist/main/main.js > /tmp/preflight.log 2>&1 || code=$?
           tail -30 /tmp/preflight.log
-          if [ $code -ne 124 ]; then echo "app exited early (code=$code)"; exit 1; fi
+          if [ "$code" -ne 124 ]; then echo "app exited early (code=$code)"; exit 1; fi
           grep -q "BrowserWindow created" /tmp/preflight.log || { echo "no window created within 25s"; exit 1; }
+
+      - name: Stop the preflight app
+        # `timeout` kills xvfb-run, but the Electron it started is a
+        # grandchild and survives ("Failed to shutdown"), still holding the
+        # API port. The suite's own app then cannot bind it and every spec
+        # fails at the launch handshake. Kill it and wait for the port.
+        shell: bash
+        run: |
+          pkill -f 'dist/main/main.js' || true
+          for _ in $(seq 1 15); do
+            if ! (exec 3<>/dev/tcp/127.0.0.1/3002) 2>/dev/null; then
+              echo "Port 3002 is free."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Port 3002 is still bound; the app under test cannot start."
+          exit 1
 
       - name: Run regression suite
         # Headed Electron under a virtual display; the renderer is served
@@ -110,8 +132,11 @@ jobs:
           # DevTools listening lines). If electron.launch() stalls, the last
           # printed line shows exactly which handshake stage never arrived.
           DEBUG: 'pw:browser*'
+          # The choice, read from the environment rather than pasted into the
+          # script, so the input never becomes part of the shell code.
+          SPEC: ${{ inputs.spec }}
         run: |
-          case "${{ inputs.spec }}" in
+          case "$SPEC" in
             '01 auth + RBAC') TARGET='e2e/regression/01-auth-rbac.spec.ts' ;;
             '02 navigation') TARGET='e2e/regression/02-navigation.spec.ts' ;;
             '03 patients') TARGET='e2e/regression/03-patients.spec.ts' ;;

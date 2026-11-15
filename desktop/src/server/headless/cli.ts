@@ -108,6 +108,11 @@ export interface CliDeps {
     createDeviceAdmin(database: CliDatabase, config: ServerConfig, env: NodeJS.ProcessEnv): CliDeviceAdmin;
     /** Runs systemd-creds, PowerShell (DPAPI) and key commands. Tests replace it. */
     keyExec?: KeyExec;
+    /**
+     * The platform to pretend to be. DPAPI only works on Windows, so tests
+     * that check it set this to make the check run the same way everywhere.
+     */
+    platform?: NodeJS.Platform;
 }
 
 interface ParsedArgs {
@@ -211,7 +216,7 @@ function assertAvailable(store: DeviceKeyStore): DeviceKeyStore {
  * file, an encrypted systemd credential, a DPAPI blob) when none exists yet.
  */
 async function buildKeyStore(provider: KeyProviderConfig, io: CliIO, exec: KeyExec | undefined,
-    options: { create: boolean; passphraseEnv: string; reuseLoaded?: boolean }): Promise<DeviceKeyStore> {
+    options: { create: boolean; passphraseEnv: string; reuseLoaded?: boolean; platform?: NodeJS.Platform }): Promise<DeviceKeyStore> {
     switch (provider.provider) {
         case KEY_FILE_PROVIDER: {
             if (options.create && !fs.existsSync(provider.keyPath)) {
@@ -242,11 +247,11 @@ async function buildKeyStore(provider: KeyProviderConfig, io: CliIO, exec: KeyEx
         }
         case DPAPI_PROVIDER: {
             if (options.create && !fs.existsSync(provider.blobPath)) {
-                const store = DpapiStore.create(provider.blobPath, { exec });
+                const store = DpapiStore.create(provider.blobPath, { exec, platform: options.platform });
                 io.out(`Created DPAPI key ${provider.blobPath}. Only this Windows account on this machine can open it.`);
                 return store;
             }
-            return assertAvailable(new DpapiStore(provider.blobPath, { exec }));
+            return assertAvailable(new DpapiStore(provider.blobPath, { exec, platform: options.platform }));
         }
         case KMS_PROVIDER:
             return assertAvailable(new KeyCommandStore(provider.command, { exec }));
@@ -254,9 +259,9 @@ async function buildKeyStore(provider: KeyProviderConfig, io: CliIO, exec: KeyEx
 }
 
 /** Opens the configured key store. `create` makes new key material on first init. */
-export async function openKeyStore(config: ServerConfig, io: CliIO, options: { create?: boolean; exec?: KeyExec } = {}): Promise<DeviceKeyStore> {
+export async function openKeyStore(config: ServerConfig, io: CliIO, options: { create?: boolean; exec?: KeyExec; platform?: NodeJS.Platform } = {}): Promise<DeviceKeyStore> {
     return buildKeyStore(config.keyProvider, io, options.exec, {
-        create: !!options.create, passphraseEnv: 'NALAMDESK_PASSPHRASE', reuseLoaded: true
+        create: !!options.create, passphraseEnv: 'NALAMDESK_PASSPHRASE', reuseLoaded: true, platform: options.platform
     });
 }
 
@@ -296,7 +301,7 @@ async function newSlotProvider(args: ParsedArgs, io: CliIO): Promise<KeyProvider
 }
 
 async function unlock(config: ServerConfig, io: CliIO, deps: CliDeps): Promise<{ vault: CliVault; database: CliDatabase; store: DeviceKeyStore }> {
-    const store = await openKeyStore(config, io, { exec: deps.keyExec });
+    const store = await openKeyStore(config, io, { exec: deps.keyExec, platform: deps.platform });
     const vault = deps.createVault(store);
     vault.reconcileProvisioning(config.dbPath, config.dataDir);
     const state = vault.isSetup(config.dataDir);
@@ -358,7 +363,7 @@ async function cmdInit(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: 
         throw new Error(`The admin password needs at least ${ADMIN_PASSWORD_MIN_LENGTH} characters on a server.`);
     }
 
-    const store = await openKeyStore(config, io, { create: true, exec: deps.keyExec });
+    const store = await openKeyStore(config, io, { create: true, exec: deps.keyExec, platform: deps.platform });
     const vault = deps.createVault(store);
     const database = deps.createDatabase();
     const clinicName = flagString(args, 'clinic-name');
@@ -425,7 +430,7 @@ async function cmdImport(args: ParsedArgs, config: ServerConfig, io: CliIO, deps
     recoveryCode = recoveryCode.trim().toUpperCase();
     if (!recoveryCode) throw new Error('The recovery code is required to open the backup.');
 
-    const store = await openKeyStore(config, io, { create: true, exec: deps.keyExec });
+    const store = await openKeyStore(config, io, { create: true, exec: deps.keyExec, platform: deps.platform });
     const vault = deps.createVault(store);
     const database = deps.createDatabase();
     try {
@@ -669,7 +674,7 @@ async function cmdKey(args: ParsedArgs, config: ServerConfig, io: CliIO, deps: C
         if (action === 'add') {
             const label = flagString(args, 'label');
             const provider = await newSlotProvider(args, io);
-            const store = await buildKeyStore(provider, io, deps.keyExec, { create: true, passphraseEnv: 'NALAMDESK_NEW_PASSPHRASE' });
+            const store = await buildKeyStore(provider, io, deps.keyExec, { create: true, passphraseEnv: 'NALAMDESK_NEW_PASSPHRASE', platform: deps.platform });
             const slot = vault.addKeySlot(store, label);
             database.logAudit('KEY_SLOT_ADD', 'vault', null, null, `Added ${slot.provider} unlock method ${slot.id}`);
             io.out(`Added ${slot.provider} slot ${slot.id}.`);

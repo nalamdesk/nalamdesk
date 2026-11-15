@@ -59,24 +59,40 @@ jobs:
       DEPLOY_CORE: ${{ !inputs.stacks || inputs.stacks == 'all' }}
       DEPLOY_RELAY: ${{ !inputs.stacks || inputs.stacks == 'all' || inputs.stacks == 'relay' }}
       DEPLOY_BOOKING: ${{ !inputs.stacks || inputs.stacks == 'all' || inputs.stacks == 'booking' }}
-      ZONE_NAME: ${{ vars.NALAMDESK_ZONE_NAME }}
-      HOSTED_ZONE_ID: ${{ vars.NALAMDESK_HOSTED_ZONE_ID }}
-      GATEWAY_ISSUER: ${{ vars.ABDM_GATEWAY_ISSUER }}
-      BUDGET_EMAIL: ${{ secrets.NALAMDESK_BUDGET_EMAIL }}
-      HAS_ROLE: ${{ secrets.AWS_DEPLOY_ROLE_ARN != '' }}
     steps:
       # Until the environment is set up, a merge skips the deploy with a
       # warning instead of failing; a manual run fails and says what is missing.
+      #
+      # The secrets and variables are read in the step, not in the job's env:
+      # an environment's own secrets only reach a job once the environment is
+      # attached, which is later than the job's env is expanded.
       - name: Check the environment's settings
         id: config
+        env:
+          ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          ZONE_NAME: ${{ vars.NALAMDESK_ZONE_NAME }}
+          ZONE_ID: ${{ vars.NALAMDESK_HOSTED_ZONE_ID }}
+          BUDGET_EMAIL: ${{ secrets.NALAMDESK_BUDGET_EMAIL }}
         run: |
           missing=()
-          [ "$HAS_ROLE" = "true" ] || missing+=("secret AWS_DEPLOY_ROLE_ARN")
+          [ -n "$ROLE_ARN" ] || missing+=("secret AWS_DEPLOY_ROLE_ARN")
           [ -n "$ZONE_NAME" ] || missing+=("variable NALAMDESK_ZONE_NAME")
+          [ -n "$ZONE_ID" ] || missing+=("variable NALAMDESK_HOSTED_ZONE_ID")
           if [ "$DEPLOY_CORE" = "true" ] && [ -z "$BUDGET_EMAIL" ]; then missing+=("secret NALAMDESK_BUDGET_EMAIL"); fi
           if [ ${#missing[@]} -eq 0 ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          msg="The $STAGE environment is missing: ${missing[*]}. See docs/architecture/cloud-relay.md."
+          msg="The $STAGE environment is missing: ${missing[*]}."
           echo "ready=false" >> "$GITHUB_OUTPUT"
+          {
+            echo "$msg"
+            echo ""
+            echo "Set them with:"
+            echo "  gh secret set AWS_DEPLOY_ROLE_ARN      --env $STAGE --repo nalamdesk/nalamdesk"
+            echo "  gh secret set NALAMDESK_BUDGET_EMAIL  --env $STAGE --repo nalamdesk/nalamdesk"
+            echo "  gh variable set NALAMDESK_ZONE_NAME    --env $STAGE --repo nalamdesk/nalamdesk"
+            echo "  gh variable set NALAMDESK_HOSTED_ZONE_ID --env $STAGE --repo nalamdesk/nalamdesk"
+            echo ""
+            echo "cloud/deploy/setup-aws.sh creates them; see docs/architecture/cloud-relay.md."
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then echo "::warning::$msg Skipping this deploy."; exit 0; fi
           echo "::error::$msg"; exit 1
 
@@ -133,20 +149,39 @@ jobs:
           aws-region: ap-south-1
           mask-aws-account-id: true
 
+      # Both stages share one hosted zone, so CloudFormation must never create
+      # it: the second stage would fail on a name that is already taken. The
+      # zone is made by hand (cloud/deploy/setup-aws.sh) and delegated to
+      # Route 53 from Cloudflare, so the certificate can validate.
+      - name: Check the hosted zone
+        if: steps.config.outputs.ready == 'true'
+        env:
+          ZONE_ID: ${{ vars.NALAMDESK_HOSTED_ZONE_ID }}
+        run: |
+          if ! aws route53 get-hosted-zone --id "$ZONE_ID" >/dev/null 2>&1; then
+            echo "::error::The hosted zone $ZONE_ID does not exist in this account. Run cloud/deploy/setup-aws.sh, and delegate the zone to Route 53 at Cloudflare."
+            exit 1
+          fi
+          echo "Hosted zone $ZONE_ID is there."
+
       - name: Deploy Core stacks
         if: steps.config.outputs.ready == 'true' && env.DEPLOY_CORE == 'true'
         working-directory: ./cloud/core
+        env:
+          ZONE_NAME: ${{ vars.NALAMDESK_ZONE_NAME }}
+          ZONE_ID: ${{ vars.NALAMDESK_HOSTED_ZONE_ID }}
+          BUDGET_EMAIL: ${{ secrets.NALAMDESK_BUDGET_EMAIL }}
         run: |
-          args=(-c "stage=$STAGE" -c "zoneName=$ZONE_NAME" -c "budgetEmail=$BUDGET_EMAIL")
-          [ -n "$HOSTED_ZONE_ID" ] && args+=(-c "hostedZoneId=$HOSTED_ZONE_ID")
-          npx cdk deploy --all --require-approval never --progress events "${args[@]}"
+          npx cdk deploy --all --require-approval never --progress events \
+            -c "stage=$STAGE" -c "zoneName=$ZONE_NAME" -c "hostedZoneId=$ZONE_ID" -c "budgetEmail=$BUDGET_EMAIL"
 
       # CloudFormation cannot create SecureStrings, so these three are made
       # by hand once per stage. Without them the relay starts but cannot work.
       - name: Check the relay's hand-made parameters
         if: steps.config.outputs.ready == 'true' && env.DEPLOY_RELAY == 'true'
+        shell: bash
         run: |
-          names=(/nalamdesk/$STAGE/relay/abdm-client-id /nalamdesk/$STAGE/relay/abdm-client-secret /nalamdesk/$STAGE/relay/pairing-pepper)
+          names=("/nalamdesk/$STAGE/relay/abdm-client-id" "/nalamdesk/$STAGE/relay/abdm-client-secret" "/nalamdesk/$STAGE/relay/pairing-pepper")
           invalid=$(aws ssm get-parameters --names "${names[@]}" --query 'InvalidParameters' --output text)
           if [ -n "$invalid" ] && [ "$invalid" != "None" ]; then
             echo "::error::Create these Parameter Store values first (docs/architecture/cloud-relay.md): $invalid"
@@ -157,6 +192,10 @@ jobs:
         id: relay
         if: steps.config.outputs.ready == 'true' && env.DEPLOY_RELAY == 'true'
         working-directory: ./cloud/relay
+        shell: bash
+        env:
+          ZONE_NAME: ${{ vars.NALAMDESK_ZONE_NAME }}
+          GATEWAY_ISSUER: ${{ vars.ABDM_GATEWAY_ISSUER }}
         run: |
           args=(-c "stage=$STAGE" -c "zoneName=$ZONE_NAME")
           [ -n "$GATEWAY_ISSUER" ] && args+=(-c "gatewayIssuer=$GATEWAY_ISSUER")
@@ -197,6 +236,8 @@ jobs:
         id: booking
         if: steps.config.outputs.ready == 'true' && env.DEPLOY_BOOKING == 'true'
         working-directory: ./cloud/booking/infra
+        env:
+          ZONE_NAME: ${{ vars.NALAMDESK_ZONE_NAME }}
         run: |
           npx cdk deploy --require-approval never --progress events --outputs-file "$RUNNER_TEMP/booking-outputs.json" \
             -c "stage=$STAGE" -c "zoneName=$ZONE_NAME" -c "siteDir=$GITHUB_WORKSPACE/cloud/booking/web/dist"
@@ -226,6 +267,7 @@ jobs:
         env:
           BRIDGE_URL: ${{ steps.relay.outputs.bridge_url }}
           SITE_URL: ${{ steps.booking.outputs.site_url }}
+          ZONE_NAME: ${{ vars.NALAMDESK_ZONE_NAME }}
         run: |
           {
             echo "### NalamDesk Cloud ($STAGE) deployed from \`${GITHUB_SHA::7}\`"
@@ -239,4 +281,5 @@ jobs:
               echo "- NalamBook: $SITE_URL"
               echo "- First deploy of a stage: add the CloudFront rate rule on \`/api/book\` (cloud/booking/README.md)."
             fi
+            echo "- Hosted zone: $ZONE_NAME (shared by both stages)"
           } >> "$GITHUB_STEP_SUMMARY"

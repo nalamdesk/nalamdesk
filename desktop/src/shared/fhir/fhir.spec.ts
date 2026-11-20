@@ -57,6 +57,7 @@ describe('FHIR R4 structural types', () => {
         const encounter: Encounter = {
             resourceType: 'Encounter',
             status: 'finished',
+            class: { system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode', code: 'AMB' },
             subject: { reference: 'Patient/1' }
         };
         const medication: Medication = { resourceType: 'Medication' };
@@ -80,8 +81,12 @@ describe('NRCeS prescription profile', () => {
     });
 
     it('orders OPConsultRecord sections deterministically', () => {
-        expect([...OP_CONSULT_SECTIONS]).toEqual([
-            'Chief Complaints', 'Observations', 'Diagnosis', 'Prescription', 'Advice'
+        expect(OP_CONSULT_SECTIONS.map((s) => [s.title, s.code])).toEqual([
+            ['Chief complaints', '422843007'],
+            ['Physical examination', '425044008'],
+            ['Allergies', '722446000'],
+            ['Medical history', '371529009'],
+            ['Medications', '721912009']
         ]);
     });
 

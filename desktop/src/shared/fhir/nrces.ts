@@ -47,16 +47,37 @@ export interface ExportablePrescriptionLine {
     instruction?: string;
 }
 
-/** Sections an OPConsultRecord Composition carries, in order. */
+/**
+ * Sections an OPConsultRecord Composition carries, in the order of the NRCES
+ * OPConsultRecord section slices, with the SNOMED code each slice fixes.
+ * Diagnosis travels in the chief complaints narrative: the profile has no
+ * diagnosis section.
+ */
 export const OP_CONSULT_SECTIONS = [
-    'Chief Complaints',
-    'Observations',
-    'Diagnosis',
-    'Prescription',
-    'Advice'
+    { title: 'Chief complaints', code: '422843007', display: 'Chief complaint section' },
+    { title: 'Physical examination', code: '425044008', display: 'Physical exam section' },
+    { title: 'Allergies', code: '722446000', display: 'Allergy record' },
+    { title: 'Medical history', code: '371529009', display: 'History and physical report' },
+    { title: 'Medications', code: '721912009', display: 'Medication summary document' }
 ] as const;
 
-export type OpConsultSection = (typeof OP_CONSULT_SECTIONS)[number];
+export type OpConsultSection = (typeof OP_CONSULT_SECTIONS)[number]['title'];
+
+const NRCES_BASE = 'https://nrces.in/ndhm/fhir/r4/StructureDefinition/';
+
+/** The NRCES (ndhm.in 6.5.0) profile each OPConsultRecord resource declares. */
+export const NRCES_PROFILE: Partial<Record<string, string>> = {
+    Bundle: `${NRCES_BASE}DocumentBundle`,
+    Composition: `${NRCES_BASE}OPConsultRecord`,
+    Patient: `${NRCES_BASE}Patient`,
+    Practitioner: `${NRCES_BASE}Practitioner`,
+    Organization: `${NRCES_BASE}Organization`,
+    Encounter: `${NRCES_BASE}Encounter`,
+    Condition: `${NRCES_BASE}Condition`,
+    AllergyIntolerance: `${NRCES_BASE}AllergyIntolerance`,
+    Observation: `${NRCES_BASE}ObservationVitalSigns`,
+    MedicationRequest: `${NRCES_BASE}MedicationRequest`
+};
 
 /** IPS sections with the LOINC document-ontology codes consumers classify on. */
 export const IPS_SECTIONS = [

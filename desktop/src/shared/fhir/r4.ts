@@ -42,8 +42,15 @@ export interface Reference {
 }
 
 export interface Identifier {
+    type?: CodeableConcept;
     system?: string;
     value?: string;
+}
+
+export interface Meta {
+    versionId?: string;
+    lastUpdated?: string;
+    profile?: string[];
 }
 
 export interface HumanName {
@@ -85,6 +92,7 @@ export interface Annotation {
 export interface Resource {
     resourceType: ResourceType;
     id?: string;
+    meta?: Meta;
 }
 
 export interface BundleEntry {
@@ -109,6 +117,7 @@ export interface CompositionSection {
 
 export interface Composition extends Resource {
     resourceType: 'Composition';
+    identifier?: Identifier;
     status: 'final' | 'preliminary' | 'amended' | string;
     type: CodeableConcept;
     subject?: Reference;
@@ -116,6 +125,7 @@ export interface Composition extends Resource {
     date: string;
     author: Reference[];
     title: string;
+    custodian?: Reference;
     section?: CompositionSection[];
 }
 
@@ -153,6 +163,7 @@ export interface Encounter extends Resource {
     resourceType: 'Encounter';
     identifier?: Identifier[];
     status: 'finished' | 'in-progress' | 'planned' | string;
+    class: Coding;
     subject?: Reference;
     participant?: Array<{ individual?: Reference }>;
     period?: Period;
@@ -185,6 +196,7 @@ export interface Dosage {
 export interface DispenseRequest {
     quantity?: Quantity;
     expectedSupplyDuration?: Quantity;
+    validityPeriod?: Period;
     numberOfRepeatsAllowed?: number;
 }
 
@@ -197,7 +209,6 @@ export interface MedicationRequest extends Resource {
     subject: Reference;
     requester?: Reference;
     authoredOn?: string;
-    validityPeriod?: Period;
     dosageInstruction?: Dosage[];
     dispenseRequest?: DispenseRequest;
     note?: Annotation[];
@@ -221,11 +232,13 @@ export interface AllergyIntolerance extends Resource {
 export interface Observation extends Resource {
     resourceType: 'Observation';
     status: 'final' | 'amended' | 'entered-in-error' | string;
+    category?: CodeableConcept[];
     code: CodeableConcept;
     subject?: Reference;
     encounter?: Reference;
     effectiveDateTime?: string;
     valueQuantity?: Quantity;
+    component?: Array<{ code: CodeableConcept; valueQuantity?: Quantity }>;
     interpretation?: CodeableConcept[];
 }
 

@@ -31,8 +31,10 @@ jobs:
             exit 1
           fi
           echo "Existing records named cloud.nalamdesk.com:"
-          curl -sS "${auth[@]}" "$api/zones/$zone/dns_records?name=cloud.nalamdesk.com" | jq -c '.result[] | {type, content}'
-          existing=$(curl -sS "${auth[@]}" "$api/zones/$zone/dns_records?type=NS&name=cloud.nalamdesk.com" | jq -r '.result[].content')
+          curl -sS "${auth[@]}" "$api/zones/$zone/dns_records?name=cloud.nalamdesk.com" | jq -c '{success, errors, records: [.result[]? | {type, content}]}'
+          existing=$(curl -sS "${auth[@]}" "$api/zones/$zone/dns_records?type=NS&name=cloud.nalamdesk.com" | jq -r '.result[]?.content')
+          echo "Token permissions check:"
+          curl -sS "${auth[@]}" "$api/user/tokens/verify" | jq -c '{success, status: .result.status}' || true
           fail=0
           for ns in ns-1775.awsdns-29.co.uk ns-570.awsdns-07.net ns-1192.awsdns-21.org ns-60.awsdns-07.com; do
             if grep -qx "$ns" <<<"$existing"; then echo "Already there: $ns"; continue; fi

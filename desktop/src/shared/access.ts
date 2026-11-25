@@ -41,7 +41,8 @@ export const METHOD_CATALOG: CatalogGroup[] = [
             'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
             'getVisitPrescriptions', 'cancelPrescription', 'recordPrescriptionPrint',
             'getDashboardStats', 'getDoctors', 'getAppointments', 'getAppointmentsByPatient', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
-            'updateAppointmentRequestStatus', 'getAppointmentRequests'
+            'updateAppointmentRequestStatus', 'getAppointmentRequests',
+            'getFollowUps', 'closeFollowUp'
         ]
     },
     {
@@ -158,6 +159,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
             'getPatients', 'findDuplicateCandidates', 'getQueue', 'addToQueue', 'removeFromQueue',
             'updateQueueStatus', 'updateQueueStatusByPatientId', 'getPublicSettings',
             'getDashboardStats', 'getAppointments', 'saveAppointment', 'getVisits',
+            'getFollowUps', 'closeFollowUp',
             'getVitals', 'getVitalsHistory', 'getEncounterVitals',
             'abdmAbhaLookup', 'abdmGetShareTokens', 'abdmAcceptShareToken',
             'abdmGetInbox'

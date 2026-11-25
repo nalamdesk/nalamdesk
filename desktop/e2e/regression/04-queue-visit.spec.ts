@@ -76,6 +76,8 @@ test.describe.serial('Queue + consultation lifecycle', () => {
         await firstRow.locator('input[aria-label="Duration"]').fill('3 days');
         // A prescription line needs its dose before the visit can be finished.
         await firstRow.locator('input[aria-label="Dosage"]').fill('500mg');
+        // Review after 3 days: opens a follow-up when the visit finishes.
+        await ctx.window.getByTestId('follow-up-picker').getByRole('button', { name: '3 days' }).click();
         await ctx.window.click('button:has-text("Save Progress")');
         // Live consults keep the Save Progress button; prove the save landed
         // by reading the active encounter back through IPC.
@@ -108,5 +110,15 @@ test.describe.serial('Queue + consultation lifecycle', () => {
         });
         await expect(ctx.window.locator('app-visit-list')).toBeVisible({ timeout: 15000 });
         await expect(ctx.window.locator(`text=${patientName}`).first()).toBeVisible({ timeout: 15000 });
+    });
+
+    test('the review date puts the patient on the Follow-ups list', async () => {
+        await ctx.window.getByRole('link', { name: 'Follow-ups' }).first().click();
+        const list = ctx.window.getByTestId('follow-ups-list');
+        await expect(list).toContainText(patientName, { timeout: 15000 });
+        await expect(list).toContainText('Due in 3 days');
+        const item = list.locator('li', { hasText: patientName });
+        await item.getByRole('button', { name: 'Done' }).click();
+        await expect(ctx.window.getByTestId('follow-ups-empty')).toBeVisible({ timeout: 15000 });
     });
 });

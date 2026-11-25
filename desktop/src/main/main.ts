@@ -895,6 +895,17 @@ handleGuardedDb('db:getDailyClose', (_, date) => {
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     return databaseService.getDailyClose(today);
 });
+// Follow-ups: Cedar decides (granted to desk and clinical roles in v58).
+handleGuardedDb('db:getFollowUps', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return invokeDbMethod(databaseService, 'getFollowUps', [input], user.id);
+});
+handleGuardedDb('db:closeFollowUp', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    return invokeDbMethod(databaseService, 'closeFollowUp', [input], user.id);
+});
 handleGuardedDb('db:getPatientById', (_, id) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');

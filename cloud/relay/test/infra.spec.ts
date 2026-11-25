@@ -86,6 +86,9 @@ describe('Relay stack', () => {
                 })]
             }
         });
+        // The statement must name the endpoint, not just the function.
+        const policies = Object.values(template.findResources('AWS::Lambda::ResourcePolicy'));
+        expect(JSON.stringify(policies[0]!.Properties.PolicyDocument.Statement[0].Resource)).toContain('/endpoint/bridge');
     });
 
     it('reads vendor credentials from Parameter Store only, and never Secrets Manager', () => {

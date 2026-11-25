@@ -257,7 +257,8 @@ export class BookingStack extends cdk.Stack {
             originAccessControlConfig: {
                 name: `${this.stackName}-api`,
                 originAccessControlOriginType: 'lambda',
-                signingBehavior: 'always',
+                // Web Function origins accept only always-amz-auth.
+                signingBehavior: 'always-amz-auth',
                 signingProtocol: 'sigv4'
             }
         });
@@ -331,7 +332,8 @@ export class BookingStack extends cdk.Stack {
                     Effect: 'Allow',
                     Principal: { Service: 'cloudfront.amazonaws.com' },
                     Action: 'lambda:InvokeWebFunctionEndpoint',
-                    Resource: fn.attrFunctionArn,
+                    // The statement must name the endpoint; the function ARN alone matches nothing.
+                    Resource: `${fn.attrFunctionArn}/endpoint/${endpoint.endpointName}`,
                     Condition: { ArnLike: { 'aws:SourceArn': this.distribution.distributionArn } }
                 }]
             }

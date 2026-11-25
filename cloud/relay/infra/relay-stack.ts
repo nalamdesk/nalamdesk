@@ -272,7 +272,8 @@ export class RelayStack extends Stack {
                     Effect: Effect.ALLOW,
                     Principal: { Service: 'cloudfront.amazonaws.com' },
                     Action: 'lambda:InvokeWebFunctionEndpoint',
-                    Resource: webFunction.attrFunctionArn,
+                    // The statement must name the endpoint; the function ARN alone matches nothing.
+                    Resource: `${webFunction.attrFunctionArn}/endpoint/${endpoint.endpointName}`,
                     Condition: { ArnLike: { 'aws:SourceArn': distribution.distributionArn } }
                 }]
             }

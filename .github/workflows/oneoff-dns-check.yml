@@ -1,0 +1,42 @@
+name: One-off DNS check
+
+# Temporary, read-only: checks the cloud.nalamdesk.com delegation. Removed after it runs.
+on:
+  push:
+    branches:
+      - claude/project-thread-4rlgms
+    paths:
+      - '.github/workflows/oneoff-dns-check.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: sandbox
+    steps:
+      - name: Public DNS
+        run: |
+          for r in 1.1.1.1 8.8.8.8; do
+            echo "== NS cloud.nalamdesk.com @$r"; dig +short NS cloud.nalamdesk.com @$r
+            echo "== A abdm-sandbox @$r"; dig abdm-sandbox.cloud.nalamdesk.com @$r | grep -E 'status|IN'
+          done
+          echo "== Delegation at nalamdesk.com's own servers"
+          auth=$(dig +short NS nalamdesk.com @1.1.1.1 | head -1)
+          dig NS cloud.nalamdesk.com @"$auth" | grep -E 'status|NS'
+          echo "== Asking Route 53 directly"
+          dig abdm-sandbox.cloud.nalamdesk.com @ns-60.awsdns-07.com | grep -E 'status|IN'
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Route 53 zones
+        run: |
+          aws route53 list-hosted-zones --query 'HostedZones[].[Id,Name,Config.PrivateZone]' --output text
+          for z in $(aws route53 list-hosted-zones-by-name --dns-name cloud.nalamdesk.com --query "HostedZones[?Name=='cloud.nalamdesk.com.'].Id" --output text); do
+            echo "== $z"; aws route53 get-hosted-zone --id "$z" --query 'DelegationSet.NameServers' --output text
+            aws route53 list-resource-record-sets --hosted-zone-id "$z" --query 'ResourceRecordSets[].[Name,Type]' --output text
+          done

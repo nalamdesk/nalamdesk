@@ -1,4 +1,4 @@
-import { Component, NgZone, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { Component, NgZone, OnInit, inject, ChangeDetectorRef, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Patient, PatientService } from '../../services/patient.service';
@@ -41,6 +41,7 @@ import { localDateISO } from '../../../../shared/local-date';
         <!-- Search Bar -->
         <div class="mb-6 relative">
           <input 
+            #searchBox
             type="text" 
             [(ngModel)]="searchQuery" 
             (ngModelChange)="onSearch()"
@@ -119,7 +120,8 @@ import { localDateISO } from '../../../../shared/local-date';
       </div>
 
       <!-- Add Patient Modal (Responsive) -->
-      <div *ngIf="showModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div *ngIf="showModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+           role="dialog" aria-modal="true" aria-label="Patient registration">
           <!-- Width fixed -> Max Width Responsive -->
           <div class="bg-white rounded-lg w-full max-w-3xl max-h-[90vh] shadow-xl flex flex-col overflow-hidden">
             
@@ -353,6 +355,7 @@ export class PatientListComponent implements OnInit {
   loading = false;
   searchQuery = '';
   showModal = false;
+  @ViewChild('searchBox') searchBox?: ElementRef<HTMLInputElement>;
   // Narrow-viewport layout override; desktop always uses the grid.
   mobileView: CompactView = 'cards';
   private static readonly MOBILE_VIEW_KEY = 'nalamdesk.patients.mobileView';
@@ -589,6 +592,13 @@ export class PatientListComponent implements OnInit {
     this.loadQueueStatus();
 
     this.route.queryParams.subscribe(params => {
+      // Keyboard shortcuts from the main layout (Alt+N, / or Alt+F).
+      if (params['new'] && !this.showModal) {
+        setTimeout(() => this.openAddModal());
+      }
+      if (params['focus']) {
+        setTimeout(() => this.searchBox?.nativeElement.focus());
+      }
       if (params['editId']) {
         const id = Number(params['editId']);
         setTimeout(() => {

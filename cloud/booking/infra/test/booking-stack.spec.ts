@@ -34,7 +34,7 @@ describe('BookingStack', () => {
             AuthType: 'IamAuth',
             EndpointType: 'HomeRegion',
             ScalingConfig: { MaxEnvironments: 2 },
-            ThrottleConfig: { RateLimit: 20 }
+            ThrottleConfig: { RateLimit: 100 }
         });
         const revision = Object.values(t.findResources('AWS::Lambda::WebFunctionRevision'))[0] as any;
         const s3Object = revision.Properties.BuildConfig.CodeConfig.S3Object;

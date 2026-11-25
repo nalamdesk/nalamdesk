@@ -30,7 +30,10 @@ export const BOOKING_LIMITS = {
     // cannot get in is retried by the browser, unlike an ABDM callback.
     maxEnvironments: 2,
     timeoutSeconds: 10,
-    rateLimitPerSecond: 20
+    // The smallest non-zero throttle the service accepts (it takes 0, 100,
+    // 200 ... 1000, 2000 ... 10000). The CloudFront rate rule on /api/book
+    // is what limits booking abuse.
+    rateLimitPerSecond: 100
 };
 
 // Content-Security-Policy for the site. Everything is self-hosted (fonts

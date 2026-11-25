@@ -2002,6 +2002,19 @@ export const MIGRATIONS = [
                 db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_facility ON ${table}(facility_id)`);
             }
         }
+    },
+    {
+        version: 57,
+        up: (db: any) => {
+            // Daily token numbers for the waiting-room display: the Nth
+            // check-in of the clinic-local day at a facility. Earlier rows keep
+            // no token (they are history; today's open entries get one on the
+            // next check-in only).
+            if (!tableExists(db, 'patient_queue')) return;
+            addColumn(db, 'patient_queue', 'token_no INTEGER');
+            addColumn(db, 'patient_queue', 'token_date TEXT');
+            db.exec('CREATE INDEX IF NOT EXISTS idx_patient_queue_token ON patient_queue(facility_id, token_date, token_no)');
+        }
     }
 ];
 

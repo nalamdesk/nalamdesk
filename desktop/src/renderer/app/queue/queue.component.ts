@@ -32,6 +32,8 @@ import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/
             <p class="text-sm text-gray-500">{{ waitingCount() }} waiting · {{ inConsultCount() }} in consultation</p>
           </div>
           <div class="flex items-center gap-2 w-full sm:w-auto">
+            <button type="button" (click)="openDisplay()" class="btn btn-sm btn-outline whitespace-nowrap"
+                    title="Show token numbers on a waiting-room screen">Waiting-room display</button>
             <div class="relative flex-1 sm:flex-none">
               <input type="text" [(ngModel)]="searchTerm" placeholder="Search name, mobile, urgency…"
                      aria-label="Search queue"
@@ -266,7 +268,7 @@ export class QueueComponent implements OnInit, OnDestroy {
             <div class="w-10 h-10 rounded-full bg-neutral text-neutral-content flex items-center justify-center font-bold">` +
               `${initial}</div>
             <div>
-              <div class="font-bold text-gray-800">${this.escHtml(item.patient_name)}</div>
+              <div class="font-bold text-gray-800">${item.token_no != null ? `<span class="badge badge-outline badge-sm mr-1 font-mono" title="Token">#${this.escHtml(item.token_no)}</span>` : ''}${this.escHtml(item.patient_name)}</div>
               <div class="text-xs text-gray-500">${this.escHtml(item.age)} years • ${this.escHtml(item.gender)}</div>
               ${vitalsBadge}
             </div>
@@ -347,6 +349,10 @@ export class QueueComponent implements OnInit, OnDestroy {
       if (event.topic === 'queue' || event.topic === 'resync') void this.refreshQueue();
       if (event.topic === 'abdm.inbox' || event.topic === 'resync') void this.refreshShareTokens();
     }) ?? null;
+  }
+
+  openDisplay() {
+    void this.router.navigate(['/display']);
   }
 
   ngOnDestroy() {

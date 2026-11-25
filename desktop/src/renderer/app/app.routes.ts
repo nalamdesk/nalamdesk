@@ -11,6 +11,8 @@ export const routes: Routes = [
     { path: 'setup', loadComponent: () => import('./setup/setup.component').then(m => m.SetupComponent) },
     { path: 'recover', loadComponent: () => import('./login/recovery/recovery.component').then(m => m.RecoveryComponent) },
     { path: 'change-password', loadComponent: () => import('./login/change-password/change-password.component').then(m => m.ChangePasswordComponent) },
+    // Waiting-room board: full screen, outside the sidebar layout.
+    { path: 'display', canActivate: [authGuard], loadComponent: () => import('./queue-display/queue-display.component').then(m => m.QueueDisplayComponent) },
     {
         path: '',
         canActivate: [authGuard],

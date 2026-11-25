@@ -3714,6 +3714,7 @@ export class DatabaseService {
         const rows = this.db.prepare(`
             SELECT q.id, q.patient_id, q.status, q.priority, q.urgency, q.triage_notes,
                    q.triage_assessor_id, q.triaged_at, q.check_in_time,
+                   CASE WHEN q.token_date = date('now', 'localtime') THEN q.token_no END AS token_no,
                    p.name as patient_name, p.gender, p.age, p.mobile,
                    u.name as triage_assessor_name,
                    active.id as active_encounter_id
@@ -3798,8 +3799,11 @@ export class DatabaseService {
     addToQueue(patientId: number, priorityOrOptions: any = 1, actingUserId?: number, urgencyInput?: string, triageNotesInput?: string) {
         // Check if already in queue
         const facilityId = this.facilityId();
-        const existing = this.db.prepare('SELECT id FROM patient_queue WHERE patient_id = ? AND status != ? AND facility_id = ?')
-            .get(patientId, 'completed', facilityId);
+        // Only an open entry blocks a new check-in: completed and removed
+        // (KB-2 terminal) rows are history, so a patient sent away by mistake
+        // can be queued again.
+        const existing = this.db.prepare("SELECT id FROM patient_queue WHERE patient_id = ? AND status NOT IN ('completed', 'removed') AND facility_id = ?")
+            .get(patientId, facilityId);
         if (existing) throw new Error('Patient already in queue');
         const departmentId = this.departmentFor(
             typeof priorityOrOptions === 'object' && priorityOrOptions !== null ? priorityOrOptions.department_id : null);
@@ -3820,8 +3824,13 @@ export class DatabaseService {
         urgency = this.normalizeUrgency(urgency);
 
         const assessorId = actingUserId ? Number(actingUserId) : null;
-        const result = this.db.prepare('INSERT INTO patient_queue (patient_id, priority, facility_id, department_id) VALUES (?, ?, ?, ?)')
-            .run(patientId, priority, facilityId, departmentId);
+        // Token = the next number of the clinic-local day at this facility,
+        // computed inside the INSERT so two check-ins never share one.
+        const result = this.db.prepare(`
+            INSERT INTO patient_queue (patient_id, priority, facility_id, department_id, token_date, token_no)
+            SELECT ?, ?, ?, ?, date('now', 'localtime'), COALESCE(MAX(token_no), 0) + 1
+            FROM patient_queue WHERE facility_id = ? AND token_date = date('now', 'localtime')
+        `).run(patientId, priority, facilityId, departmentId, facilityId);
         const queueId = Number(result.lastInsertRowid);
 
         try {
@@ -3841,7 +3850,8 @@ export class DatabaseService {
         }
 
         this.logAudit('INSERT', 'patient_queue', queueId, actingUserId, `Added patient ${patientId} to queue with urgency ${urgency}`);
-        return result;
+        const token = this.db.prepare('SELECT token_no FROM patient_queue WHERE id = ?').get(queueId) as any;
+        return { ...result, token_no: token?.token_no ?? null };
     }
 
     reassessQueueTriage(queueId: number, newUrgency: string, reason: string, actingUserId?: number) {

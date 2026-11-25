@@ -895,6 +895,13 @@ handleGuardedDb('db:getDailyClose', (_, date) => {
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     return databaseService.getDailyClose(today);
 });
+// Practice report: owner-level numbers, admins only.
+handleGuardedDb('db:getPracticeReport', (_, input) => {
+    const user = sessionService.getUser();
+    if (!user) throw new Error('Unauthorized');
+    if (user.role !== 'admin') throw new Error('Forbidden');
+    return invokeDbMethod(databaseService, 'getPracticeReport', [input], user.id);
+});
 handleGuardedDb('db:getPatientById', (_, id) => {
     const user = sessionService.getUser();
     if (!user) throw new Error('Unauthorized');

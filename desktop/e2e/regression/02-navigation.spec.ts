@@ -13,6 +13,7 @@ const ROUTES: { hash: string; shell: string; body?: string }[] = [
     { hash: '#/online-booking', shell: 'app-main-layout', body: 'app-online-booking' },
     { hash: '#/profile', shell: 'app-main-layout', body: 'app-profile' },
     { hash: '#/settings', shell: 'app-main-layout', body: 'app-settings' },
+    { hash: '#/reports', shell: 'app-main-layout', body: 'app-reports' },
 ];
 
 test.describe.serial('UI navigation — all modules', () => {

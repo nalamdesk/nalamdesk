@@ -50,6 +50,8 @@ test.describe.serial('UI navigation — all modules', () => {
                 queueEntryId: entry.id,
                 startRequestId: `nav-seed-${Date.now()}`,
                 doctorId: doctor.id,
+                // Admin attribution to another doctor needs a recorded reason (KB-1).
+                attributionReason: 'Regression seed: admin records on behalf of the doctor',
             });
             // Complete it: getVisits only returns finished encounters, and the
             // detail route needs a finished target.

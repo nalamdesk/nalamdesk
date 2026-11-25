@@ -256,4 +256,38 @@ describe('DashboardComponent', () => {
             expect(component.canSeeBilling).toBe(false);
         });
     });
+    describe('online booking card', () => {
+        beforeEach(() => {
+            mockDataService.invoke.mockImplementation((method: string) => {
+                if (method === 'getDashboardStats') return Promise.resolve({ totalPatients: 0, todayVisits: 0 });
+                if (method === 'getQueue') return Promise.resolve([]);
+                return Promise.resolve(null);
+            });
+        });
+
+        it('says not connected when this computer is not paired with the cloud', async () => {
+            (component as any).cloudService = {
+                getAppointments: vi.fn(async () => []),
+                getStatus: vi.fn(async () => ({ state: 'unpaired', configured: false, listingEnabled: false }))
+            };
+            await component.loadData();
+            expect(component.cloudPaired).toBe(false);
+        });
+
+        it('keeps the sync view when paired, or when the status is unknown', async () => {
+            (component as any).cloudService = {
+                getAppointments: vi.fn(async () => []),
+                getStatus: vi.fn(async () => ({ state: 'paired', configured: true, listingEnabled: true }))
+            };
+            await component.loadData();
+            expect(component.cloudPaired).toBe(true);
+
+            (component as any).cloudService = {
+                getAppointments: vi.fn(async () => []),
+                getStatus: vi.fn(async () => { throw new Error('offline'); })
+            };
+            await component.loadData();
+            expect(component.cloudPaired).toBeNull();
+        });
+    });
 });

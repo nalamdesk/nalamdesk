@@ -322,10 +322,15 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
   }
 
   get currentRouteName(): string {
-    // Simple extraction, can be enhanced
-    const url = this.router.url.split('/')[1];
-    if (!url) return 'Dashboard';
-    return url.charAt(0).toUpperCase() + url.slice(1);
+    // First path segment, without query or fragment, as words:
+    // "online-booking" reads "Online Booking".
+    const segment = (this.router.url.split('/')[1] || '').split(/[?#;]/)[0];
+    if (!segment) return 'Dashboard';
+    return segment
+      .split('-')
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
   }
 
   closeDrawer() {

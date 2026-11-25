@@ -59,17 +59,16 @@ if (isDev) {
     // Never honored in packaged builds (branch is dev-only by construction).
     const e2eUserDataDir = process.env['NALAMDESK_E2E_USER_DATA'];
     app.setPath('userData', e2eUserDataDir || getDevUserDataPath(app.getPath('appData')));
-    // Unpacked Linux runs have no bundled version metadata, so
-    // app.getVersion() resolves to "0.0" and electron-updater throws at first
-    // access — killing main before any window opens (macOS reads the bundle
-    // instead, which is why this only bites Linux dev/CI). Pin the package
-    // version early; user-facing display stays with loadAppVersionInfo().
-    if (process.platform === 'linux') {
-        const devVersion = readPackageVersion(path.join(__dirname, '..', '..'));
-        // setVersion exists at runtime (Electron 40) but is missing from the
-        // shipped .d.ts, hence the cast rather than a @ts-ignore.
-        if (devVersion) (app as unknown as { setVersion(version: string): void }).setVersion(devVersion);
-    }
+    // Unpacked runs never report NalamDesk's own version: on Linux
+    // app.getVersion() resolves to "0.0" (and electron-updater throws at first
+    // access, killing main before any window opens), and on macOS and Windows
+    // it reads the Electron binary, so Settings showed "v40.0.0". Pin the
+    // package version early on every platform; loadAppVersionInfo() then
+    // displays it.
+    const devVersion = readPackageVersion(path.join(__dirname, '..', '..'));
+    // setVersion exists at runtime (Electron 40) but is missing from the
+    // shipped .d.ts, hence the cast rather than a @ts-ignore.
+    if (devVersion) (app as unknown as { setVersion(version: string): void }).setVersion(devVersion);
 }
 
 const userDataPath = app.getPath('userData');

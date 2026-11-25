@@ -11,6 +11,7 @@ import { ToastService } from '../shared/services/toast.service';
 import { QueueCountService } from '../shared/services/queue-count.service';
 import { TourService } from '../shared/services/tour.service';
 import { localDateISO } from '../../../shared/local-date';
+import { SetupChecklistComponent } from './setup-checklist/setup-checklist.component';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -23,7 +24,7 @@ export function greetingForLocalHour(hour: number): string {
   // ... (template omitted, same as before) 
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, SetupChecklistComponent],
   template: `
     <div class="h-full w-full overflow-y-auto p-4 md:p-8">
     <div class="w-full max-w-[1600px] mx-auto">
@@ -36,6 +37,9 @@ export function greetingForLocalHour(hour: number): string {
                 <p class="text-base-content/60 mt-1">Here's what's happening at {{ clinicName || 'your clinic' }} today.</p>
             </div>
         </div>
+
+        <!-- Admin first-run checklist: each step checks itself from live data -->
+        <app-setup-checklist *ngIf="isAdmin && statsLoaded" [patientCount]="stats?.totalPatients || 0"></app-setup-checklist>
 
         <!-- First-run onboarding banner -->
         <div *ngIf="showWelcomeBanner" class="mb-8 rounded-2xl border border-blue-200 bg-blue-50/70 p-5 flex flex-col md:flex-row md:items-center gap-4">
@@ -311,6 +315,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
   visits: any[] = [];
   currentUser: any = null;
   isSyncing = false;
+  /** Set once stats load, so the setup checklist reads the real patient count. */
+  statsLoaded = false;
   /** False when this computer is not paired with NalamDesk Cloud, so online booking cannot work yet; null while unknown. */
   cloudPaired: boolean | null = null;
   todayAppointments: any[] = [];
@@ -381,6 +387,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       const dashboardStats = await this.dataService.invoke<any>('getDashboardStats');
       this.ngZone.run(() => {
         this.stats = dashboardStats || { totalPatients: 0, todayVisits: 0 };
+        this.statsLoaded = true;
       });
       await this.loadOnboardingState();
 
@@ -446,7 +453,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // -- Onboarding -----------------------------------------------------
   private static readonly DEMO_BANNER_DISMISSED_KEY = 'nd.demo-banner.dismissed';
 
-  private get isAdmin(): boolean {
+  get isAdmin(): boolean {
     return this.currentUser?.role === 'admin';
   }
 

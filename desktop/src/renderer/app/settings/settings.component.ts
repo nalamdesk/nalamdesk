@@ -4,7 +4,7 @@ import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DataService } from '../services/api.service';
 import { AuthService } from '../services/auth.service';
-import { Router } from '@angular/router';
+import { Router, ActivatedRoute } from '@angular/router';
 import { SharedTableComponent } from '../shared/components/table/table.component';
 import { ActionRendererComponent } from '../shared/components/table/renderers/action-renderer.component';
 import { PracticeProfileService } from '../services/practice-profile.service';
@@ -398,6 +398,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   private dataService = inject(DataService);
   private authService = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute, { optional: true });
+  private static readonly LINKABLE_TABS = new Set(['general', 'users', 'facilities', 'security', 'backup', 'audit', 'catalogs', 'abdm']);
   private updates = inject(AppUpdateService, { optional: true });
   private server = inject(ServerConnectionService, { optional: true });
   private serverEvents: Subscription | null = null;
@@ -418,6 +420,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.loadUsers();
       this.loadRoles();
     }
+    // Deep links from the dashboard setup checklist: /settings?tab=backup
+    const tab = this.route?.snapshot?.queryParamMap?.get('tab');
+    if (tab && SettingsComponent.LINKABLE_TABS.has(tab)) this.switchTab(tab);
     // Server clients (#216): the ABDM inbox follows the live events stream.
     if (!this.isElectron && this.server?.events) {
       this.serverEvents = this.server.events.subscribe((event) => {

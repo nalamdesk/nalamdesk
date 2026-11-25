@@ -27,6 +27,7 @@ export const routes: Routes = [
             { path: 'settings', loadComponent: () => import('./settings/settings.component').then(m => m.SettingsComponent), canActivate: [adminGuard] },
             { path: 'profile', loadComponent: () => import('./profile/profile.component').then(m => m.ProfileComponent) },
             { path: 'queue', loadComponent: () => import('./queue/queue.component').then(m => m.QueueComponent) },
+            { path: 'follow-ups', loadComponent: () => import('./follow-ups/follow-ups.component').then(m => m.FollowUpsComponent) },
             { path: 'appointments', loadComponent: () => import('./appointments/appointments.component').then(m => m.AppointmentsComponent) }
         ]
     }

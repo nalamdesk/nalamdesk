@@ -2015,6 +2015,39 @@ export const MIGRATIONS = [
             addColumn(db, 'patient_queue', 'token_date TEXT');
             db.exec('CREATE INDEX IF NOT EXISTS idx_patient_queue_token ON patient_queue(facility_id, token_date, token_no)');
         }
+    },
+    {
+        version: 58,
+        up: (db: any) => {
+            // Follow-ups: "review after" dates the doctor sets during a
+            // consultation, kept apart from visits so closing one never
+            // touches a signed encounter. One row per visit.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS follow_ups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    visit_id INTEGER NOT NULL UNIQUE,
+                    patient_id INTEGER NOT NULL,
+                    facility_id INTEGER NOT NULL DEFAULT 1,
+                    due_date TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'dismissed')),
+                    close_reason TEXT,
+                    closed_by INTEGER,
+                    closed_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(visit_id) REFERENCES visits(id),
+                    FOREIGN KEY(patient_id) REFERENCES patients(id)
+                )
+            `);
+            db.exec('CREATE INDEX IF NOT EXISTS idx_follow_ups_due ON follow_ups(facility_id, status, due_date)');
+            if (tableExists(db, 'roles')) {
+                grantRoleMethods(db, {
+                    admin: ['getFollowUps', 'closeFollowUp'],
+                    doctor: ['getFollowUps', 'closeFollowUp'],
+                    receptionist: ['getFollowUps', 'closeFollowUp'],
+                    nurse: ['getFollowUps']
+                });
+            }
+        }
     }
 ];
 

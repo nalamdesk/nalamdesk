@@ -16,6 +16,7 @@ import { combineLatest } from 'rxjs';
 import { VitalsFormComponent } from '../vitals/vitals-form.component';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder } from '../../../../shared/prescription-order';
+import { localDateISO } from '../../../../shared/local-date';
 
 interface PrescriptionItem {
   medicine: string;
@@ -299,6 +300,22 @@ interface Visit {
                                 <option value="Provisional">Provisional</option>
                                 <option value="Final">Final</option>
                              </select>
+                        </div>
+                    </div>
+                    <!-- Review after: opens a follow-up on the Follow-ups list -->
+                    <div *ngIf="isLiveConsultation" class="mt-4" data-testid="follow-up-picker">
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Review after</label>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button *ngFor="let opt of followUpPresets" type="button"
+                                    class="btn btn-xs" [class.btn-primary]="visitForm.get('follow_up_date')?.value === followUpDateIn(opt.days)"
+                                    [disabled]="!canEditChart" (click)="setFollowUpIn(opt.days)">{{ opt.label }}</button>
+                            <input type="date" formControlName="follow_up_date" [min]="todayISO"
+                                   aria-label="Review date" class="input input-bordered input-xs w-36" />
+                            <button *ngIf="visitForm.get('follow_up_date')?.value" type="button" class="btn btn-xs btn-ghost"
+                                    [disabled]="!canEditChart" (click)="visitForm.patchValue({ follow_up_date: '' })">Clear</button>
+                            <span *ngIf="visitForm.get('follow_up_date')?.value as due" class="text-xs text-gray-500">
+                                Review on {{ due | date:'EEE, d MMM' }}. It appears on the Follow-ups list.
+                            </span>
                         </div>
                     </div>
                  </div>
@@ -723,8 +740,31 @@ export class VisitComponent implements OnInit {
       diagnosis_type: [''],
       prescription: [[]],
       amount_paid: [0],
-      allergy_override_reason: ['']
+      allergy_override_reason: [''],
+      follow_up_date: ['']
     });
+  }
+
+  readonly followUpPresets = [
+    { label: '3 days', days: 3 },
+    { label: '1 week', days: 7 },
+    { label: '2 weeks', days: 14 },
+    { label: '1 month', days: 30 }
+  ];
+
+  get todayISO(): string {
+    return localDateISO();
+  }
+
+  followUpDateIn(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return localDateISO(d);
+  }
+
+  setFollowUpIn(days: number) {
+    if (!this.canEditChart) return;
+    this.visitForm.patchValue({ follow_up_date: this.followUpDateIn(days) });
   }
 
   ngOnInit() {
@@ -1697,7 +1737,8 @@ export class VisitComponent implements OnInit {
       diagnosis_type: visit.diagnosis_type || '',
       prescription: visit.prescription || [],
       amount_paid: visit.amount_paid || 0,
-      allergy_override_reason: visit.allergy_override_reason || ''
+      allergy_override_reason: visit.allergy_override_reason || '',
+      follow_up_date: visit.follow_up_date || ''
     });
     this.currentPrescription = visit.prescription || [];
     this.visitOrders = [];
@@ -1713,7 +1754,8 @@ export class VisitComponent implements OnInit {
       diagnosis_type: encounter.diagnosis_type || '',
       prescription: encounter.prescription || [],
       amount_paid: encounter.amount_paid || 0,
-      allergy_override_reason: encounter.allergy_override_reason || ''
+      allergy_override_reason: encounter.allergy_override_reason || '',
+      follow_up_date: encounter.follow_up_date || ''
     });
     this.currentPrescription = encounter.prescription || [];
     void this.loadSourceBooking(encounter?.id);

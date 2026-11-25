@@ -3063,6 +3063,90 @@ export class DatabaseService {
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = @id AND status = 'in-progress'
         `).run(data);
+        if (existing && Object.prototype.hasOwnProperty.call(visit, 'follow_up_date')) {
+            this.setEncounterFollowUp(encounterId, existing.patient_id, visit.follow_up_date);
+        }
+    }
+
+    /**
+     * The encounter's "review after" date: a valid YYYY-MM-DD opens (or
+     * moves) its follow-up; empty clears an open one. Closed follow-ups are
+     * history and stay as they are.
+     */
+    private setEncounterFollowUp(encounterId: number, patientId: number, value: unknown) {
+        const raw = value == null ? '' : String(value).trim();
+        if (!raw) {
+            this.db.prepare("DELETE FROM follow_ups WHERE visit_id = ? AND status = 'open'").run(encounterId);
+            return;
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(raw) || Number.isNaN(Date.parse(`${raw}T00:00:00Z`))) {
+            throw new Error('Follow-up date must be YYYY-MM-DD');
+        }
+        this.db.prepare(`
+            INSERT INTO follow_ups (visit_id, patient_id, facility_id, due_date)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(visit_id) DO UPDATE SET due_date = excluded.due_date
+            WHERE follow_ups.status = 'open'
+        `).run(encounterId, patientId, this.facilityId(), raw);
+    }
+
+    /**
+     * Open follow-ups due on or before `through` (default: a week from
+     * today, clinic-local), oldest first. `seen_since` marks a patient who
+     * already had a later finished visit, so the desk can close it as done.
+     */
+    getFollowUps(through?: string) {
+        const until = typeof through === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(through) ? through : null;
+        return this.db.prepare(`
+            SELECT f.id, f.visit_id, f.patient_id, f.due_date, f.status,
+                   p.name AS patient_name, p.mobile, p.age, p.gender,
+                   v.date AS visit_date, v.diagnosis,
+                   u.name AS doctor_name,
+                   CAST(julianday(f.due_date) - julianday(date('now', 'localtime')) AS INTEGER) AS days_until_due,
+                   EXISTS (
+                       SELECT 1 FROM visits later
+                       WHERE later.patient_id = f.patient_id AND later.id != f.visit_id
+                         AND later.status = 'finished' AND later.date > v.date
+                   ) AS seen_since,
+                   EXISTS (
+                       SELECT 1 FROM patient_queue q
+                       WHERE q.patient_id = f.patient_id AND q.status NOT IN ('completed', 'removed')
+                   ) AS in_queue
+            FROM follow_ups f
+            JOIN patients p ON p.id = f.patient_id
+            JOIN visits v ON v.id = f.visit_id
+            LEFT JOIN users u ON u.id = v.doctor_id
+            WHERE f.status = 'open' AND f.facility_id = ?
+              AND v.status = 'finished'
+              AND p.merged_into IS NULL AND p.active != 0
+              AND f.due_date <= COALESCE(?, date('now', 'localtime', '+7 days'))
+            ORDER BY f.due_date ASC, f.id ASC
+        `).all(this.facilityId(), until).map((row: any) => ({
+            ...row,
+            seen_since: !!row.seen_since,
+            in_queue: !!row.in_queue
+        }));
+    }
+
+    /** Closes an open follow-up as done (patient came back or was called) or dismissed (with a reason). */
+    closeFollowUp(input: any, actingUserId?: number) {
+        const id = Number(input?.id);
+        const status = input?.status;
+        const reason = String(input?.reason ?? '').trim();
+        if (!Number.isInteger(id) || id <= 0) throw new Error('Follow-up id is required');
+        if (status !== 'done' && status !== 'dismissed') throw new Error('Follow-up status must be done or dismissed');
+        if (status === 'dismissed' && !reason) throw new Error('A reason is required to dismiss a follow-up');
+        const row = this.db.prepare('SELECT id, facility_id, status FROM follow_ups WHERE id = ?').get(id) as any;
+        if (!row) throw new Error('Follow-up not found');
+        this.assertSameFacility(row, 'Follow-up');
+        if (row.status !== 'open') return { changes: 0 };
+        const result = this.db.prepare(`
+            UPDATE follow_ups SET status = ?, close_reason = ?, closed_by = ?, closed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'open'
+        `).run(status, reason || null, actingUserId ?? null, id);
+        this.logAudit('UPDATE', 'follow_ups', id, actingUserId,
+            status === 'done' ? 'Follow-up done' : `Follow-up dismissed: ${reason}`);
+        return result;
     }
 
     private validateStartRetry(encounter: any, expected: {
@@ -3453,8 +3537,14 @@ export class DatabaseService {
     }
 
     private hydrateVisit(row: any) {
+        let followUp: any = null;
+        try {
+            followUp = row?.id ? this.db.prepare('SELECT due_date, status FROM follow_ups WHERE visit_id = ?').get(row.id) : null;
+        } catch { /* pre-v58 schema */ }
         return {
             ...row,
+            follow_up_date: followUp?.due_date ?? null,
+            follow_up_status: followUp?.status ?? null,
             prescription: row.prescription_json ? JSON.parse(row.prescription_json) : [],
             doctor_license: this.safeParseJson(row.doctor_license_snapshot, null)
         };

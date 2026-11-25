@@ -15,7 +15,7 @@ export interface PrintedPrescriptionOrder {
     clinic: { name?: string; hfr_id?: string };
     requester: { name?: string; license_number?: string; specialty?: string; hpr_id?: string };
     patient: { name?: string; age?: number | string | null; gender?: string; mobile?: string; mrn?: string };
-    visit: { id?: number; date?: string; diagnosis?: string };
+    visit: { id?: number; date?: string; diagnosis?: string; follow_up_date?: string | null };
     items: any[];
 }
 
@@ -56,6 +56,9 @@ export class PdfService {
         doc.text(`Patient: ${patient.name}`, 14, 45);
         doc.text(`Age/Gender: ${patient.age} / ${patient.gender}`, 14, 50);
         doc.text(`Date: ${new Date(visit.date).toLocaleDateString()}`, 150, 45);
+        if (visit.follow_up_date) {
+            doc.text(`Review on: ${new Date(`${visit.follow_up_date}T00:00:00`).toLocaleDateString()}`, 150, 50);
+        }
 
         // Diagnosis
         doc.text('Diagnosis:', 14, 65);

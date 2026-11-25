@@ -556,6 +556,60 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         });
     });
 
+    describe('Follow-ups (review after)', () => {
+        const isoIn = (days: number) => {
+            const d = new Date();
+            d.setDate(d.getDate() + days);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+        function finishWithFollowUp(patientId: number, followUp: string | undefined, key: string) {
+            const q: any = queuePatient(patientId);
+            const enc = service.beginConsultation({ patientId, queueEntryId: Number(q.lastInsertRowid), startRequestId: key }, 10);
+            service.saveConsultationProgress({ encounterId: enc.id, visit: { diagnosis: 'Hypertension', follow_up_date: followUp } }, 10);
+            return service.completeConsultation({ encounterId: enc.id, visit: { diagnosis: 'Hypertension', follow_up_date: followUp } }, 10);
+        }
+
+        it('lists follow-ups due within a week, oldest first, and hides later ones', () => {
+            const overdue = finishWithFollowUp(1, isoIn(-2), 'fu-1');
+            finishWithFollowUp(2, isoIn(30), 'fu-2');
+            expect(overdue.follow_up_date).toBe(isoIn(-2));
+
+            const due = service.getFollowUps();
+            expect(due.map((f: any) => [f.patient_name, f.days_until_due])).toEqual([['Alice Green', -2]]);
+            expect(due[0].seen_since).toBe(false);
+            expect(service.getFollowUps(isoIn(31))).toHaveLength(2);
+        });
+
+        it('clears with an empty date, and closes as done or dismissed with a reason', () => {
+            const q: any = queuePatient(1);
+            const enc = service.beginConsultation({ patientId: 1, queueEntryId: Number(q.lastInsertRowid), startRequestId: 'fu-clear' }, 10);
+            service.saveConsultationProgress({ encounterId: enc.id, visit: { diagnosis: 'Cough', follow_up_date: isoIn(1) } }, 10);
+            service.completeConsultation({ encounterId: enc.id, visit: { diagnosis: 'Cough', follow_up_date: '' } }, 10);
+            expect(service.getFollowUps()).toHaveLength(0);
+
+            finishWithFollowUp(2, isoIn(0), 'fu-close');
+            const [open] = service.getFollowUps();
+            expect(() => service.closeFollowUp({ id: open.id, status: 'dismissed' }, 30)).toThrow('reason');
+            expect(() => service.closeFollowUp({ id: open.id, status: 'later' }, 30)).toThrow();
+            service.closeFollowUp({ id: open.id, status: 'done' }, 30);
+            expect(service.getFollowUps()).toHaveLength(0);
+            expect(service.closeFollowUp({ id: open.id, status: 'done' }, 30).changes).toBe(0);
+        });
+
+        it('rejects a malformed date and flags a patient seen again since', () => {
+            const q: any = queuePatient(1);
+            const enc = service.beginConsultation({ patientId: 1, queueEntryId: Number(q.lastInsertRowid), startRequestId: 'fu-bad' }, 10);
+            expect(() => service.saveConsultationProgress({ encounterId: enc.id, visit: { diagnosis: 'X', follow_up_date: '12/01/2026' } }, 10))
+                .toThrow('YYYY-MM-DD');
+            service.completeConsultation({ encounterId: enc.id, visit: { diagnosis: 'X', follow_up_date: isoIn(-1) } }, 10);
+            db.exec(`UPDATE visits SET date = datetime('now', '-3 days') WHERE id = ${enc.id}`);
+            finishWithFollowUp(1, undefined, 'fu-again');
+            const [first] = service.getFollowUps();
+            expect(first.visit_id).toBe(enc.id);
+            expect(first.seen_since).toBe(true);
+        });
+    });
+
     describe('Track D: review follow-ups', () => {
         it('prefers queue-linked vitals over newer same-day readings for alerts', () => {
             const added = service.addToQueue(1, { urgency: 'routine', priority: 1 }, 20);

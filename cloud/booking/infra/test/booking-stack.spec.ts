@@ -53,6 +53,9 @@ describe('BookingStack', () => {
                 })]
             })
         });
+        // The statement must name the endpoint, not just the function.
+        const policies = Object.values(t.findResources('AWS::Lambda::ResourcePolicy'));
+        expect(JSON.stringify(policies[0]!.Properties.PolicyDocument.Statement[0].Resource)).toContain('/endpoint/public');
     });
 
     it('serves the stage domain with the Core certificate and alias records', () => {
@@ -68,7 +71,7 @@ describe('BookingStack', () => {
 
     it('signs API origin requests with a Lambda origin access control', () => {
         t.hasResourceProperties('AWS::CloudFront::OriginAccessControl', {
-            OriginAccessControlConfig: Match.objectLike({ OriginAccessControlOriginType: 'lambda', SigningBehavior: 'always' })
+            OriginAccessControlConfig: Match.objectLike({ OriginAccessControlOriginType: 'lambda', SigningBehavior: 'always-amz-auth' })
         });
         const dist = Object.values(t.findResources('AWS::CloudFront::Distribution'))[0] as any;
         const apiOrigin = dist.Properties.DistributionConfig.Origins.find((o: any) => o.Id === 'booking-api');

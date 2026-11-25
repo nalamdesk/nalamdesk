@@ -29,11 +29,11 @@ describe('BookingStack', () => {
         t.resourceCountIs('AWS::CloudFront::OriginAccessControl', 2);
     });
 
-    it('caps the API at one environment behind IAM auth, with code pinned in the Core code bucket', () => {
+    it('caps the API at the minimum two environments behind IAM auth, with code pinned in the Core code bucket', () => {
         t.hasResourceProperties('AWS::Lambda::WebFunctionEndpoint', {
             AuthType: 'IamAuth',
             EndpointType: 'HomeRegion',
-            ScalingConfig: { MaxEnvironments: 1 },
+            ScalingConfig: { MaxEnvironments: 2 },
             ThrottleConfig: { RateLimit: 20 }
         });
         const revision = Object.values(t.findResources('AWS::Lambda::WebFunctionRevision'))[0] as any;

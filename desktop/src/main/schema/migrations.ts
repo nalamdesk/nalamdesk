@@ -2105,6 +2105,66 @@ export const MIGRATIONS = [
                 });
             }
         }
+    },
+    {
+        version: 60,
+        up: (db: any) => {
+            // Pharmacy stock for dispensing clinics: batches with expiry and
+            // price, and an append-only ledger of every movement. On-hand is
+            // kept on the batch for speed and always equals its moves' sum.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS stock_batches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    facility_id INTEGER NOT NULL DEFAULT 1,
+                    medicine_id INTEGER,
+                    medicine_name TEXT NOT NULL,
+                    batch_no TEXT NOT NULL,
+                    expiry_date TEXT NOT NULL,
+                    unit TEXT NOT NULL DEFAULT 'unit',
+                    qty_on_hand INTEGER NOT NULL DEFAULT 0 CHECK (qty_on_hand >= 0),
+                    mrp REAL NOT NULL DEFAULT 0,
+                    cost REAL,
+                    supplier TEXT,
+                    received_by INTEGER,
+                    received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(medicine_id) REFERENCES medicine_catalog(id)
+                )
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS stock_moves (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id INTEGER NOT NULL,
+                    facility_id INTEGER NOT NULL DEFAULT 1,
+                    kind TEXT NOT NULL CHECK (kind IN ('receive', 'dispense', 'adjust')),
+                    qty INTEGER NOT NULL,
+                    reason TEXT,
+                    visit_id INTEGER,
+                    patient_id INTEGER,
+                    created_by INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(batch_id) REFERENCES stock_batches(id)
+                )
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS stock_reorder_levels (
+                    facility_id INTEGER NOT NULL DEFAULT 1,
+                    medicine_key TEXT NOT NULL,
+                    reorder_level INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (facility_id, medicine_key)
+                )
+            `);
+            db.exec('CREATE INDEX IF NOT EXISTS idx_stock_batches_medicine ON stock_batches(facility_id, medicine_id, expiry_date)');
+            db.exec('CREATE INDEX IF NOT EXISTS idx_stock_moves_visit ON stock_moves(visit_id)');
+            if (tableExists(db, 'roles')) {
+                const all = ['getStock', 'getDispensePlan', 'dispenseVisit'];
+                grantRoleMethods(db, {
+                    admin: [...all, 'receiveStock', 'adjustStock', 'setReorderLevel'],
+                    doctor: [...all, 'receiveStock', 'adjustStock', 'setReorderLevel'],
+                    receptionist: all,
+                    nurse: ['getStock']
+                });
+            }
+        }
     }
 ];
 

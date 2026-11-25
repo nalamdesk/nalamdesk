@@ -170,6 +170,21 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['invoiceId'] ?? payload['id'] ?? args[0]), String(payload['reason'] ?? args[1] ?? ''), actingUserId];
         }
+        case 'getStock': {
+            return [];
+        }
+        case 'getDispensePlan': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['visitId'] ?? args[0])];
+        }
+        case 'receiveStock':
+        case 'adjustStock':
+        case 'dispenseVisit': {
+            return [payloadObject(args[0]), actingUserId];
+        }
+        case 'setReorderLevel': {
+            return [payloadObject(args[0])];
+        }
         case 'getLabOrders': {
             const payload = payloadObject(args[0]);
             return [Number(payload['patientId'] ?? args[0])];

@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { CloudService } from '../services/cloud.service';
 import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
+import { localDateISO } from '../../../shared/local-date';
 
 @Component({
   selector: 'app-online-booking',
@@ -151,11 +152,11 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
 
   setCalendarLimits() {
     const today = new Date();
-    this.minDate = today.toISOString().split('T')[0];
+    this.minDate = localDateISO(today);
 
     const nextWeek = new Date(today);
     nextWeek.setDate(today.getDate() + 7);
-    this.maxDate = nextWeek.toISOString().split('T')[0];
+    this.maxDate = localDateISO(nextWeek);
 
     this.selectedDate = this.minDate;
     this.onDateChange();
@@ -175,7 +176,7 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
     if (!this.selectedDate) return true;
 
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = localDateISO(now);
 
     // Future date -> Not past
     if (this.selectedDate > todayStr) return false;

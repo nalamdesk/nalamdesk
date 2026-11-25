@@ -17,6 +17,7 @@ import { ColDef } from 'ag-grid-community';
 import { newRequestId } from '../../services/request-id';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patient-identifiers';
+import { localDateISO } from '../../../../shared/local-date';
 
 @Component({
     selector: 'app-patient-details',
@@ -1437,13 +1438,13 @@ export class PatientDetailsComponent implements OnInit {
     }
 
     get today(): string {
-        return new Date().toISOString().split('T')[0];
+        return localDateISO();
     }
 
     get minDate(): string {
         const d = new Date();
         d.setFullYear(d.getFullYear() - 110);
-        return d.toISOString().split('T')[0];
+        return localDateISO(d);
     }
 
     isFieldInvalid(field: string): boolean {
@@ -1480,7 +1481,7 @@ export class PatientDetailsComponent implements OnInit {
             if (age && !this.patientForm.get('dob')?.dirty) {
                 const date = new Date();
                 date.setFullYear(date.getFullYear() - age);
-                this.patientForm.patchValue({ dob: date.toISOString().split('T')[0] }, { emitEvent: false });
+                this.patientForm.patchValue({ dob: localDateISO(date) }, { emitEvent: false });
             }
         });
 

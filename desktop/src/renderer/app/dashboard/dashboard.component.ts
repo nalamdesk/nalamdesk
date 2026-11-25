@@ -10,6 +10,7 @@ import { DialogService } from '../shared/services/dialog.service';
 import { ToastService } from '../shared/services/toast.service';
 import { QueueCountService } from '../shared/services/queue-count.service';
 import { TourService } from '../shared/services/tour.service';
+import { localDateISO } from '../../../shared/local-date';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -89,10 +90,16 @@ export function greetingForLocalHour(hour: number): string {
              </div>
              <div class="stat-title text-gray-500 font-medium tracking-wide text-xs uppercase">Online Booking</div>
              <div class="stat-value text-sky-600 font-display text-2xl mt-1">
-                 <span *ngIf="requests.length > 0">{{ requests.length }} New</span>
-                 <span *ngIf="requests.length === 0" class="text-gray-400 text-xl font-normal">All Caught Up</span>
+                 <span *ngIf="cloudPaired === false" class="text-gray-400 text-xl font-normal" data-testid="booking-not-connected">Not connected</span>
+                 <ng-container *ngIf="cloudPaired !== false">
+                   <span *ngIf="requests.length > 0">{{ requests.length }} New</span>
+                   <span *ngIf="requests.length === 0" class="text-gray-400 text-xl font-normal">All Caught Up</span>
+                 </ng-container>
              </div>
-             <div class="stat-actions mt-2">
+             <div *ngIf="cloudPaired === false" class="text-xs text-gray-400 mt-2 whitespace-normal">
+                 Pair with NalamDesk Cloud in Settings to take bookings.
+             </div>
+             <div *ngIf="cloudPaired !== false" class="stat-actions mt-2">
                  <button class="btn btn-xs btn-outline btn-info gap-1" (click)="refresh()" [disabled]="isSyncing">
                     <svg *ngIf="isSyncing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -304,6 +311,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
   visits: any[] = [];
   currentUser: any = null;
   isSyncing = false;
+  /** False when this computer is not paired with NalamDesk Cloud, so online booking cannot work yet; null while unknown. */
+  cloudPaired: boolean | null = null;
   todayAppointments: any[] = [];
 
   // First-run onboarding: demo seed state (admin-only IPC) and banner.
@@ -387,6 +396,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.doctorName = settings.doctor_name;
       }
 
+      await this.loadCloudPairing();
+
       // Load Requests
       const reqs = await this.dataService.invoke<any>('getAppointmentRequests');
       this.requests = (reqs || []).filter((r: any) => r.status === 'pending');
@@ -414,8 +425,18 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
+  private async loadCloudPairing() {
+    try {
+      const status = await this.cloudService.getStatus();
+      this.ngZone.run(() => { this.cloudPaired = status ? status.state === 'paired' : null; });
+    } catch {
+      // Unknown is shown as before: the card keeps its sync button.
+      this.ngZone.run(() => { this.cloudPaired = null; });
+    }
+  }
+
   async loadAppointments() {
-    const today = new Date().toISOString().split('T')[0];
+    const today = localDateISO();
     const appts = await this.cloudService.getAppointments(today);
     // Filter out Checked In?
     // Status: CONFIRMED, CHECKED_IN. We want to show CONFIRMED ones to check them in.

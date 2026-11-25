@@ -896,7 +896,8 @@ handleGuardedDb('db:getDailyClose', (_, date) => {
     return databaseService.getDailyClose(today);
 });
 // Investigations: Cedar decides (v59 grants reads to the desk, results to clinical roles).
-for (const method of ['getLabOrders', 'saveLabResults', 'cancelLabOrder'] as const) {
+for (const method of ['getLabOrders', 'saveLabResults', 'cancelLabOrder',
+    'getStock', 'receiveStock', 'adjustStock', 'setReorderLevel', 'getDispensePlan', 'dispenseVisit'] as const) {
     handleGuardedDb(`db:${method}`, (_, input) => {
         const user = sessionService.getUser();
         if (!user) throw new Error('Unauthorized');

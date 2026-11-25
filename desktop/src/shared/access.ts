@@ -47,6 +47,10 @@ export const METHOD_CATALOG: CatalogGroup[] = [
         ]
     },
     {
+        label: 'Pharmacy stock',
+        methods: ['getStock', 'receiveStock', 'adjustStock', 'setReorderLevel', 'getDispensePlan', 'dispenseVisit']
+    },
+    {
         label: 'Consultations',
         methods: [
             'beginConsultation', 'beginNextConsultation', 'completeConsultation',

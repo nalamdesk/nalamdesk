@@ -656,6 +656,65 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         });
     });
 
+    describe('Pharmacy stock and dispensing', () => {
+        const isoIn = (days: number) => {
+            const d = new Date();
+            d.setDate(d.getDate() + days);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+        function finishWithRx(patientId: number, key: string) {
+            const q: any = queuePatient(patientId);
+            const enc = service.beginConsultation({ patientId, queueEntryId: Number(q.lastInsertRowid), startRequestId: key }, 10);
+            return service.completeConsultation({ encounterId: enc.id, visit: { diagnosis: 'Fever', prescription: [
+                { medicine: 'Paracetamol 650', form: 'Tab', route: 'Oral', dosage: '1 tab', frequency: '1-1-1', duration: '3 days' }
+            ] } }, 10);
+        }
+
+        it('receives batches, reports on hand, and flags low and expiring stock', () => {
+            service.receiveStock({ medicine_name: 'Paracetamol 650', batch_no: 'A1', expiry_date: isoIn(30), qty: 10, mrp: 2 }, 30);
+            service.receiveStock({ medicine_name: 'paracetamol 650 ', batch_no: 'B2', expiry_date: isoIn(400), qty: 20, mrp: 2.5 }, 30);
+            service.receiveStock({ medicine_name: 'Paracetamol 650', batch_no: 'OLD', expiry_date: isoIn(-1), qty: 5, mrp: 2 }, 30);
+            service.setReorderLevel({ medicine_name: 'Paracetamol 650', reorder_level: 40 });
+            const [item] = service.getStock();
+            expect(item).toMatchObject({ on_hand: 30, expired_qty: 5, nearest_expiry: isoIn(30), low: true, expiring_soon: true });
+            expect(() => service.receiveStock({ medicine_name: 'X', batch_no: 'Z', expiry_date: '2026-13-01', qty: 1 }, 30)).toThrow('Expiry');
+            expect(() => service.receiveStock({ medicine_name: 'X', batch_no: 'Z', expiry_date: isoIn(10), qty: 0 }, 30)).toThrow('Quantity');
+        });
+
+        it('dispenses first-expiring unexpired stock first and refuses short stock whole', () => {
+            const a: any = service.receiveStock({ medicine_name: 'Paracetamol 650', batch_no: 'A1', expiry_date: isoIn(30), qty: 4, mrp: 2 }, 30);
+            service.receiveStock({ medicine_name: 'Paracetamol 650', batch_no: 'B2', expiry_date: isoIn(400), qty: 20, mrp: 2.5 }, 30);
+            service.receiveStock({ medicine_name: 'Paracetamol 650', batch_no: 'OLD', expiry_date: isoIn(-1), qty: 50, mrp: 1 }, 30);
+            const visit = finishWithRx(1, 'rx-1');
+            const plan: any = service.getDispensePlan(visit.id);
+            expect(plan.lines[0]).toMatchObject({ medicine: 'Paracetamol 650', in_stock: 24, dispensed_qty: 0 });
+
+            expect(() => service.dispenseVisit({ visitId: visit.id, lines: [{ medicine: 'Paracetamol 650', qty: 25 }] }, 30))
+                .toThrow('Only 24');
+            const out: any = service.dispenseVisit({ visitId: visit.id, lines: [{ medicine: 'Paracetamol 650', qty: 9 }] }, 30);
+            expect(out.taken.map((t: any) => [t.batch_no, t.qty])).toEqual([['A1', 4], ['B2', 5]]);
+            expect(out.total).toBe(4 * 2 + 5 * 2.5);
+            expect(service.getDispensePlan(visit.id).lines[0]).toMatchObject({ in_stock: 15, dispensed_qty: 9 });
+            const moves = db.prepare('SELECT SUM(qty) AS s FROM stock_moves WHERE batch_id = ?').get(a.id) as any;
+            expect(moves.s).toBe(0);
+            // A used-up medicine stays listed as out of stock, without its empty batch.
+            service.dispenseVisit({ visitId: visit.id, lines: [{ medicine: 'Paracetamol 650', qty: 15 }] }, 30);
+            const [item] = service.getStock();
+            expect(item).toMatchObject({ medicine_name: 'Paracetamol 650', on_hand: 0, expired_qty: 50 });
+            expect(item.batches.map((b: any) => b.batch_no)).toEqual(['OLD']);
+        });
+
+        it('adjusts with a reason, never below zero, and only dispenses finished visits', () => {
+            const a: any = service.receiveStock({ medicine_name: 'ORS', batch_no: 'O1', expiry_date: isoIn(100), qty: 3, mrp: 20 }, 30);
+            expect(() => service.adjustStock({ batch_id: a.id, qty_delta: -1 }, 30)).toThrow('reason');
+            expect(() => service.adjustStock({ batch_id: a.id, qty_delta: -4, reason: 'Damaged' }, 30)).toThrow('Only 3');
+            expect(service.adjustStock({ batch_id: a.id, qty_delta: -1, reason: 'Damaged' }, 30).qty_on_hand).toBe(2);
+            const q: any = queuePatient(2);
+            const enc = service.beginConsultation({ patientId: 2, queueEntryId: Number(q.lastInsertRowid), startRequestId: 'rx-open' }, 10);
+            expect(() => service.dispenseVisit({ visitId: enc.id, lines: [{ medicine: 'ORS', qty: 1 }] }, 30)).toThrow('Finish');
+        });
+    });
+
     describe('Track D: review follow-ups', () => {
         it('prefers queue-linked vitals over newer same-day readings for alerts', () => {
             const added = service.addToQueue(1, { urgency: 'routine', priority: 1 }, 20);

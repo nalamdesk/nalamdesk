@@ -64,6 +64,7 @@ export const ALLOWED_IPC_METHODS = [
     'getDailyClose',
     'getFollowUps', 'closeFollowUp',
     'getLabOrders', 'saveLabResults', 'cancelLabOrder',
+    'getStock', 'receiveStock', 'adjustStock', 'setReorderLevel', 'getDispensePlan', 'dispenseVisit',
     'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
     'getVisitPrescriptions', 'cancelPrescription', 'recordPrescriptionPrint',
     'beginConsultation', 'getActiveConsultation', 'saveConsultationProgress',

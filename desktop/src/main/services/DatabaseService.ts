@@ -3097,6 +3097,201 @@ export class DatabaseService {
         for (const [code, name] of wanted) insert.run(encounterId, patientId, this.facilityId(), code, name, actingUserId ?? null);
     }
 
+    // -- Pharmacy stock (v60) ------------------------------------------
+
+    private static stockKey(medicineId: unknown, name: unknown): string {
+        const id = Number(medicineId);
+        return Number.isInteger(id) && id > 0 ? `id:${id}` : `name:${String(name || '').trim().toLowerCase()}`;
+    }
+
+    /**
+     * Stock by medicine for this facility: on hand (unexpired), nearest
+     * expiry, low-stock and expiring-soon flags, and the batches behind it.
+     */
+    getStock() {
+        const facilityId = this.facilityId();
+        const batches = this.db.prepare(`
+            SELECT *, (expiry_date < date('now', 'localtime')) AS expired,
+                   (expiry_date < date('now', 'localtime', '+60 days')) AS expiring_soon
+            FROM stock_batches WHERE facility_id = ?
+            ORDER BY medicine_name COLLATE NOCASE, expiry_date
+        `).all(facilityId) as any[];
+        const levels = new Map<string, number>((this.db.prepare(
+            'SELECT medicine_key, reorder_level FROM stock_reorder_levels WHERE facility_id = ?'
+        ).all(facilityId) as any[]).map((r) => [r.medicine_key, Number(r.reorder_level)]));
+        const items = new Map<string, any>();
+        for (const b of batches) {
+            const key = DatabaseService.stockKey(b.medicine_id, b.medicine_name);
+            const item = items.get(key) ?? { key, medicine_id: b.medicine_id, medicine_name: b.medicine_name, unit: b.unit,
+                on_hand: 0, expired_qty: 0, nearest_expiry: null, batches: [] as any[] };
+            items.set(key, item);
+            // Used-up batches still list the medicine (so it shows as out of stock), not the batch.
+            if (b.qty_on_hand <= 0) continue;
+            if (b.expired) item.expired_qty += b.qty_on_hand;
+            else {
+                item.on_hand += b.qty_on_hand;
+                if (!item.nearest_expiry || b.expiry_date < item.nearest_expiry) item.nearest_expiry = b.expiry_date;
+            }
+            item.batches.push({ ...b, expired: !!b.expired, expiring_soon: !!b.expiring_soon });
+            items.set(key, item);
+        }
+        for (const [key, level] of levels) {
+            if (!items.has(key) && level > 0 && key.startsWith('id:')) {
+                const med = this.db.prepare('SELECT id, name FROM medicine_catalog WHERE id = ?').get(Number(key.slice(3))) as any;
+                if (med) items.set(key, { key, medicine_id: med.id, medicine_name: med.name, unit: 'unit', on_hand: 0, expired_qty: 0, nearest_expiry: null, batches: [] });
+            }
+        }
+        return [...items.values()].map((item) => {
+            const reorder = levels.get(item.key) ?? 0;
+            return {
+                ...item,
+                reorder_level: reorder,
+                low: reorder > 0 && item.on_hand <= reorder,
+                expiring_soon: item.batches.some((b: any) => !b.expired && b.expiring_soon)
+            };
+        }).sort((a, b) => String(a.medicine_name).localeCompare(String(b.medicine_name)));
+    }
+
+    /** Records a delivery: one new batch and its receive move. */
+    receiveStock(input: any, actingUserId?: number) {
+        const name = String(input?.medicine_name ?? '').trim().slice(0, 160);
+        const batchNo = String(input?.batch_no ?? '').trim().slice(0, 60);
+        const expiry = String(input?.expiry_date ?? '').trim();
+        const qty = Number(input?.qty);
+        const mrp = Number(input?.mrp ?? 0);
+        const cost = input?.cost == null || input.cost === '' ? null : Number(input.cost);
+        const medicineId = Number(input?.medicine_id) > 0 ? Number(input.medicine_id) : null;
+        if (!name) throw new Error('Medicine name is required');
+        if (!batchNo) throw new Error('Batch number is required');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry) || Number.isNaN(Date.parse(`${expiry}T00:00:00Z`))) throw new Error('Expiry must be a date (YYYY-MM-DD)');
+        if (!Number.isInteger(qty) || qty <= 0 || qty > 100000) throw new Error('Quantity must be a whole number above 0');
+        if (!Number.isFinite(mrp) || mrp < 0) throw new Error('MRP must be 0 or more');
+        if (cost != null && (!Number.isFinite(cost) || cost < 0)) throw new Error('Cost must be 0 or more');
+        const facilityId = this.facilityId();
+        const receive = this.db.transaction(() => {
+            const batch = this.db.prepare(`
+                INSERT INTO stock_batches (facility_id, medicine_id, medicine_name, batch_no, expiry_date, unit, qty_on_hand, mrp, cost, supplier, received_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(facilityId, medicineId, name, batchNo, expiry, String(input?.unit || 'unit').slice(0, 20), qty, mrp, cost,
+                input?.supplier ? String(input.supplier).slice(0, 120) : null, actingUserId ?? null);
+            const batchId = Number(batch.lastInsertRowid);
+            this.db.prepare(`INSERT INTO stock_moves (batch_id, facility_id, kind, qty, created_by) VALUES (?, ?, 'receive', ?, ?)`)
+                .run(batchId, facilityId, qty, actingUserId ?? null);
+            this.logAudit('INSERT', 'stock_batches', batchId, actingUserId, `Received ${qty} ${name} (batch ${batchNo}, exp ${expiry})`);
+            return { id: batchId };
+        });
+        return receive();
+    }
+
+    /** Corrects a batch's count (damage, expiry write-off, recount) with a reason. */
+    adjustStock(input: any, actingUserId?: number) {
+        const batchId = Number(input?.batch_id);
+        const delta = Number(input?.qty_delta);
+        const reason = String(input?.reason ?? '').trim();
+        if (!Number.isInteger(batchId) || batchId <= 0) throw new Error('batch_id is required');
+        if (!Number.isInteger(delta) || delta === 0) throw new Error('Change must be a whole number, not 0');
+        if (!reason) throw new Error('A reason is required to adjust stock');
+        const batch = this.db.prepare('SELECT * FROM stock_batches WHERE id = ?').get(batchId) as any;
+        if (!batch) throw new Error('Batch not found');
+        this.assertSameFacility(batch, 'Batch');
+        if (batch.qty_on_hand + delta < 0) throw new Error(`Only ${batch.qty_on_hand} left in this batch`);
+        const adjust = this.db.transaction(() => {
+            this.db.prepare('UPDATE stock_batches SET qty_on_hand = qty_on_hand + ? WHERE id = ?').run(delta, batchId);
+            this.db.prepare(`INSERT INTO stock_moves (batch_id, facility_id, kind, qty, reason, created_by) VALUES (?, ?, 'adjust', ?, ?, ?)`)
+                .run(batchId, batch.facility_id, delta, reason.slice(0, 300), actingUserId ?? null);
+            this.logAudit('UPDATE', 'stock_batches', batchId, actingUserId, `Adjusted ${batch.medicine_name} by ${delta}: ${reason}`);
+        });
+        adjust();
+        return { id: batchId, qty_on_hand: batch.qty_on_hand + delta };
+    }
+
+    setReorderLevel(input: any) {
+        const level = Number(input?.reorder_level);
+        if (!Number.isInteger(level) || level < 0) throw new Error('Reorder level must be a whole number, 0 or more');
+        const key = DatabaseService.stockKey(input?.medicine_id, input?.medicine_name);
+        if (key === 'name:') throw new Error('Medicine is required');
+        this.db.prepare(`INSERT INTO stock_reorder_levels (facility_id, medicine_key, reorder_level) VALUES (?, ?, ?)
+            ON CONFLICT(facility_id, medicine_key) DO UPDATE SET reorder_level = excluded.reorder_level`).run(this.facilityId(), key, level);
+        return { key, reorder_level: level };
+    }
+
+    /**
+     * What to hand over for a finished visit: each active prescription line
+     * with its prescribed quantity, what is in stock (unexpired), and what
+     * was already dispensed for this visit.
+     */
+    getDispensePlan(visitId: number) {
+        const id = Number(visitId);
+        const visit = this.db.prepare('SELECT id, patient_id, status, facility_id FROM visits WHERE id = ?').get(id) as any;
+        if (!visit) throw new Error('Visit not found');
+        this.assertSameFacility(visit, 'Visit');
+        const rx = this.db.prepare(`SELECT id FROM prescriptions WHERE visit_id = ? AND status = 'active' ORDER BY version DESC LIMIT 1`).get(id) as any;
+        const items = rx ? this.prescriptionItems(rx.id) : [];
+        const facilityId = this.facilityId();
+        const lines = items.map((item: any) => {
+            const key = DatabaseService.stockKey(item.medicine_id, item.medicine);
+            const match = key.startsWith('id:')
+                ? { sql: 'medicine_id = ?', arg: Number(key.slice(3)) }
+                : { sql: 'medicine_id IS NULL AND LOWER(TRIM(medicine_name)) = ?', arg: key.slice(5) };
+            const stock = this.db.prepare(`SELECT COALESCE(SUM(qty_on_hand), 0) AS qty, MIN(mrp) AS mrp FROM stock_batches
+                WHERE facility_id = ? AND ${match.sql} AND qty_on_hand > 0 AND expiry_date >= date('now', 'localtime')`).get(facilityId, match.arg) as any;
+            const dispensed = this.db.prepare(`SELECT COALESCE(-SUM(m.qty), 0) AS qty FROM stock_moves m JOIN stock_batches b ON b.id = m.batch_id
+                WHERE m.visit_id = ? AND m.kind = 'dispense' AND ${match.sql.replace(/medicine_/g, 'b.medicine_')}`).get(id, match.arg) as any;
+            const prescribed = item.quantity != null && Number.isFinite(Number(item.quantity)) ? Math.ceil(Number(item.quantity)) : null;
+            return {
+                medicine: item.medicine, medicine_id: item.medicine_id ?? null, form: item.form,
+                dosage: item.dosage, frequency: item.frequency, duration: item.duration,
+                prescribed_qty: prescribed, quantity_unit: item.quantity_unit ?? null,
+                in_stock: Number(stock?.qty || 0), dispensed_qty: Number(dispensed?.qty || 0)
+            };
+        });
+        return { visit_id: id, patient_id: visit.patient_id, status: visit.status, lines };
+    }
+
+    /**
+     * Hands over medicines for a finished visit, first-expiring batch first.
+     * Refuses expired stock and short stock for any line, so nothing is
+     * half-dispensed. Returns what was taken from which batch and its MRP total.
+     */
+    dispenseVisit(input: any, actingUserId?: number) {
+        const visitId = Number(input?.visitId);
+        const plan = this.getDispensePlan(visitId);
+        if (plan.status !== 'finished') throw new Error('Finish the consultation before dispensing');
+        const wanted = (Array.isArray(input?.lines) ? input.lines : [])
+            .map((l: any) => ({ medicine: String(l?.medicine ?? '').trim(), medicine_id: Number(l?.medicine_id) > 0 ? Number(l.medicine_id) : null, qty: Number(l?.qty) }))
+            .filter((l: any) => l.medicine && l.qty !== 0);
+        if (wanted.length === 0) throw new Error('Nothing to dispense');
+        const facilityId = this.facilityId();
+        const dispense = this.db.transaction(() => {
+            const taken: any[] = [];
+            let total = 0;
+            for (const line of wanted) {
+                if (!Number.isInteger(line.qty) || line.qty < 0 || line.qty > 10000) throw new Error(`Quantity for ${line.medicine} must be a whole number`);
+                const key = DatabaseService.stockKey(line.medicine_id, line.medicine);
+                const where = key.startsWith('id:') ? 'medicine_id = ?' : 'medicine_id IS NULL AND LOWER(TRIM(medicine_name)) = ?';
+                const arg = key.startsWith('id:') ? Number(key.slice(3)) : key.slice(5);
+                const batches = this.db.prepare(`SELECT * FROM stock_batches WHERE facility_id = ? AND ${where}
+                    AND qty_on_hand > 0 AND expiry_date >= date('now', 'localtime') ORDER BY expiry_date, id`).all(facilityId, arg) as any[];
+                const available = batches.reduce((sum, b) => sum + b.qty_on_hand, 0);
+                if (available < line.qty) throw new Error(`Only ${available} of ${line.medicine} in stock (unexpired)`);
+                let left = line.qty;
+                for (const b of batches) {
+                    if (left === 0) break;
+                    const take = Math.min(left, b.qty_on_hand);
+                    this.db.prepare('UPDATE stock_batches SET qty_on_hand = qty_on_hand - ? WHERE id = ? AND qty_on_hand >= ?').run(take, b.id, take);
+                    this.db.prepare(`INSERT INTO stock_moves (batch_id, facility_id, kind, qty, visit_id, patient_id, created_by)
+                        VALUES (?, ?, 'dispense', ?, ?, ?, ?)`).run(b.id, facilityId, -take, visitId, plan.patient_id, actingUserId ?? null);
+                    taken.push({ medicine: line.medicine, batch_no: b.batch_no, expiry_date: b.expiry_date, qty: take, mrp: b.mrp });
+                    total += take * Number(b.mrp || 0);
+                    left -= take;
+                }
+            }
+            this.logAudit('INSERT', 'stock_moves', visitId, actingUserId, `Dispensed ${taken.length} batch line(s) for visit ${visitId}`);
+            return { visit_id: visitId, taken, total: Math.round(total * 100) / 100 };
+        });
+        return dispense();
+    }
+
     /** A patient's investigations, newest first, each with its results. */
     getLabOrders(patientId: number) {
         const id = Number(patientId);

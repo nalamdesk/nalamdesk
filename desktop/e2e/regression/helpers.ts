@@ -256,7 +256,7 @@ export async function registerPatientViaModal(window: any, p: NewPatient): Promi
 
     await modal.locator('input[placeholder="John Doe"]').fill(p.name);
     await modal.locator('input[placeholder="9876543210"]').fill(p.mobile);
-    await modal.locator('input[placeholder="30"]').fill(p.age);
+    await modal.locator('input[formcontrolname="age"]').fill(p.age);
     // Essentials section has a single select (gender); blood-group lives in
     // the collapsed "Additional details" section and is not rendered.
     await modal.locator('select').first().selectOption(p.gender);

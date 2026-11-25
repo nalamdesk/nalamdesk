@@ -16,6 +16,12 @@ import { localDateISO } from '../../../shared/local-date';
         <h1 class="text-2xl font-bold text-gray-800">Online Booking Management</h1>
       </div>
 
+      <div *ngIf="cloudPaired === false" role="status" data-testid="booking-setup-banner"
+           class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <p class="font-semibold">Online booking isn't set up on this computer</p>
+        <p class="mt-1">You can plan slots here, but patients only see them after an admin pairs this clinic with NalamDesk Cloud in Settings → Data &amp; Backup and turns on online booking. Until then, Update Availability won't publish anything.</p>
+      </div>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         <!-- Availability Manager -->
@@ -133,7 +139,11 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
     this.setCalendarLimits();
   }
 
+  /** False when this computer is not paired with NalamDesk Cloud; null while unknown. */
+  cloudPaired: boolean | null = null;
+
   async ngOnInit() {
+    void this.loadCloudPairing();
     // New or decided requests show at once (#216): main's push in the app,
     // the server's events stream for clients. The requests are saved
     // already, so this reloads the list without asking the cloud again.
@@ -141,6 +151,15 @@ export class OnlineBookingComponent implements OnInit, OnDestroy {
     await this.loadRequests();
     // Poll every 30s locally for UI updates
     this.refreshInterval = setInterval(() => this.loadRequests(), 30000);
+  }
+
+  async loadCloudPairing() {
+    try {
+      const status = await this.cloud.getStatus();
+      this.cloudPaired = status ? status.state === 'paired' : null;
+    } catch {
+      this.cloudPaired = null;
+    }
   }
 
   ngOnDestroy() {

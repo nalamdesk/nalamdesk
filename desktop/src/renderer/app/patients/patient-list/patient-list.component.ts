@@ -57,6 +57,8 @@ import { localDateISO } from '../../../../shared/local-date';
            <app-shared-table
               [rowData]="gridData"
               [columnDefs]="colDefs"
+              [emptyTitle]="searchQuery ? 'No patients match this search' : 'No patients yet'"
+              [emptyHint]="searchQuery ? 'Check the spelling, or search by mobile number.' : 'Use + Add Patient to register your first patient.'"
               [loading]="loading"
               [multiSelect]="isAdmin"
               (selectionChanged)="selectedPatients = $event"
@@ -175,9 +177,19 @@ import { localDateISO } from '../../../../shared/local-date';
 
                             <!-- DOB & Age Row (Stacked on Mobile) -->
                             <div class="flex flex-col md:flex-row gap-4 col-span-1 md:col-span-2 items-start">
-                                <!-- DOB (First) -->
+                                <!-- Age -->
+                                <div class="w-full md:w-1/4">
+                                    <label class="block text-sm font-medium text-gray-700">Age <span class="text-red-500">*</span></label>
+                                    <input type="number" formControlName="age" min="0" max="110" placeholder="Years"
+                                        class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                        [class.border-red-500]="isFieldInvalid('age')">
+                                    <p *ngIf="isFieldInvalid('age')" class="text-xs text-red-500 mt-1">Required</p>
+                                    <p *ngIf="!isFieldInvalid('age')" class="text-xs text-gray-400 mt-1">A DOB is optional.</p>
+                                </div>
+
+                                <!-- DOB (optional, after Age: most walk-ins know their age, not their DOB) -->
                                 <div class="w-full md:w-1/3 relative">
-                                    <label class="block text-sm font-medium text-gray-700">Date of Birth</label>
+                                    <label class="block text-sm font-medium text-gray-700">Date of Birth <span class="text-gray-400 font-normal">(optional)</span></label>
                                     <app-date-picker 
                                         formControlName="dob" 
                                         [maxDate]="today"
@@ -189,15 +201,6 @@ import { localDateISO } from '../../../../shared/local-date';
                                         <input type="checkbox" formControlName="dob_estimated" class="checkbox checkbox-xs" />
                                         Approximate date
                                     </label>
-                                </div>
-
-                                <!-- Age -->
-                                <div class="w-full md:w-1/4">
-                                    <label class="block text-sm font-medium text-gray-700">Age <span class="text-red-500">*</span></label>
-                                    <input type="number" formControlName="age" min="0" max="110" placeholder="30"
-                                        class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50"
-                                        [class.border-red-500]="isFieldInvalid('age')">
-                                    <p *ngIf="isFieldInvalid('age')" class="text-xs text-red-500 mt-1">Required</p>
                                 </div>
 
                                 <!-- Gender -->

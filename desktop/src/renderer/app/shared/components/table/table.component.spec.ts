@@ -152,4 +152,11 @@ describe('SharedTableComponent', () => {
         component.ngOnDestroy();
         expect(disconnect).toHaveBeenCalled();
     });
+    it('builds the empty state from its inputs and escapes them', () => {
+        expect(component.noRowsTemplate).toContain('No records found');
+        component.emptyTitle = 'No one is waiting';
+        component.emptyHint = 'Add <b>patients</b> & start';
+        expect(component.noRowsTemplate).toContain('No one is waiting');
+        expect(component.noRowsTemplate).toContain('Add &lt;b&gt;patients&lt;/b&gt; &amp; start');
+    });
 });

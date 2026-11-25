@@ -388,6 +388,23 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
             expect(queue[1].urgency).toBe('routine');
         });
 
+        it('gives each check-in the next daily token and shows it in the queue', () => {
+            const first: any = service.addToQueue(1, { urgency: 'routine', priority: 1 }, 20);
+            const second: any = service.addToQueue(2, { urgency: 'immediate', priority: 4 }, 20);
+            expect(first.token_no).toBe(1);
+            expect(second.token_no).toBe(2);
+            // Urgency reorders the queue; tokens stay with the check-in order.
+            const queue = service.getQueue();
+            expect(queue.map((q: any) => [q.patient_id, q.token_no])).toEqual([[2, 2], [1, 1]]);
+
+            // Yesterday's tokens neither show nor count toward today's numbering.
+            db.exec(`UPDATE patient_queue SET token_date = date('now', 'localtime', '-1 day') WHERE patient_id = 1`);
+            service.removeFromQueue(Number(second.lastInsertRowid), 20);
+            expect(service.getQueue().find((q: any) => q.patient_id === 1).token_no).toBeNull();
+            const third: any = service.addToQueue(2, { urgency: 'routine', priority: 1 }, 20);
+            expect(third.token_no).toBe(3);
+        });
+
         it('records initial triage and logs reassessment in queue_triage_history', () => {
             const added = service.addToQueue(1, { urgency: 'routine', priority: 1, triage_notes: 'Normal walk-in' }, 20);
             const queueId = Number(added.lastInsertRowid);

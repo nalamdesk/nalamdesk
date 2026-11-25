@@ -50,6 +50,18 @@ test.describe.serial('Queue + consultation lifecycle', () => {
         await expect(queueRow).toContainText('Waiting', { timeout: 15000 });
     });
 
+    test('waiting-room display shows the token, never the name', async () => {
+        const queueRow = gridRow(ctx.window, patientName);
+        await expect(queueRow).toContainText('#1', { timeout: 15000 });
+        await ctx.window.getByRole('button', { name: 'Waiting-room display' }).click();
+        const display = ctx.window.getByTestId('queue-display');
+        await expect(display).toBeVisible({ timeout: 15000 });
+        await expect(ctx.window.getByTestId('next-token').first()).toHaveText('1', { timeout: 15000 });
+        await expect(display).not.toContainText(patientName);
+        await display.getByRole('button', { name: 'Exit' }).click();
+        await expect(ctx.window.locator('app-queue')).toBeVisible({ timeout: 15000 });
+    });
+
     test('start consult opens the visit workspace', async () => {
         const queueRow = gridRow(ctx.window, patientName);
         await queueRow.locator('button:has-text("Start Consult")').click();

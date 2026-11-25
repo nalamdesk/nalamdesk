@@ -16,6 +16,7 @@ import { deriveAge } from '../../../../shared/patient-age';
 import { normalizeAbhaNumber, validateAbhaNumber } from '../../../../shared/patient-identifiers';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 import { localDateISO } from '../../../../shared/local-date';
+import { ToastService } from '../../shared/services/toast.service';
 
 @Component({
   selector: 'app-patient-list',
@@ -353,6 +354,7 @@ export class PatientListComponent implements OnInit {
   loading = false;
   searchQuery = '';
   showModal = false;
+  private toastService = inject(ToastService);
   // Narrow-viewport layout override; desktop always uses the grid.
   mobileView: CompactView = 'cards';
   private static readonly MOBILE_VIEW_KEY = 'nalamdesk.patients.mobileView';
@@ -768,7 +770,10 @@ export class PatientListComponent implements OnInit {
     }
 
     try {
-      await this.dataService.invoke<any>('addToQueue', { patientId: patient.id!, priority: 1 });
+      const queued = await this.dataService.invoke<any>('addToQueue', { patientId: patient.id!, priority: 1 });
+      if (queued?.token_no != null) {
+        this.toastService.success(`Tell the patient their token number.`, `${patient.name || 'Patient'} is token #${queued.token_no}`);
+      }
       this.ngZone.run(() => {
         this.enqueuedPatientIds.add(Number(patient.id!));
         this.updateGridData();

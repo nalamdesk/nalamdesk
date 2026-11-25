@@ -166,4 +166,17 @@ describe('OnlineBookingComponent', () => {
         expect(mockCloudService.saveAppointment).not.toHaveBeenCalled();
         expect(mockCloudService.decide).not.toHaveBeenCalled();
     });
+    it('flags the page as not set up when this computer is not paired', async () => {
+        mockCloudService.getStatus = vi.fn(async () => ({ state: 'unpaired', configured: false, listingEnabled: false }));
+        await component.loadCloudPairing();
+        expect(component.cloudPaired).toBe(false);
+
+        mockCloudService.getStatus = vi.fn(async () => ({ state: 'paired', configured: true, listingEnabled: true }));
+        await component.loadCloudPairing();
+        expect(component.cloudPaired).toBe(true);
+
+        mockCloudService.getStatus = vi.fn(async () => { throw new Error('offline'); });
+        await component.loadCloudPairing();
+        expect(component.cloudPaired).toBeNull();
+    });
 });

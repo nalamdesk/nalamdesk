@@ -65,7 +65,9 @@ import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/
         </div>
         <div class="h-[calc(100vh-15rem)] min-h-[320px]"
              [ngClass]="mobileView === 'grid' ? 'block' : 'hidden md:block'">
-          <app-shared-table [rowData]="visibleQueue()" [columnDefs]="queueColumnDefs" [pagination]="false" [pageSize]="50">
+          <app-shared-table [rowData]="visibleQueue()" [columnDefs]="queueColumnDefs" [pagination]="false" [pageSize]="50"
+            [emptyTitle]="queue().length ? 'No one matches this search' : 'No one is waiting'"
+            [emptyHint]="queue().length ? '' : 'Register a patient or add one from Patients to start the queue.'">
             <div toolbar-left class="flex items-center gap-2">
               <span class="text-xs text-gray-500">{{ visibleQueue().length }} of {{ queue().length }} in queue</span>
             </div>

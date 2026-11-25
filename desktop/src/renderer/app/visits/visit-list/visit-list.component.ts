@@ -42,6 +42,8 @@ import { ColDef } from 'ag-grid-community';
            <app-shared-table
               [rowData]="visibleVisits()"
               [columnDefs]="colDefs"
+              emptyTitle="No visits yet"
+              emptyHint="Finished consultations appear here."
               [loading]="loading"
               [multiSelect]="isAdmin"
               (selectionChanged)="selectedVisits = $event"

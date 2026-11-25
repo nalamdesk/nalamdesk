@@ -1,0 +1,48 @@
+name: One-off cloud NS delegation
+
+# Temporary: points cloud.nalamdesk.com in Cloudflare at the Route 53 zone the
+# Core stack owns (Z03453633PFITZ0VY3FGJ). Removed right after it runs.
+on:
+  push:
+    branches:
+      - claude/project-thread-4rlgms
+    paths:
+      - '.github/workflows/oneoff-cloud-ns.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Replace NS records for cloud.nalamdesk.com
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          want="ns-1769.awsdns-29.co.uk ns-1511.awsdns-60.org ns-138.awsdns-17.com ns-675.awsdns-20.net"
+          api=https://api.cloudflare.com/client/v4
+          auth=(-H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
+          zone=$(curl -sS "${auth[@]}" "$api/zones?name=nalamdesk.com" | jq -r '.result[0].id // empty')
+          [ -n "$zone" ] || { echo "::error::zone not visible"; exit 1; }
+          recs=$(curl -sS "${auth[@]}" "$api/zones/$zone/dns_records?type=NS&name=cloud.nalamdesk.com")
+          jq -e .success <<<"$recs" >/dev/null || { jq .errors <<<"$recs"; exit 1; }
+          fail=0
+          for ns in $want; do
+            if jq -e --arg c "$ns" '.result[] | select(.content==$c)' <<<"$recs" >/dev/null; then echo "Already there: $ns"; continue; fi
+            res=$(curl -sS "${auth[@]}" -X POST "$api/zones/$zone/dns_records" --data "$(jq -n --arg c "$ns" '{type:"NS", name:"cloud", content:$c, ttl:300}')")
+            if jq -e .success <<<"$res" >/dev/null; then echo "Added: $ns"; else echo "Failed: $ns"; jq .errors <<<"$res"; fail=1; fi
+          done
+          [ $fail = 0 ] || exit 1
+          for row in $(jq -r '.result[] | "\(.id)=\(.content)"' <<<"$recs"); do
+            id=${row%%=*}; c=${row#*=}
+            if grep -qw -- "$c" <<<"$want"; then continue; fi
+            res=$(curl -sS "${auth[@]}" -X DELETE "$api/zones/$zone/dns_records/$id")
+            if jq -e .success <<<"$res" >/dev/null; then echo "Removed old: $c"; else echo "Failed to remove: $c"; jq .errors <<<"$res"; fail=1; fi
+          done
+          sleep 10
+          echo "== Cloudflare now serves:"; dig NS cloud.nalamdesk.com @jobs.ns.cloudflare.com | grep -E '\sNS\s' || true
+          echo "== abdm-sandbox via the new zone:"; dig +short abdm-sandbox.cloud.nalamdesk.com @ns-138.awsdns-17.com
+          exit $fail

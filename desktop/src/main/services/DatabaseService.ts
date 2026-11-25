@@ -2885,7 +2885,7 @@ export class DatabaseService {
             if (encounter.status !== 'in-progress') throw new Error('Completed encounters cannot be changed as progress');
             this.assertResponsiblePractitioner(encounter, actingUserId);
             this.getExactEncounterQueue(encounter, ['in-consult'], 'Encounter queue entry is not in consultation');
-            this.updateEncounterClinicalData(encounterId, input.visit);
+            this.updateEncounterClinicalData(encounterId, input.visit, actingUserId);
             this.logAudit('ENCOUNTER_PROGRESS', 'visits', encounterId, actingUserId, 'Saved consultation progress');
             return this.getEncounterById(encounterId);
         });
@@ -2917,7 +2917,7 @@ export class DatabaseService {
             `).run(encounter.queue_entry_id, encounter.patient_id);
             if (queueUpdate.changes !== 1) throw new Error('Queue entry is not in consultation');
 
-            this.updateEncounterClinicalData(encounterId, { ...input.visit, prescription: rxLines });
+            this.updateEncounterClinicalData(encounterId, { ...input.visit, prescription: rxLines }, actingUserId);
             if (rxLines.length > 0) {
                 const requester = this.getPractitioner(Number(encounter.doctor_id));
                 if (!requester) throw new Error('Clinical authoring requires an active licensed practitioner');
@@ -2976,7 +2976,7 @@ export class DatabaseService {
             `).run(encounter.queue_entry_id, encounter.patient_id);
             if (queueUpdate.changes !== 1) throw new Error('Queue entry is not in consultation');
 
-            this.updateEncounterClinicalData(encounterId, input.visit);
+            this.updateEncounterClinicalData(encounterId, input.visit, actingUserId);
             this.logAudit('ENCOUNTER_POSTPONE', 'visits', encounterId, actingUserId, `Postponed queue entry ${encounter.queue_entry_id}`);
             return this.getEncounterById(encounterId);
         });
@@ -3039,7 +3039,7 @@ export class DatabaseService {
         return beginNext.immediate();
     }
 
-    private updateEncounterClinicalData(encounterId: number, visit: any) {
+    private updateEncounterClinicalData(encounterId: number, visit: any, actingUserId?: number) {
         if (!visit) return;
         const existing = this.db.prepare('SELECT patient_id FROM visits WHERE id = ?').get(encounterId);
         if (existing && visit.prescription) {
@@ -3066,6 +3066,128 @@ export class DatabaseService {
         if (existing && Object.prototype.hasOwnProperty.call(visit, 'follow_up_date')) {
             this.setEncounterFollowUp(encounterId, existing.patient_id, visit.follow_up_date);
         }
+        if (existing && Array.isArray(visit.investigations)) {
+            this.syncEncounterInvestigations(encounterId, existing.patient_id, visit.investigations, actingUserId);
+        }
+    }
+
+    /**
+     * The encounter's ordered tests: new codes are ordered, codes no longer
+     * listed are dropped while still unresulted. Resulted and cancelled
+     * orders are history and never change here.
+     */
+    private syncEncounterInvestigations(encounterId: number, patientId: number, items: any[], actingUserId?: number) {
+        const wanted = new Map<string, string>();
+        for (const item of items) {
+            const code = String(item?.code ?? '').trim().slice(0, 40);
+            const name = String(item?.name ?? '').trim().slice(0, 120);
+            if (code && name) wanted.set(code, name);
+        }
+        if (wanted.size > 30) throw new Error('At most 30 investigations per visit');
+        const current = this.db.prepare('SELECT id, test_code, status FROM lab_orders WHERE visit_id = ?').all(encounterId) as any[];
+        for (const row of current) {
+            if (row.status === 'ordered' && !wanted.has(row.test_code)) {
+                this.db.prepare("DELETE FROM lab_orders WHERE id = ? AND status = 'ordered'").run(row.id);
+            }
+        }
+        const insert = this.db.prepare(`
+            INSERT INTO lab_orders (visit_id, patient_id, facility_id, test_code, test_name, ordered_by)
+            VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(visit_id, test_code) DO NOTHING
+        `);
+        for (const [code, name] of wanted) insert.run(encounterId, patientId, this.facilityId(), code, name, actingUserId ?? null);
+    }
+
+    /** A patient's investigations, newest first, each with its results. */
+    getLabOrders(patientId: number) {
+        const id = Number(patientId);
+        if (!Number.isInteger(id) || id <= 0) throw new Error('patientId is required');
+        const orders = this.db.prepare(`
+            SELECT o.*, v.date AS visit_date, u.name AS ordered_by_name
+            FROM lab_orders o
+            JOIN visits v ON v.id = o.visit_id
+            LEFT JOIN users u ON u.id = o.ordered_by
+            WHERE o.patient_id = ? AND o.facility_id = ?
+            ORDER BY o.ordered_at DESC, o.id DESC
+        `).all(id, this.facilityId()) as any[];
+        const results = this.db.prepare(`
+            SELECT * FROM lab_results WHERE patient_id = ? ORDER BY recorded_at ASC, id ASC
+        `).all(id) as any[];
+        const byOrder = new Map<number, any[]>();
+        for (const r of results) {
+            const list = byOrder.get(r.order_id) ?? [];
+            list.push(r);
+            byOrder.set(r.order_id, list);
+        }
+        return orders.map((o) => ({ ...o, results: byOrder.get(o.id) ?? [] }));
+    }
+
+    /**
+     * Records the values for an ordered test and marks it resulted. Numbers
+     * are flagged H/L against the range given (or the catalog's); text
+     * values are stored as written. Re-saving corrects values and is audited.
+     */
+    saveLabResults(input: any, actingUserId?: number) {
+        const orderId = Number(input?.orderId);
+        if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('orderId is required');
+        const values = Array.isArray(input?.values) ? input.values : [];
+        const order = this.db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(orderId) as any;
+        if (!order) throw new Error('Lab order not found');
+        this.assertSameFacility(order, 'Lab order');
+        if (order.status === 'cancelled') throw new Error('This test was cancelled');
+        const rows: any[] = [];
+        for (const v of values) {
+            const code = String(v?.analyte_code ?? '').trim();
+            const name = String(v?.analyte_name ?? '').trim();
+            if (!code || !name) continue;
+            const rawText = v?.value == null ? '' : String(v.value).trim();
+            if (!rawText) continue;
+            const num = Number(rawText);
+            const isNum = !v?.text && rawText !== '' && Number.isFinite(num);
+            const low = v?.ref_low == null || v.ref_low === '' ? null : Number(v.ref_low);
+            const high = v?.ref_high == null || v.ref_high === '' ? null : Number(v.ref_high);
+            let flag: 'H' | 'L' | null = null;
+            if (isNum && high != null && Number.isFinite(high) && num > high) flag = 'H';
+            else if (isNum && low != null && Number.isFinite(low) && num < low) flag = 'L';
+            rows.push({ code, name: name.slice(0, 120), num: isNum ? num : null, text: isNum ? null : rawText.slice(0, 500),
+                unit: v?.unit ? String(v.unit).slice(0, 20) : null, low, high, flag });
+        }
+        if (rows.length === 0) throw new Error('Enter at least one result value');
+        const save = this.db.transaction(() => {
+            const upsert = this.db.prepare(`
+                INSERT INTO lab_results (order_id, patient_id, analyte_code, analyte_name, value_num, value_text, unit, ref_low, ref_high, flag, recorded_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id, analyte_code) DO UPDATE SET
+                    value_num = excluded.value_num, value_text = excluded.value_text, unit = excluded.unit,
+                    ref_low = excluded.ref_low, ref_high = excluded.ref_high, flag = excluded.flag,
+                    recorded_by = excluded.recorded_by, recorded_at = CURRENT_TIMESTAMP
+            `);
+            for (const r of rows) {
+                upsert.run(orderId, order.patient_id, r.code, r.name, r.num, r.text, r.unit,
+                    Number.isFinite(r.low) ? r.low : null, Number.isFinite(r.high) ? r.high : null, r.flag, actingUserId ?? null);
+            }
+            this.db.prepare(`UPDATE lab_orders SET status = 'resulted', resulted_by = ?, resulted_at = CURRENT_TIMESTAMP,
+                result_note = ? WHERE id = ?`).run(actingUserId ?? null, input?.note ? String(input.note).slice(0, 1000) : null, orderId);
+            this.logAudit(order.status === 'resulted' ? 'UPDATE' : 'INSERT', 'lab_results', orderId, actingUserId,
+                `${order.status === 'resulted' ? 'Corrected' : 'Recorded'} ${rows.length} result(s) for ${order.test_name}`);
+        });
+        save();
+        return this.getLabOrders(order.patient_id).find((o: any) => o.id === orderId);
+    }
+
+    /** Cancels a test that was ordered but not done, with a reason. */
+    cancelLabOrder(input: any, actingUserId?: number) {
+        const orderId = Number(input?.orderId);
+        const reason = String(input?.reason ?? '').trim();
+        if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('orderId is required');
+        if (!reason) throw new Error('A reason is required to cancel a test');
+        const order = this.db.prepare('SELECT * FROM lab_orders WHERE id = ?').get(orderId) as any;
+        if (!order) throw new Error('Lab order not found');
+        this.assertSameFacility(order, 'Lab order');
+        if (order.status !== 'ordered') throw new Error('Only a test still awaiting results can be cancelled');
+        const result = this.db.prepare(`UPDATE lab_orders SET status = 'cancelled', cancel_reason = ? WHERE id = ? AND status = 'ordered'`)
+            .run(reason.slice(0, 500), orderId);
+        this.logAudit('UPDATE', 'lab_orders', orderId, actingUserId, `Cancelled ${order.test_name}: ${reason}`);
+        return result;
     }
 
     /**
@@ -3541,8 +3663,15 @@ export class DatabaseService {
         try {
             followUp = row?.id ? this.db.prepare('SELECT due_date, status FROM follow_ups WHERE visit_id = ?').get(row.id) : null;
         } catch { /* pre-v58 schema */ }
+        let investigations: any[] = [];
+        try {
+            investigations = row?.id
+                ? this.db.prepare("SELECT test_code AS code, test_name AS name, status FROM lab_orders WHERE visit_id = ? AND status != 'cancelled' ORDER BY id").all(row.id) as any[]
+                : [];
+        } catch { /* pre-v59 schema */ }
         return {
             ...row,
+            investigations: Array.isArray(investigations) ? investigations : [],
             follow_up_date: followUp?.due_date ?? null,
             follow_up_status: followUp?.status ?? null,
             prescription: row.prescription_json ? JSON.parse(row.prescription_json) : [],

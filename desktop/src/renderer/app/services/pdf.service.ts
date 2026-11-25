@@ -82,6 +82,13 @@ export class PdfService {
             headStyles: { fillColor: [66, 66, 66] }
         });
 
+        const tests = (visit.investigations || []).map((t: any) => t?.name).filter(Boolean);
+        if (tests.length) {
+            const y = ((doc as any).lastAutoTable?.finalY ?? 90) + 10;
+            doc.setFontSize(10);
+            doc.text(doc.splitTextToSize(`Investigations: ${tests.join(', ')}`, 180), 14, y);
+        }
+
         await this.signatureAndQr(doc, {
             patient, doctor, date: visit.date, diagnosis: visit.diagnosis, lines: visit.prescription || []
         });

@@ -17,6 +17,7 @@ import { VitalsFormComponent } from '../vitals/vitals-form.component';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 import { finalizeRxLines, formatRxIssues, rxLinesKey, sameRxOrder } from '../../../../shared/prescription-order';
 import { localDateISO } from '../../../../shared/local-date';
+import { LAB_TESTS } from '../../../../shared/lab-catalog';
 
 interface PrescriptionItem {
   medicine: string;
@@ -332,6 +333,23 @@ interface Visit {
                         [disabled]="!canEditChart"
                         (changed)="updatePrescription($event)">
                     </app-prescription>
+
+                    <!-- Investigations: ordered here, results entered on the patient's chart -->
+                    <div *ngIf="isLiveConsultation || selectedInvestigations().length" class="mt-4" data-testid="investigations">
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Investigations</label>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span *ngFor="let t of selectedInvestigations()" class="badge badge-outline gap-1 py-3" [attr.data-testid]="'inv-' + t.code">
+                                {{ t.name }}
+                                <button *ngIf="isLiveConsultation && canEditChart && t.status !== 'resulted'" type="button" class="text-gray-400 hover:text-red-600"
+                                        [attr.aria-label]="'Remove ' + t.name" (click)="removeInvestigation(t.code)">×</button>
+                            </span>
+                            <select *ngIf="isLiveConsultation && canEditChart" class="select select-bordered select-xs w-56" aria-label="Add investigation"
+                                    (change)="addInvestigation($any($event.target).value); $any($event.target).value = ''">
+                                <option value="">+ Add test…</option>
+                                <option *ngFor="let t of availableInvestigations()" [value]="t.code">{{ t.name }}</option>
+                            </select>
+                        </div>
+                    </div>
 
                     <!-- Stored orders for this visit (#20): number, version, status trail -->
                     <div *ngIf="visitOrders.length" class="mt-3 rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600" data-testid="rx-orders">
@@ -741,8 +759,31 @@ export class VisitComponent implements OnInit {
       prescription: [[]],
       amount_paid: [0],
       allergy_override_reason: [''],
-      follow_up_date: ['']
+      follow_up_date: [''],
+      investigations: [[]]
     });
+  }
+
+  readonly labTests = LAB_TESTS;
+
+  selectedInvestigations(): { code: string; name: string; status?: string }[] {
+    return this.visitForm?.get('investigations')?.value || [];
+  }
+
+  availableInvestigations() {
+    const chosen = new Set(this.selectedInvestigations().map((t) => t.code));
+    return this.labTests.filter((t) => !chosen.has(t.code));
+  }
+
+  addInvestigation(code: string) {
+    const test = this.labTests.find((t) => t.code === code);
+    if (!test || !this.canEditChart) return;
+    this.visitForm.patchValue({ investigations: [...this.selectedInvestigations(), { code: test.code, name: test.name }] });
+  }
+
+  removeInvestigation(code: string) {
+    if (!this.canEditChart) return;
+    this.visitForm.patchValue({ investigations: this.selectedInvestigations().filter((t) => t.code !== code) });
   }
 
   readonly followUpPresets = [
@@ -1738,7 +1779,8 @@ export class VisitComponent implements OnInit {
       prescription: visit.prescription || [],
       amount_paid: visit.amount_paid || 0,
       allergy_override_reason: visit.allergy_override_reason || '',
-      follow_up_date: visit.follow_up_date || ''
+      follow_up_date: visit.follow_up_date || '',
+      investigations: visit.investigations || []
     });
     this.currentPrescription = visit.prescription || [];
     this.visitOrders = [];
@@ -1755,7 +1797,8 @@ export class VisitComponent implements OnInit {
       prescription: encounter.prescription || [],
       amount_paid: encounter.amount_paid || 0,
       allergy_override_reason: encounter.allergy_override_reason || '',
-      follow_up_date: encounter.follow_up_date || ''
+      follow_up_date: encounter.follow_up_date || '',
+      investigations: encounter.investigations || []
     });
     this.currentPrescription = encounter.prescription || [];
     void this.loadSourceBooking(encounter?.id);

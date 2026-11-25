@@ -2048,6 +2048,63 @@ export const MIGRATIONS = [
                 });
             }
         }
+    },
+    {
+        version: 59,
+        up: (db: any) => {
+            // Investigations: tests ordered during a consultation and their
+            // results, entered when the report comes back. Kept apart from
+            // visits so results can arrive after the visit is signed.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS lab_orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    visit_id INTEGER NOT NULL,
+                    patient_id INTEGER NOT NULL,
+                    facility_id INTEGER NOT NULL DEFAULT 1,
+                    test_code TEXT NOT NULL,
+                    test_name TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'ordered' CHECK (status IN ('ordered', 'resulted', 'cancelled')),
+                    ordered_by INTEGER,
+                    ordered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    resulted_by INTEGER,
+                    resulted_at DATETIME,
+                    result_note TEXT,
+                    cancel_reason TEXT,
+                    UNIQUE (visit_id, test_code),
+                    FOREIGN KEY(visit_id) REFERENCES visits(id),
+                    FOREIGN KEY(patient_id) REFERENCES patients(id)
+                )
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS lab_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_id INTEGER NOT NULL,
+                    patient_id INTEGER NOT NULL,
+                    analyte_code TEXT NOT NULL,
+                    analyte_name TEXT NOT NULL,
+                    value_num REAL,
+                    value_text TEXT,
+                    unit TEXT,
+                    ref_low REAL,
+                    ref_high REAL,
+                    flag TEXT CHECK (flag IN ('H', 'L') OR flag IS NULL),
+                    recorded_by INTEGER,
+                    recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (order_id, analyte_code),
+                    FOREIGN KEY(order_id) REFERENCES lab_orders(id)
+                )
+            `);
+            db.exec('CREATE INDEX IF NOT EXISTS idx_lab_orders_patient ON lab_orders(patient_id, ordered_at)');
+            db.exec('CREATE INDEX IF NOT EXISTS idx_lab_results_trend ON lab_results(patient_id, analyte_code, recorded_at)');
+            if (tableExists(db, 'roles')) {
+                grantRoleMethods(db, {
+                    admin: ['getLabOrders', 'saveLabResults', 'cancelLabOrder'],
+                    doctor: ['getLabOrders', 'saveLabResults', 'cancelLabOrder'],
+                    nurse: ['getLabOrders', 'saveLabResults'],
+                    receptionist: ['getLabOrders']
+                });
+            }
+        }
     }
 ];
 

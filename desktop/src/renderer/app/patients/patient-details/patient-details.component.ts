@@ -18,11 +18,12 @@ import { newRequestId } from '../../services/request-id';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 import { IDENTIFIER_SYSTEMS, validateIdentifier } from '../../../../shared/patient-identifiers';
 import { localDateISO } from '../../../../shared/local-date';
+import { LabResultsPanelComponent } from '../lab-results/lab-results-panel.component';
 
 @Component({
     selector: 'app-patient-details',
     standalone: true,
-    imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, AbhaModalComponent, ReasonDialogComponent],
+    imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, AbhaModalComponent, ReasonDialogComponent, LabResultsPanelComponent],
     styles: [`
         @media print {
             /* Hide everything by default */
@@ -305,6 +306,15 @@ import { localDateISO } from '../../../../shared/local-date';
                                 class="px-3 py-1.5 rounded-lg text-sm transition">
                             Appointments ({{ appointments.length }})
                         </button>
+                        <button type="button" (click)="activeTab = 'labs'"
+                                [class.bg-white]="activeTab === 'labs'"
+                                [class.shadow-sm]="activeTab === 'labs'"
+                                [class.text-blue-600]="activeTab === 'labs'"
+                                [class.font-bold]="activeTab === 'labs'"
+                                [class.text-gray-600]="activeTab !== 'labs'"
+                                class="px-3 py-1.5 rounded-lg text-sm transition">
+                            Lab results
+                        </button>
                         <button type="button" (click)="openExternalTab()"
                                 [class.bg-white]="activeTab === 'external'"
                                 [class.shadow-sm]="activeTab === 'external'"
@@ -397,6 +407,10 @@ import { localDateISO } from '../../../../shared/local-date';
                 </div>
 
                 <!-- TAB: EXTERNAL RECORDS (M3 HIU) -->
+                <div *ngIf="activeTab === 'labs'" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+                    <app-lab-results-panel [patientId]="patientId" [role]="currentUser?.role || ''"></app-lab-results-panel>
+                </div>
+
                 <div *ngIf="activeTab === 'external'" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-4">
                     <div class="flex items-center justify-between gap-2">
                         <span class="text-xs text-gray-500">{{ externalRecords.length }} outside record(s)</span>
@@ -1009,7 +1023,7 @@ export class PatientDetailsComponent implements OnInit {
     currentUser: any;
 
     // Clinical Safety & Longitudinal Records
-    activeTab: 'visits' | 'allergies' | 'conditions' | 'medications' | 'appointments' | 'external' = 'visits';
+    activeTab: 'visits' | 'allergies' | 'conditions' | 'medications' | 'appointments' | 'labs' | 'external' = 'visits';
     safetyContext: any = null;
     allergies: any[] = [];
     conditions: any[] = [];

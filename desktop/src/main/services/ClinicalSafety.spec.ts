@@ -610,6 +610,52 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         });
     });
 
+    describe('Investigations (lab orders and results)', () => {
+        function consult(patientId: number, investigations: any[], key: string) {
+            const q: any = queuePatient(patientId);
+            const enc = service.beginConsultation({ patientId, queueEntryId: Number(q.lastInsertRowid), startRequestId: key }, 10);
+            service.saveConsultationProgress({ encounterId: enc.id, visit: { diagnosis: 'Diabetes', investigations } }, 10);
+            return enc;
+        }
+
+        it('orders tests from the visit, drops removed ones, and keeps them on the visit', () => {
+            const enc = consult(1, [{ code: 'HBA1C', name: 'HbA1c' }, { code: 'LIPID', name: 'Lipid profile' }], 'lab-1');
+            service.saveConsultationProgress({ encounterId: enc.id, visit: { diagnosis: 'Diabetes', investigations: [{ code: 'HBA1C', name: 'HbA1c' }] } }, 10);
+            const done = service.completeConsultation({ encounterId: enc.id, visit: { diagnosis: 'Diabetes', investigations: [{ code: 'HBA1C', name: 'HbA1c' }] } }, 10);
+            expect(done.investigations.map((i: any) => i.code)).toEqual(['HBA1C']);
+            const orders = service.getLabOrders(1);
+            expect(orders).toHaveLength(1);
+            expect(orders[0]).toMatchObject({ test_code: 'HBA1C', status: 'ordered', ordered_by: 10 });
+        });
+
+        it('records results with H/L flags, corrects them, and trends across visits', () => {
+            consult(1, [{ code: 'HBA1C', name: 'HbA1c' }], 'lab-2');
+            const [order] = service.getLabOrders(1);
+            const saved: any = service.saveLabResults({ orderId: order.id, values: [
+                { analyte_code: 'HBA1C', analyte_name: 'HbA1c', value: '8.4', unit: '%', ref_low: 4, ref_high: 5.7 },
+                { analyte_code: 'NOTE', analyte_name: 'Comment', value: '', text: true }
+            ] }, 20);
+            expect(saved.status).toBe('resulted');
+            expect(saved.results).toEqual([expect.objectContaining({ analyte_code: 'HBA1C', value_num: 8.4, flag: 'H', recorded_by: 20 })]);
+            const fixed: any = service.saveLabResults({ orderId: order.id, values: [
+                { analyte_code: 'HBA1C', analyte_name: 'HbA1c', value: '5.1', unit: '%', ref_low: 4, ref_high: 5.7 }
+            ] }, 20);
+            expect(fixed.results).toHaveLength(1);
+            expect(fixed.results[0]).toMatchObject({ value_num: 5.1, flag: null });
+            expect(() => service.saveLabResults({ orderId: order.id, values: [] }, 20)).toThrow('at least one');
+        });
+
+        it('cancels only unresulted tests, with a reason', () => {
+            consult(2, [{ code: 'CBC', name: 'Complete blood count' }], 'lab-3');
+            const [order] = service.getLabOrders(2);
+            expect(() => service.cancelLabOrder({ orderId: order.id }, 10)).toThrow('reason');
+            service.cancelLabOrder({ orderId: order.id, reason: 'Patient did it elsewhere' }, 10);
+            expect(service.getLabOrders(2)[0]).toMatchObject({ status: 'cancelled', cancel_reason: 'Patient did it elsewhere' });
+            expect(() => service.saveLabResults({ orderId: order.id, values: [{ analyte_code: 'HB', analyte_name: 'Hb', value: '12' }] }, 20))
+                .toThrow('cancelled');
+        });
+    });
+
     describe('Track D: review follow-ups', () => {
         it('prefers queue-linked vitals over newer same-day readings for alerts', () => {
             const added = service.addToQueue(1, { urgency: 'routine', priority: 1 }, 20);

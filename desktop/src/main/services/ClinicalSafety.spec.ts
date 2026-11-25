@@ -539,6 +539,41 @@ describe('Clinical Safety, Practitioner Provenance & Actionable Triage', () => {
         });
     });
 
+    describe('Practice report', () => {
+        const today = () => {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+        function finish(patientId: number, diagnosis: string, key: string) {
+            const q: any = queuePatient(patientId);
+            const enc = service.beginConsultation({ patientId, queueEntryId: Number(q.lastInsertRowid), startRequestId: key }, 10);
+            return service.completeConsultation({ encounterId: enc.id, visit: { diagnosis } }, 10);
+        }
+
+        it('counts visits, new vs returning patients, doctors and diagnoses for the range', () => {
+            const old = finish(1, 'Hypertension', 'rp-1');
+            db.exec(`UPDATE visits SET date = datetime('now', '-40 days') WHERE id = ${old.id}`);
+            finish(1, 'hypertension ', 'rp-2');
+            finish(2, 'Asthma', 'rp-3');
+
+            const r: any = service.getPracticeReport(today(), today());
+            expect(r.visits).toBe(2);
+            expect(r.patients).toBe(2);
+            expect(r.newPatients).toBe(1);
+            expect(r.returningPatients).toBe(1);
+            expect(r.byDay).toEqual([{ day: today(), visits: 2 }]);
+            expect(r.byDoctor[0].visits).toBe(2);
+            expect(r.topDiagnoses.map((d: any) => d.visits)).toEqual([1, 1]);
+            expect(r.collections.collected).toBe(0);
+        });
+
+        it('rejects bad or oversized ranges', () => {
+            expect(() => service.getPracticeReport('2026-02-30', '2026-03-01')).toThrow('real date');
+            expect(() => service.getPracticeReport('2026-03-02', '2026-03-01')).toThrow('before');
+            expect(() => service.getPracticeReport('2024-01-01', '2026-01-01')).toThrow('one year');
+        });
+    });
+
     describe('Track D: review follow-ups', () => {
         it('prefers queue-linked vitals over newer same-day readings for alerts', () => {
             const added = service.addToQueue(1, { urgency: 'routine', priority: 1 }, 20);

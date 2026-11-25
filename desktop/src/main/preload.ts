@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('electron', {
         refundPayment: (input: any) => ipcRenderer.invoke('db:refundPayment', input),
         voidInvoice: (input: any) => ipcRenderer.invoke('db:voidInvoice', input),
         getDailyClose: (date: string) => ipcRenderer.invoke('db:getDailyClose', date),
+        getPracticeReport: (input: { from: string; to: string }) => ipcRenderer.invoke('db:getPracticeReport', input),
         getPatientById: (id: number) => ipcRenderer.invoke('db:getPatientById', id),
         savePatient: (patient: any) => ipcRenderer.invoke('db:savePatient', patient),
         deletePatient: (id: number) => ipcRenderer.invoke('db:deletePatient', id),

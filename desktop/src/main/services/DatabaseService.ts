@@ -968,10 +968,9 @@ export class DatabaseService {
     }
 
     getDashboardStats() {        const totalPatients = this.db.prepare('SELECT count(*) as count FROM patients WHERE merged_into IS NULL AND active != 0').get().count;
-        // Today's visits: date >= start of day
-        const today = new Date().toISOString().split('T')[0];
-        const todayVisits = this.db.prepare("SELECT count(*) as count FROM visits WHERE date(date) = ? AND status = 'finished' AND facility_id = ?")
-            .get(today, this.facilityId()).count;
+        // Today's visits, by the clinic-local day (visit dates are stored in UTC).
+        const todayVisits = this.db.prepare("SELECT count(*) as count FROM visits WHERE date(date, 'localtime') = date('now', 'localtime') AND status = 'finished' AND facility_id = ?")
+            .get(this.facilityId()).count;
         return { totalPatients, todayVisits };
     }
 
@@ -2328,6 +2327,70 @@ export class DatabaseService {
      * shift keeps near-midnight payments on the right clinic day).
      * Derived purely from the ledger, so totals always reconcile.
      */
+    /**
+     * Practice report for a clinic-local date range (inclusive, at most 366
+     * days): visits, new vs returning patients, per-day and per-doctor
+     * counts, top diagnoses, and collections net of reversals.
+     */
+    getPracticeReport(fromInput: string, toInput: string) {
+        const parse = (value: unknown, label: string) => {
+            const raw = String(value || '').slice(0, 10);
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+            const d = m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+            if (!m || !d || d.getUTCDate() !== Number(m[3]) || d.getUTCMonth() !== Number(m[2]) - 1) {
+                throw new Error(`${label} must be a real date (YYYY-MM-DD).`);
+            }
+            return { raw, time: d.getTime() };
+        };
+        const from = parse(fromInput, 'From date');
+        const to = parse(toInput, 'To date');
+        if (to.time < from.time) throw new Error('The To date is before the From date.');
+        if ((to.time - from.time) / 86400000 > 366) throw new Error('Pick a range of at most one year.');
+        const facilityId = this.facilityId();
+        const inRange = "date(v.date, 'localtime') BETWEEN @from AND @to AND v.status = 'finished' AND v.facility_id = @facilityId";
+        const params = { from: from.raw, to: to.raw, facilityId };
+
+        const totals = this.db.prepare(`SELECT COUNT(*) AS visits, COUNT(DISTINCT v.patient_id) AS patients
+            FROM visits v WHERE ${inRange}`).get(params) as any;
+        const newPatients = this.db.prepare(`SELECT COUNT(*) AS count FROM (
+                SELECT v.patient_id FROM visits v
+                WHERE v.status = 'finished' AND v.facility_id = @facilityId
+                GROUP BY v.patient_id
+                HAVING date(MIN(v.date), 'localtime') BETWEEN @from AND @to
+            )`).get(params) as any;
+        const byDay = this.db.prepare(`SELECT date(v.date, 'localtime') AS day, COUNT(*) AS visits
+            FROM visits v WHERE ${inRange} GROUP BY day ORDER BY day`).all(params) as any[];
+        const byDoctor = this.db.prepare(`SELECT COALESCE(u.name, 'Unassigned') AS doctor, COUNT(*) AS visits
+            FROM visits v LEFT JOIN users u ON u.id = v.doctor_id
+            WHERE ${inRange} GROUP BY v.doctor_id ORDER BY visits DESC, doctor`).all(params) as any[];
+        const topDiagnoses = this.db.prepare(`SELECT MIN(TRIM(v.diagnosis)) AS diagnosis, COUNT(*) AS visits
+            FROM visits v WHERE ${inRange} AND TRIM(COALESCE(v.diagnosis, '')) != ''
+            GROUP BY LOWER(TRIM(v.diagnosis)) ORDER BY visits DESC, diagnosis LIMIT 10`).all(params) as any[];
+        const payments = this.db.prepare(`SELECT method, kind, COALESCE(SUM(amount), 0) AS total
+            FROM payments WHERE date(created_at, 'localtime') BETWEEN @from AND @to AND facility_id = @facilityId
+            GROUP BY method, kind`).all(params) as any[];
+        const billed = this.db.prepare(`SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS count
+            FROM invoices WHERE date(created_at, 'localtime') BETWEEN @from AND @to AND facility_id = @facilityId
+              AND status != 'void'`).get(params) as any;
+
+        const round = (n: number) => Math.round(n * 100) / 100;
+        const nets: Record<string, number> = {};
+        for (const row of payments) {
+            const signed = Number(row.total || 0) * (row.kind === 'reversal' ? -1 : 1);
+            nets[row.method] = round((nets[row.method] || 0) + signed);
+        }
+        const collected = round(Object.values(nets).reduce((sum, n) => sum + n, 0));
+        const visits = Number(totals?.visits || 0);
+        const patients = Number(totals?.patients || 0);
+        const fresh = Number(newPatients?.count || 0);
+        return {
+            from: from.raw, to: to.raw,
+            visits, patients, newPatients: fresh, returningPatients: Math.max(0, patients - fresh),
+            byDay, byDoctor, topDiagnoses,
+            collections: { byMethod: nets, collected, billed: round(Number(billed?.total || 0)), invoices: Number(billed?.count || 0) }
+        };
+    }
+
     getDailyClose(date: string) {
         const raw = String(date || '').slice(0, 10);
         const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);

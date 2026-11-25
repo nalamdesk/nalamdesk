@@ -61,7 +61,7 @@ export const ALLOWED_IPC_METHODS = [
     'getPatients', 'getPatientById', 'savePatient', 'deletePatient',
     'findDuplicateCandidates', 'previewPatientMerge', 'mergePatients', 'unmergePatients',
     'getInvoice', 'getVisitInvoices', 'createInvoice', 'recordPayment', 'refundPayment', 'voidInvoice',
-    'getDailyClose',
+    'getDailyClose', 'getPracticeReport',
     'getVisits', 'getAllVisits', 'saveVisit', 'deleteVisit',
     'getVisitPrescriptions', 'cancelPrescription', 'recordPrescriptionPrint',
     'beginConsultation', 'getActiveConsultation', 'saveConsultationProgress',

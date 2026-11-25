@@ -1,0 +1,45 @@
+name: One-off NalamBook stack cleanup
+
+# Temporary: the first NalamBook sandbox create rolled back but could not
+# delete its non-empty site bucket, leaving the stack in ROLLBACK_FAILED,
+# which no deploy can update. Delete the stack, keeping that bucket.
+# Removed after it runs.
+on:
+  push:
+    branches:
+      - claude/project-thread-4rlgms
+    paths:
+      - '.github/workflows/oneoff-booking-cleanup.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: sandbox
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+      - name: Delete the failed stack, keeping the site bucket
+        run: |
+          set -euo pipefail
+          acct=$(aws sts get-caller-identity --query Account --output text)
+          c=$(aws sts assume-role --role-arn arn:aws:iam::$acct:role/cdk-hnb659fds-deploy-role-$acct-ap-south-1 --role-session-name booking-cleanup --query Credentials --output json)
+          export AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<<"$c") AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<<"$c") AWS_SESSION_TOKEN=$(jq -r .SessionToken <<<"$c")
+          stack=NalamdeskBooking-sandbox
+          status=$(aws cloudformation describe-stacks --stack-name $stack --query 'Stacks[0].StackStatus' --output text)
+          echo "Status: $status"
+          [ "$status" = "ROLLBACK_FAILED" ] || [ "$status" = "ROLLBACK_COMPLETE" ] || { echo "::error::Unexpected status $status, not touching it"; exit 1; }
+          aws cloudformation describe-stack-resource --stack-name $stack --logical-resource-id SiteE53D7754 --query 'StackResourceDetail.[PhysicalResourceId,ResourceStatus]' --output text || true
+          if [ "$status" = "ROLLBACK_FAILED" ]; then
+            aws cloudformation delete-stack --stack-name $stack --retain-resources SiteE53D7754
+          else
+            aws cloudformation delete-stack --stack-name $stack
+          fi
+          aws cloudformation wait stack-delete-complete --stack-name $stack
+          echo "Deleted $stack"

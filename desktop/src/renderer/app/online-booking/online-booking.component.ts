@@ -19,7 +19,7 @@ import { localDateISO } from '../../../shared/local-date';
       <div *ngIf="cloudPaired === false" role="status" data-testid="booking-setup-banner"
            class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
         <p class="font-semibold">Online booking isn't set up on this computer</p>
-        <p class="mt-1">You can plan slots here, but patients only see them after an admin pairs this clinic with NalamDesk Cloud in Settings → Data &amp; Backup and turns on online booking. Until then, Update Availability won't publish anything.</p>
+        <p class="mt-1">You can plan slots here, but patients only see them after an admin pairs this clinic with NalamDesk Cloud in Settings → General and turns on online booking. Until then, Update Availability won't publish anything.</p>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -25,9 +25,10 @@ export interface BookingStackProps extends cdk.StackProps {
 }
 
 export const BOOKING_LIMITS = {
-    // The plan caps the booking API at one environment; a request that
+    // The service minimum (CloudFormation rejects 1). The plan wanted one
+    // environment; two is the smallest cap allowed, and a request that
     // cannot get in is retried by the browser, unlike an ABDM callback.
-    maxEnvironments: 1,
+    maxEnvironments: 2,
     timeoutSeconds: 10,
     rateLimitPerSecond: 20
 };

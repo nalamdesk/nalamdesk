@@ -170,6 +170,14 @@ export function resolveDbMethodArgs(method: string, args: unknown[], actingUserI
             const payload = payloadObject(args[0]);
             return [Number(payload['invoiceId'] ?? payload['id'] ?? args[0]), String(payload['reason'] ?? args[1] ?? ''), actingUserId];
         }
+        case 'getLabOrders': {
+            const payload = payloadObject(args[0]);
+            return [Number(payload['patientId'] ?? args[0])];
+        }
+        case 'saveLabResults':
+        case 'cancelLabOrder': {
+            return [payloadObject(args[0]), actingUserId];
+        }
         case 'getFollowUps': {
             const payload = payloadObject(args[0]);
             const through = payload['through'] ?? args[0];

@@ -42,7 +42,8 @@ export const METHOD_CATALOG: CatalogGroup[] = [
             'getVisitPrescriptions', 'cancelPrescription', 'recordPrescriptionPrint',
             'getDashboardStats', 'getDoctors', 'getAppointments', 'getAppointmentsByPatient', 'saveAppointment', 'transitionAppointment', 'getAppointmentHistory', 'getAppointmentByVisit', 'detectConflicts', 'checkInAppointment', 'fulfillAppointment',
             'updateAppointmentRequestStatus', 'getAppointmentRequests',
-            'getFollowUps', 'closeFollowUp'
+            'getFollowUps', 'closeFollowUp',
+            'getLabOrders', 'saveLabResults', 'cancelLabOrder'
         ]
     },
     {

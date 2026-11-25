@@ -78,6 +78,9 @@ test.describe.serial('Queue + consultation lifecycle', () => {
         await firstRow.locator('input[aria-label="Dosage"]').fill('500mg');
         // Review after 3 days: opens a follow-up when the visit finishes.
         await ctx.window.getByTestId('follow-up-picker').getByRole('button', { name: '3 days' }).click();
+        // Order an investigation; results are entered later on the chart.
+        await ctx.window.getByLabel('Add investigation').selectOption('HBA1C');
+        await expect(ctx.window.getByTestId('inv-HBA1C')).toBeVisible();
         await ctx.window.click('button:has-text("Save Progress")');
         // Live consults keep the Save Progress button; prove the save landed
         // by reading the active encounter back through IPC.
@@ -110,6 +113,23 @@ test.describe.serial('Queue + consultation lifecycle', () => {
         });
         await expect(ctx.window.locator('app-visit-list')).toBeVisible({ timeout: 15000 });
         await expect(ctx.window.locator(`text=${patientName}`).first()).toBeVisible({ timeout: 15000 });
+    });
+
+    test('lab results are entered on the chart and flagged', async () => {
+        const patientId: number = await ctx.window.evaluate(async (name: string) => {
+            const found: any[] = await (window as any).electron.db.getPatients(name);
+            return found[0].id;
+        }, patientName);
+        await ctx.window.evaluate((id: number) => { location.hash = `#/patients/${id}`; }, patientId);
+        await ctx.window.getByRole('button', { name: 'Lab results' }).click();
+        const panel = ctx.window.getByTestId('lab-results');
+        await expect(panel).toContainText('HbA1c', { timeout: 15000 });
+        await expect(panel).toContainText('Awaiting results');
+        await panel.getByRole('button', { name: 'Enter results' }).click();
+        await panel.getByLabel('HbA1c').fill('8.2');
+        await panel.getByRole('button', { name: 'Save results' }).click();
+        await expect(panel).toContainText('Results in', { timeout: 15000 });
+        await expect(panel.locator('td', { hasText: '8.2' })).toContainText('H');
     });
 
     test('the review date puts the patient on the Follow-ups list', async () => {

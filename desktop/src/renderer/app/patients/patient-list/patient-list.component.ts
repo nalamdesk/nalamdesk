@@ -15,6 +15,7 @@ import { ColDef } from 'ag-grid-community';
 import { deriveAge } from '../../../../shared/patient-age';
 import { normalizeAbhaNumber, validateAbhaNumber } from '../../../../shared/patient-identifiers';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
+import { localDateISO } from '../../../../shared/local-date';
 
 @Component({
   selector: 'app-patient-list',
@@ -391,13 +392,13 @@ export class PatientListComponent implements OnInit {
   ];
 
   get today(): string {
-    return new Date().toISOString().split('T')[0];
+    return localDateISO();
   }
 
   get minDate(): string {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 110);
-    return d.toISOString().split('T')[0];
+    return localDateISO(d);
   }
 
   get isEditMode(): boolean {

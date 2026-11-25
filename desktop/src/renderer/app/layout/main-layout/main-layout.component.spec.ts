@@ -220,6 +220,8 @@ describe('MainLayoutComponent', () => {
         expect(component.currentRouteName).toBe('Dashboard');
         mockRouter.url = '/patients';
         expect(component.currentRouteName).toBe('Patients');
+        mockRouter.url = '/online-booking?date=2026-11-25';
+        expect(component.currentRouteName).toBe('Online Booking');
 
         component.currentUser = null;
         expect(component.getUserInitials()).toBe('U');

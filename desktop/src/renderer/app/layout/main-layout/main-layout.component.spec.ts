@@ -235,4 +235,49 @@ describe('MainLayoutComponent', () => {
         component.drawerCheckbox = undefined as any;
         expect(() => component.closeDrawer()).not.toThrow();
     });
+    describe('keyboard shortcuts', () => {
+        const press = (over: any) => {
+            const event = { key: '', code: '', altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false,
+                target: document.body, preventDefault: vi.fn(), ...over };
+            component.onShortcut(event as any);
+            return event;
+        };
+
+        beforeEach(() => {
+            component.currentUser = { id: 1, role: 'receptionist', name: 'Desk' };
+            mockRouter.navigate.mockClear();
+        });
+
+        it('opens a new registration and jumps between modules', () => {
+            const e = press({ altKey: true, code: 'KeyN' });
+            expect(e.preventDefault).toHaveBeenCalled();
+            expect(mockRouter.navigate).toHaveBeenCalledWith(['/patients'], { queryParams: { new: expect.any(String) } });
+            press({ altKey: true, code: 'KeyQ' });
+            expect(mockRouter.navigate).toHaveBeenLastCalledWith(['/queue'], undefined);
+        });
+
+        it('toggles the help list with ? and closes it with Escape', () => {
+            press({ key: '?' });
+            expect(component.showShortcuts).toBe(true);
+            press({ key: 'Escape' });
+            expect(component.showShortcuts).toBe(false);
+        });
+
+        it('does nothing before sign-in or while a dialog is open', () => {
+            component.currentUser = null;
+            press({ altKey: true, code: 'KeyQ' });
+            expect(mockRouter.navigate).not.toHaveBeenCalled();
+
+            component.currentUser = { id: 1, role: 'receptionist', name: 'Desk' };
+            const dialog = document.createElement('div');
+            dialog.setAttribute('aria-modal', 'true');
+            document.body.appendChild(dialog);
+            try {
+                press({ altKey: true, code: 'KeyQ' });
+                expect(mockRouter.navigate).not.toHaveBeenCalled();
+            } finally {
+                dialog.remove();
+            }
+        });
+    });
 });

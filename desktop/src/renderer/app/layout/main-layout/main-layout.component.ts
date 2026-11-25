@@ -1,4 +1,4 @@
-import { Component, ViewChild, ElementRef, NgZone, OnInit, OnDestroy } from '@angular/core';
+import { Component, ViewChild, ElementRef, NgZone, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NavigationEnd, NavigationStart, RouterOutlet, RouterModule, Router } from '@angular/router';
 import { Subscription } from 'rxjs';
@@ -6,6 +6,7 @@ import { DialogService } from '../../shared/services/dialog.service';
 import { DoctorPickService } from '../../shared/services/doctor-pick.service';
 import { AuthService } from '../../services/auth.service';
 import { QueueCountService } from '../../shared/services/queue-count.service';
+import { resolveShortcut, shortcutList, ShortcutAction, ShortcutInfo } from '../../shared/services/shortcuts';
 import { RuntimeService } from '../../services/runtime.service';
 import { ServerConnectionService } from '../../services/server-connection.service';
 import { TourService } from '../../shared/services/tour.service';
@@ -164,6 +165,22 @@ import { FacilitySwitcherComponent } from '../../shared/components/facility-swit
       </div>
     </div>
     
+    <!-- Keyboard shortcuts help (press ?) -->
+    <div *ngIf="showShortcuts" class="fixed inset-0 z-[110] flex items-center justify-center p-4"
+         role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" data-testid="shortcuts-help">
+      <div class="fixed inset-0 bg-black/50" (click)="showShortcuts = false"></div>
+      <div class="relative bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Keyboard shortcuts</h2>
+        <dl class="space-y-2 text-sm">
+          <div *ngFor="let s of shortcuts" class="flex justify-between gap-4">
+            <dt class="text-gray-600">{{ s.label }}</dt>
+            <dd><kbd class="kbd kbd-sm">{{ s.keys }}</kbd></dd>
+          </div>
+        </dl>
+        <button type="button" class="btn btn-sm mt-6 w-full" (click)="showShortcuts = false">Close</button>
+      </div>
+    </div>
+
     <!-- Attending-doctor picker for admin-initiated consultations -->
     <div *ngIf="doctorPick?.open()" class="fixed inset-0 z-[100] flex items-center justify-center p-4"
          role="dialog" aria-modal="true" aria-label="Select responsible doctor">
@@ -239,6 +256,39 @@ export class MainLayoutComponent implements OnInit, OnDestroy {
     private server?: ServerConnectionService
   ) {
     this.currentUser = this.authService.getUser();
+  }
+
+  showShortcuts = false;
+  readonly shortcuts: ShortcutInfo[] = shortcutList(/Mac/i.test(navigator.platform || navigator.userAgent || ''));
+
+  @HostListener('document:keydown', ['$event'])
+  onShortcut(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && this.showShortcuts) {
+      this.showShortcuts = false;
+      return;
+    }
+    const action = resolveShortcut(event);
+    if (!action || !this.currentUser) return;
+    // Never navigate out from under an open dialog: it may hold unsaved input.
+    if (action !== 'show-help' && document.querySelector('[aria-modal="true"], [data-modal-open]')) return;
+    event.preventDefault();
+    this.runShortcut(action);
+  }
+
+  runShortcut(action: ShortcutAction): void {
+    const go = (path: string, queryParams?: Record<string, string>) =>
+      this.ngZone.run(() => void this.router.navigate([path], queryParams ? { queryParams } : undefined));
+    switch (action) {
+      case 'show-help': this.ngZone.run(() => { this.showShortcuts = !this.showShortcuts; }); break;
+      // A fresh value each time, so pressing it again on the same page still fires.
+      case 'new-patient': go('/patients', { new: String(Date.now()) }); break;
+      case 'search-patients': go('/patients', { focus: String(Date.now()) }); break;
+      case 'go-dashboard': go('/dashboard'); break;
+      case 'go-queue': go('/queue'); break;
+      case 'go-patients': go('/patients'); break;
+      case 'go-visits': go('/visits'); break;
+      case 'go-appointments': go('/appointments'); break;
+    }
   }
 
   retakeTour() {

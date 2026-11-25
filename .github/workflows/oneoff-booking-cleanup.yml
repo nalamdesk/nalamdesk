@@ -3,7 +3,7 @@ name: One-off NalamBook stack cleanup
 # Temporary: the first NalamBook sandbox create rolled back but could not
 # delete its non-empty site bucket, leaving the stack in ROLLBACK_FAILED,
 # which no deploy can update. Delete the stack, keeping that bucket.
-# Removed after it runs.
+# Removed after it runs. (attempt 2)
 on:
   push:
     branches:
@@ -36,10 +36,14 @@ jobs:
           echo "Status: $status"
           [ "$status" = "ROLLBACK_FAILED" ] || [ "$status" = "ROLLBACK_COMPLETE" ] || { echo "::error::Unexpected status $status, not touching it"; exit 1; }
           aws cloudformation describe-stack-resource --stack-name $stack --logical-resource-id SiteE53D7754 --query 'StackResourceDetail.[PhysicalResourceId,ResourceStatus]' --output text || true
-          if [ "$status" = "ROLLBACK_FAILED" ]; then
+          # Retaining a resource is only allowed from DELETE_FAILED, so try a
+          # plain delete first; the non-empty bucket makes it fail there.
+          aws cloudformation delete-stack --stack-name $stack
+          if ! aws cloudformation wait stack-delete-complete --stack-name $stack; then
+            status=$(aws cloudformation describe-stacks --stack-name $stack --query 'Stacks[0].StackStatus' --output text)
+            echo "Status after first delete: $status"
+            [ "$status" = "DELETE_FAILED" ] || exit 1
             aws cloudformation delete-stack --stack-name $stack --retain-resources SiteE53D7754
-          else
-            aws cloudformation delete-stack --stack-name $stack
+            aws cloudformation wait stack-delete-complete --stack-name $stack
           fi
-          aws cloudformation wait stack-delete-complete --stack-name $stack
           echo "Deleted $stack"

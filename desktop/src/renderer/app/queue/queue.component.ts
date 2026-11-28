@@ -1,5 +1,5 @@
 
-import { Component, HostListener, NgZone, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, HostListener, NgZone, OnInit, OnDestroy, inject, signal } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -16,11 +16,13 @@ import { ServerConnectionService } from '../services/server-connection.service';
 import type { Subscription } from 'rxjs';
 import { ColDef } from 'ag-grid-community';
 import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/doctor-pick.service';
+import { TranslatePipe } from '../i18n/t.pipe';
+import { I18nService } from '../i18n/i18n.service';
 
 @Component({
   selector: 'app-queue',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, VitalsFormComponent, SharedTableComponent, ViewToggleComponent, ReasonDialogComponent],
+  imports: [CommonModule, DatePipe, FormsModule, VitalsFormComponent, SharedTableComponent, ViewToggleComponent, ReasonDialogComponent, TranslatePipe],
   template: `
     <div class="h-full bg-gray-100 p-4 md:p-8 font-sans flex flex-col overflow-hidden">
       <div class="w-full">
@@ -28,12 +30,12 @@ import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/
              button. Subline is operational counts, not marketing copy. -->
         <div class="flex flex-wrap items-end justify-between gap-2 mb-4">
           <div>
-            <h1 class="text-2xl font-bold text-gray-800">Patient Queue</h1>
-            <p class="text-sm text-gray-500">{{ waitingCount() }} waiting · {{ inConsultCount() }} in consultation</p>
+            <h1 class="text-2xl font-bold text-gray-800">{{ 'Patient Queue' | t }}</h1>
+            <p class="text-sm text-gray-500">{{ '{waiting} waiting · {consult} in consultation' | t:{ waiting: waitingCount(), consult: inConsultCount() } }}</p>
           </div>
           <div class="flex items-center gap-2 w-full sm:w-auto">
             <div class="relative flex-1 sm:flex-none">
-              <input type="text" [(ngModel)]="searchTerm" placeholder="Search name, mobile, urgency…"
+              <input type="text" [(ngModel)]="searchTerm" [placeholder]="'Search name, mobile, urgency…' | t"
                      aria-label="Search queue"
                      class="w-full sm:w-64 pl-9 pr-3 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
               <span class="absolute left-2.5 top-2 text-gray-400">
@@ -75,15 +77,15 @@ import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/
              actions, no horizontal grid scroll. -->
         <div class="max-h-[calc(100vh-16rem)] overflow-y-auto space-y-2 pb-4"
              [ngClass]="mobileView === 'cards' ? 'block md:hidden' : 'hidden'">
-          <div *ngIf="visibleQueue().length === 0" class="text-center text-sm text-gray-500 py-8">No patients match</div>
+          <div *ngIf="visibleQueue().length === 0" class="text-center text-sm text-gray-500 py-8">{{ 'No patients match' | t }}</div>
           <div *ngFor="let item of visibleQueue()" class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
             <div class="flex items-center justify-between gap-2">
               <span class="badge badge-sm font-bold uppercase tracking-wider {{ urgencyBadgeClass(getItemUrgency(item)) }}">{{ getItemUrgency(item) }}</span>
               <span class="font-mono text-xs text-gray-500">{{ item.check_in_time ? (item.check_in_time | date:'shortTime') : '' }} · {{ getWaitTime(item.check_in_time) }} wait</span>
             </div>
             <div class="mt-1.5 font-bold text-gray-800">{{ item.patient_name }}</div>
-            <div class="text-xs text-gray-500">{{ item.age }} years • {{ item.gender }}</div>
-            <div *ngIf="item.has_abnormal_vitals" class="badge badge-error badge-outline gap-1 text-xs mt-1 font-semibold">Abnormal Vitals</div>
+            <div class="text-xs text-gray-500">{{ '{age} years' | t:{ age: item.age } }} • {{ item.gender | t }}</div>
+            <div *ngIf="item.has_abnormal_vitals" class="badge badge-error badge-outline gap-1 text-xs mt-1 font-semibold">{{ 'Abnormal Vitals' | t }}</div>
             <div *ngIf="item.triage_notes" class="text-xs text-gray-500 italic mt-1">{{ item.triage_notes }}</div>
             <div class="mt-2.5 flex items-center gap-1.5">
               <button (click)="startConsult(item)" class="btn btn-primary btn-sm flex-1">{{ item.active_encounter_id ? 'Resume Consult' : 'Start Consult' }}</button>
@@ -100,9 +102,9 @@ import { DoctorPickService, SOLE_PRACTITIONER_REASON } from '../shared/services/
       <div *ngIf="rowMenu" role="menu" aria-label="Queue row actions"
            class="fixed z-50 w-56 bg-white rounded-lg border border-gray-200 py-1"
            [ngStyle]="{ left: rowMenu.x + 'px', top: rowMenu.y + 'px' }">
-        <button role="menuitem" (click)="menuAction('triage')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Triage reassessment</button>
-        <button role="menuitem" (click)="menuAction('vitals')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Record vitals</button>
-        <button *ngIf="rowMenu.item.status !== 'in-consult' && canRemoveFromQueue()" role="menuitem" (click)="menuAction('remove')" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">Remove from queue</button>
+        <button role="menuitem" (click)="menuAction('triage')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">{{ 'Triage reassessment' | t }}</button>
+        <button role="menuitem" (click)="menuAction('vitals')" class="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">{{ 'Record vitals' | t }}</button>
+        <button *ngIf="rowMenu.item.status !== 'in-consult' && canRemoveFromQueue()" role="menuitem" (click)="menuAction('remove')" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">{{ 'Remove from queue' | t }}</button>
       </div>
       
       <!-- Reassess Triage Modal -->
@@ -227,6 +229,17 @@ export class QueueComponent implements OnInit, OnDestroy {
     this.mobileView = restoreCompactView(QueueComponent.MOBILE_VIEW_KEY);
   }
 
+  // Resolved lazily: column definitions call tr() while fields are still
+  // initialising, and unit tests construct the component outside Angular.
+  private i18nRef?: I18nService;
+  private tr(text: string, params?: Record<string, unknown>): string {
+    if (!this.i18nRef) {
+      try { this.i18nRef = inject(I18nService, { optional: true }) ?? undefined; } catch { /* outside Angular */ }
+      this.i18nRef ??= new I18nService();
+    }
+    return this.i18nRef.t(text, params);
+  }
+
   private escHtml(value: unknown): string {
     const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
     return String(value ?? '').replace(/[&<>"']/g, (c) => map[c]);
@@ -239,7 +252,7 @@ export class QueueComponent implements OnInit, OnDestroy {
   // narrow viewports get the card layout instead of grid scroll.
   queueColumnDefs: ColDef[] = [
     {
-      headerName: 'Urgency / Triage', flex: 1.2, minWidth: 150,
+      headerName: this.tr('Urgency / Triage'), flex: 1.2, minWidth: 150,
       valueGetter: (params: any) => this.getItemUrgency(params.data),
       // Clinical severity order, not lexical: immediate > urgent > priority > routine.
       comparator: (a: any, b: any) => this.urgencyRank(a) - this.urgencyRank(b),
@@ -253,28 +266,28 @@ export class QueueComponent implements OnInit, OnDestroy {
       }
     },
     {
-      headerName: 'Patient Details', field: 'patient_name', flex: 2, minWidth: 220,
+      headerName: this.tr('Patient Details'), field: 'patient_name', flex: 2, minWidth: 220,
       cellRenderer: (params: any) => {
         const item = params.data;
         if (!item) return '';
         const initial = this.escHtml(String(item.patient_name || '?').charAt(0).toUpperCase());
         const alerts = (item.vitals_alerts || []).map((a: string) => this.escHtml(a)).join('\n');
         const vitalsBadge = item.has_abnormal_vitals
-          ? `<div class="badge badge-error badge-outline gap-1 text-xs mt-1 font-semibold" title="${alerts}">Abnormal Vitals</div>`
+          ? `<div class="badge badge-error badge-outline gap-1 text-xs mt-1 font-semibold" title="${alerts}">${this.escHtml(this.tr('Abnormal Vitals'))}</div>`
           : '';
         return `<div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-full bg-neutral text-neutral-content flex items-center justify-center font-bold">` +
               `${initial}</div>
             <div>
               <div class="font-bold text-gray-800">${this.escHtml(item.patient_name)}</div>
-              <div class="text-xs text-gray-500">${this.escHtml(item.age)} years • ${this.escHtml(item.gender)}</div>
+              <div class="text-xs text-gray-500">${this.escHtml(this.tr('{age} years', { age: item.age }))} • ${this.escHtml(this.tr(String(item.gender || '')))}</div>
               ${vitalsBadge}
             </div>
           </div>`;
       }
     },
     {
-      headerName: 'Check-in Time', flex: 1, minWidth: 140,
+      headerName: this.tr('Check-in Time'), flex: 1, minWidth: 140,
       valueGetter: (params: any) => params.data?.check_in_time || '',
       cellRenderer: (params: any) => {
         const time = params.value ? new DatePipe('en-US').transform(params.value, 'shortTime') || '' : '';
@@ -285,21 +298,21 @@ export class QueueComponent implements OnInit, OnDestroy {
       }
     },
     {
-      headerName: 'Status', flex: 0.8, minWidth: 120,
+      headerName: this.tr('Status'), flex: 0.8, minWidth: 120,
       valueGetter: (params: any) => params.data?.status || '',
       cellRenderer: (params: any) => {
         const status = String(params.value || '');
-        const label = status.charAt(0).toUpperCase() + status.slice(1);
+        const label = this.tr(status.charAt(0).toUpperCase() + status.slice(1));
         const badge = status === 'in-consult' ? 'badge-primary' : 'badge-ghost';
         return `<span class="badge badge-lg gap-2 ${badge}"><span class="w-2 h-2 rounded-full bg-current"></span>${this.escHtml(label)}</span>`;
       }
     },
     {
-      headerName: 'Actions', flex: 1.1, minWidth: 210, sortable: false, filter: false,
+      headerName: this.tr('Actions'), flex: 1.1, minWidth: 210, sortable: false, filter: false,
       cellRenderer: (params: any) => {
         const item = params.data;
         if (!item) return '';
-        const consultLabel = item.active_encounter_id ? 'Resume Consult' : 'Start Consult';
+        const consultLabel = this.escHtml(this.tr(item.active_encounter_id ? 'Resume Consult' : 'Start Consult'));
         return `<div class="flex items-center gap-1">` +
           `<button data-action="consult" class="btn btn-primary btn-sm">${consultLabel}</button>` +
           `<button data-action="menu" aria-label="More actions" class="btn btn-ghost btn-sm btn-square border border-gray-200">` +

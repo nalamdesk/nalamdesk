@@ -11,6 +11,7 @@ import { ToastService } from '../shared/services/toast.service';
 import { QueueCountService } from '../shared/services/queue-count.service';
 import { TourService } from '../shared/services/tour.service';
 import { localDateISO } from '../../../shared/local-date';
+import { TranslatePipe } from '../i18n/t.pipe';
 
 /** Local wall-clock greeting. Morning < 12, afternoon < 17, else evening. */
 export function greetingForLocalHour(hour: number): string {
@@ -23,7 +24,7 @@ export function greetingForLocalHour(hour: number): string {
   // ... (template omitted, same as before) 
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="h-full w-full overflow-y-auto p-4 md:p-8">
     <div class="w-full max-w-[1600px] mx-auto">
@@ -31,16 +32,16 @@ export function greetingForLocalHour(hour: number): string {
         <div class="flex justify-between items-center mb-8 mt-2">
             <div>
                 <h1 class="text-3xl font-display font-bold text-base-content">
-                    Good {{ getTimeOfDay() }}, <span class="text-primary">{{ currentUser?.name || doctorName || 'Doctor' }}</span>
+                    {{ 'Good {time}, {name}' | t:{ time: (getTimeOfDay() | t), name: '' } }}<span class="text-primary">{{ currentUser?.name || doctorName || 'Doctor' }}</span>
                 </h1>
-                <p class="text-base-content/60 mt-1">Here's what's happening at {{ clinicName || 'your clinic' }} today.</p>
+                <p class="text-base-content/60 mt-1">{{ "Here's what's happening at {clinic} today." | t:{ clinic: clinicName || ('your clinic' | t) } }}</p>
             </div>
         </div>
 
         <!-- First-run onboarding banner -->
         <div *ngIf="showWelcomeBanner" class="mb-8 rounded-2xl border border-blue-200 bg-blue-50/70 p-5 flex flex-col md:flex-row md:items-center gap-4">
           <div class="flex-1">
-            <h2 class="text-lg font-bold text-gray-800" *ngIf="!demoSeeded">Welcome to NalamDesk</h2>
+            <h2 class="text-lg font-bold text-gray-800" *ngIf="!demoSeeded">{{ 'Welcome to NalamDesk' | t }}</h2>
             <h2 class="text-lg font-bold text-gray-800" *ngIf="demoSeeded">You are exploring demo data</h2>
             <p class="text-sm text-gray-600 mt-1" *ngIf="!demoSeeded">
               Take a 2-minute guided tour of the queue, patients, visits, and settings — or load a demo clinic to click through with realistic data.
@@ -51,18 +52,18 @@ export function greetingForLocalHour(hour: number): string {
           </div>
           <div class="flex flex-wrap items-center gap-2 shrink-0">
             <button (click)="startTour()" class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors">
-              {{ demoSeeded ? 'Take the tour' : 'Start guided tour' }}
+              {{ demoSeeded ? 'Take the tour' : ('Start guided tour' | t) }}
             </button>
             <button *ngIf="!demoSeeded && currentUser?.role === 'admin'" (click)="loadDemoData()" [disabled]="demoSeedLoading"
                     class="px-4 py-2 text-sm font-medium rounded border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors">
-              {{ demoSeedLoading ? 'Loading...' : 'Load demo data' }}
+              {{ demoSeedLoading ? 'Loading...' : ('Load demo data' | t) }}
             </button>
             <button *ngIf="demoSeeded && currentUser?.role === 'admin'" (click)="removeDemoData()" [disabled]="demoSeedLoading"
                     class="px-4 py-2 text-sm font-medium rounded border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors">
               {{ demoSeedLoading ? 'Working...' : 'Remove demo data' }}
             </button>
             <button *ngIf="!demoSeeded" (click)="dismissWelcomeBanner()" class="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 px-1">
-              Dismiss
+              {{ 'Dismiss' | t }}
             </button>
           </div>
         </div>
@@ -74,9 +75,9 @@ export function greetingForLocalHour(hour: number): string {
             <div class="stat-figure text-blue-600 opacity-20 group-hover:opacity-100 transition-opacity">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-8 h-8 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
             </div>
-            <div class="stat-title text-gray-500 font-medium tracking-wide text-xs uppercase">Total Patients</div>
+            <div class="stat-title text-gray-500 font-medium tracking-wide text-xs uppercase">{{ 'Total Patients' | t }}</div>
             <div class="stat-value text-blue-600 font-display">{{ stats.totalPatients }}</div>
-            <div class="stat-desc text-gray-400">Registered in system</div>
+            <div class="stat-desc text-gray-400">{{ 'Registered in system' | t }}</div>
           </div>
 
           <!-- Online Booking Status -->
@@ -119,8 +120,8 @@ export function greetingForLocalHour(hour: number): string {
                 </div>
                 
                 <div class="relative z-10">
-                     <div class="font-medium tracking-wide text-xs uppercase opacity-80 mb-1">Quick Action</div>
-                     <h3 class="text-2xl font-bold mb-4">New Visit</h3>
+                     <div class="font-medium tracking-wide text-xs uppercase opacity-80 mb-1">{{ 'Quick Action' | t }}</div>
+                     <h3 class="text-2xl font-bold mb-4">{{ 'New Visit' | t }}</h3>
                      <button class="btn btn-sm btn-circle bg-white/20 hover:bg-white/30 text-white border-0">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                      </button>
@@ -161,7 +162,7 @@ export function greetingForLocalHour(hour: number): string {
                 <h2 class="card-title text-lg font-bold">Today's Appointments
                     <span *ngIf="todayAppointments.length > 0" class="badge badge-primary badge-sm ml-1">{{ todayAppointments.length }}</span>
                 </h2>
-                <div *ngIf="todayAppointments.length === 0" class="text-gray-400 text-sm py-2">No confirmed appointments for today.</div>
+                <div *ngIf="todayAppointments.length === 0" class="text-gray-400 text-sm py-2">{{ 'No confirmed appointments for today.' | t }}</div>
                 <div *ngFor="let appt of todayAppointments" class="flex items-center justify-between gap-3 border-b border-base-200 py-2.5 last:border-0">
                     <div class="min-w-0">
                         <div class="font-bold truncate">{{ appt.patient_name }}</div>
@@ -175,15 +176,15 @@ export function greetingForLocalHour(hour: number): string {
         <!-- Recent Visits -->
         <div class="card bg-base-100 shadow-sm border border-base-200 mb-8">
             <div class="card-body">
-                <h2 class="card-title text-lg font-bold">Recent Visits</h2>
+                <h2 class="card-title text-lg font-bold">{{ 'Recent Visits' | t }}</h2>
                 <div class="overflow-x-auto">
                     <table class="table w-full">
                         <thead>
                             <tr>
-                                <th>Date</th>
-                                <th>Patient</th>
-                                <th>Diagnosis</th>
-                                <th>Status</th>
+                                <th>{{ 'Date' | t }}</th>
+                                <th>{{ 'Patient' | t }}</th>
+                                <th>{{ 'Diagnosis' | t }}</th>
+                                <th>{{ 'Status' | t }}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -194,7 +195,7 @@ export function greetingForLocalHour(hour: number): string {
                                 <td><span class="badge badge-success badge-outline">Completed</span></td>
                             </tr>
                             <tr *ngIf="visits.length === 0">
-                                <td colspan="4" class="text-center text-gray-400 py-4">No recent visits</td>
+                                <td colspan="4" class="text-center text-gray-400 py-4">{{ 'No recent visits' | t }}</td>
                             </tr>
                         </tbody>
                     </table>

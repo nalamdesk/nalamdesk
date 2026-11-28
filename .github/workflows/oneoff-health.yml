@@ -1,0 +1,27 @@
+name: One-off sandbox health check
+
+# Temporary, read-only. Removed after it runs.
+on:
+  push:
+    branches:
+      - claude/project-thread-4rlgms
+    paths:
+      - '.github/workflows/oneoff-health.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          fail=0
+          for u in https://abdm-sandbox.cloud.nalamdesk.com/health https://book-sandbox.cloud.nalamdesk.com/api/health https://book-sandbox.cloud.nalamdesk.com/; do
+            code=$(curl -sS --max-time 15 -o /tmp/b -w '%{http_code}' "$u" || echo 000)
+            echo "$u -> $code $(head -c 200 /tmp/b | tr -d '\n' | grep -v '<' || true)"
+            [ "$code" = 200 ] || fail=1
+          done
+          echo "NS:"; dig +short NS cloud.nalamdesk.com @1.1.1.1
+          exit $fail

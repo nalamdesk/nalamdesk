@@ -12750,6 +12750,10 @@ html:has(.drawer-toggle:checked) {
   margin-right: auto;
 }
 
+.-mt-4 {
+  margin-top: -1rem;
+}
+
 .mb-1 {
   margin-bottom: 0.25rem;
 }
@@ -13566,6 +13570,10 @@ html:has(.drawer-toggle:checked) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.whitespace-normal {
+  white-space: normal;
 }
 
 .whitespace-nowrap {
@@ -14993,6 +15001,20 @@ h4,
 h5,
 h6 {
   font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* Tamil and Hindi (per-computer language setting): Inter has no Tamil or
+   Devanagari glyphs, so name the system fonts that do (Windows: Nirmala UI;
+   macOS: Tamil Sangam MN, Kohinoor Devanagari; Linux: Noto). */
+
+html:lang(ta) body,
+html:lang(ta) h1, html:lang(ta) h2, html:lang(ta) h3, html:lang(ta) h4, html:lang(ta) h5, html:lang(ta) h6 {
+  font-family: 'Inter', 'Nirmala UI', 'Tamil Sangam MN', 'Noto Sans Tamil', 'Latha', sans-serif;
+}
+
+html:lang(hi) body,
+html:lang(hi) h1, html:lang(hi) h2, html:lang(hi) h3, html:lang(hi) h4, html:lang(hi) h5, html:lang(hi) h6 {
+  font-family: 'Inter', 'Nirmala UI', 'Kohinoor Devanagari', 'Noto Sans Devanagari', 'Mangal', sans-serif;
 }
 
 /* Custom Scrollbar */

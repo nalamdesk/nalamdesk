@@ -11,11 +11,13 @@ import { ServerConnectionService } from '../../services/server-connection.servic
 import { TourService } from '../../shared/services/tour.service';
 import { TourOverlayComponent } from '../../shared/components/tour-overlay/tour-overlay.component';
 import { FacilitySwitcherComponent } from '../../shared/components/facility-switcher/facility-switcher.component';
+import { TranslatePipe } from '../../i18n/t.pipe';
+import { LanguagePickerComponent } from '../../i18n/language-picker.component';
 
 @Component({
   selector: 'app-main-layout',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterModule, TourOverlayComponent, FacilitySwitcherComponent],
+  imports: [CommonModule, RouterOutlet, RouterModule, TourOverlayComponent, FacilitySwitcherComponent, TranslatePipe, LanguagePickerComponent],
   template: `
     <div class="drawer lg:drawer-open font-sans">
       <input #drawerCheckbox id="main-drawer" type="checkbox" class="drawer-toggle" />
@@ -38,7 +40,7 @@ import { FacilitySwitcherComponent } from '../../shared/components/facility-swit
              </div>
             <div class="text-sm breadcrumbs">
               <ul>
-                <li class="font-medium text-blue-800">{{ currentRouteName }}</li>
+                <li class="font-medium text-blue-800">{{ currentRouteName | t }}</li>
               </ul>
             </div>
           </div>
@@ -71,11 +73,12 @@ import { FacilitySwitcherComponent } from '../../shared/components/facility-swit
     
                     <!-- Add closeDrawer() to dropdown links too just in case -->
                     <ul tabindex="0" class="mt-3 z-[1] p-2 shadow-menu menu menu-sm dropdown-content bg-white rounded-box w-52">
-                      <li><a routerLink="/profile" (click)="closeDrawer()">Change password</a></li>
-                      <li><a (click)="retakeTour(); closeDrawer()">Take a product tour</a></li>
-                      <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Manage Profile</a></li>
-                      <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">Settings</a></li>
-                      <li><a class="text-red-600" (click)="logout()">Logout</a></li>
+                      <li><a routerLink="/profile" (click)="closeDrawer()">{{ 'Change password' | t }}</a></li>
+                      <li><a (click)="retakeTour(); closeDrawer()">{{ 'Take a product tour' | t }}</a></li>
+                      <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">{{ 'Manage Profile' | t }}</a></li>
+                      <li *ngIf="currentUser?.role === 'admin'"><a routerLink="/settings" (click)="closeDrawer()">{{ 'Settings' | t }}</a></li>
+                      <li><a class="text-red-600" (click)="logout()">{{ 'Logout' | t }}</a></li>
+                      <li class="px-3 py-2"><app-language-picker></app-language-picker></li>
                     </ul>
                  </div>
           </div>
@@ -108,21 +111,21 @@ import { FacilitySwitcherComponent } from '../../shared/components/facility-swit
           </li>
 
           <!-- Navigation Items -->
-          <li class="menu-title px-2 uppercase tracking-wider font-bold text-[11px] opacity-50 mt-2">Menu</li>
+          <li class="menu-title px-2 uppercase tracking-wider font-bold text-[11px] opacity-50 mt-2">{{ 'Menu' | t }}</li>
           
           <li>
             <a routerLink="/dashboard" routerLinkActive="active" class="group" (click)="closeDrawer()">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="group-active:text-white"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
-              Dashboard
+              {{ 'Dashboard' | t }}
             </a>
           </li>
           
-          <li class="menu-title px-2 uppercase tracking-wider font-bold text-[11px] opacity-50 mt-4">Patient Management</li>
+          <li class="menu-title px-2 uppercase tracking-wider font-bold text-[11px] opacity-50 mt-4">{{ 'Patient Management' | t }}</li>
 
           <li>
             <a routerLink="/queue" routerLinkActive="active" #queueRla="routerLinkActive" class="group" (click)="closeDrawer()">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
-              Queue
+              {{ 'Queue' | t }}
               <span *ngIf="queueCount > 0" class="badge badge-sm ml-auto border-0 font-bold"
                     [ngClass]="queueRla.isActive ? 'bg-white/25 text-white' : 'bg-blue-100 text-blue-700'">{{ queueCount }}</span>
             </a>
@@ -130,34 +133,34 @@ import { FacilitySwitcherComponent } from '../../shared/components/facility-swit
           <li>
             <a routerLink="/online-booking" routerLinkActive="active" class="group" (click)="closeDrawer()">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-              Online Booking
+              {{ 'Online Booking' | t }}
             </a>
           </li>
           <li>
             <a routerLink="/appointments" routerLinkActive="active" class="group" (click)="closeDrawer()">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-              Appointments
+              {{ 'Appointments' | t }}
             </a>
           </li>
           <li>
             <a routerLink="/patients" routerLinkActive="active" class="group" (click)="closeDrawer()">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              Patients
+              {{ 'Patients' | t }}
             </a>
           </li>
           <li>
             <a routerLink="/visits" routerLinkActive="active" class="group" (click)="closeDrawer()">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              Visits
+              {{ 'Visits' | t }}
             </a>
           </li>
 
-           <li class="menu-title px-2 uppercase tracking-wider font-bold text-[11px] opacity-50 mt-4" *ngIf="currentUser?.role === 'admin'">System</li>
+           <li class="menu-title px-2 uppercase tracking-wider font-bold text-[11px] opacity-50 mt-4" *ngIf="currentUser?.role === 'admin'">{{ 'System' | t }}</li>
 
           <li *ngIf="currentUser?.role === 'admin'">
             <a routerLink="/settings" routerLinkActive="active" class="group" (click)="closeDrawer()">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-              Settings
+              {{ 'Settings' | t }}
             </a>
           </li>
         </ul>

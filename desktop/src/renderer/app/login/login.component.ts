@@ -7,6 +7,8 @@ import { RuntimeService } from '../services/runtime.service';
 import { ServerConnectionService } from '../services/server-connection.service';
 import { DialogService } from '../shared/services/dialog.service';
 import { FacilityService, roleLabel } from '../services/facility.service';
+import { TranslatePipe } from '../i18n/t.pipe';
+import { LanguagePickerComponent } from '../i18n/language-picker.component';
 
 const JOIN_ERRORS: Record<string, string> = {
   INVALID_CODE: 'That join code is not valid or has expired. Ask an admin for a new one.',
@@ -31,11 +33,12 @@ function defaultBrowserName(): string {
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule],
+  imports: [CommonModule, FormsModule, RouterModule, TranslatePipe, LanguagePickerComponent],
   template: `
     <div class="min-h-screen flex items-center justify-center bg-gray-900 text-white p-4">
       <div class="bg-gray-800 p-6 sm:p-8 rounded-lg shadow-xl w-full max-w-sm border border-gray-700">
         <h2 class="text-2xl font-bold mb-6 text-center text-blue-400">NalamDesk</h2>
+        <div class="flex justify-center -mt-4 mb-4"><app-language-picker [dark]="true"></app-language-picker></div>
         
         <div *ngIf="error" class="bg-red-900/50 border border-red-500 text-red-200 px-4 py-2 rounded mb-4 text-sm">
           {{ error }}
@@ -101,7 +104,7 @@ function defaultBrowserName(): string {
         <form (ngSubmit)="onLogin()" *ngIf="!pendingRecoveryCode && !needsJoin && !choosingFacility">
           <div class="mb-4">
             <label class="block text-gray-400 text-sm font-bold mb-2" for="username">
-              Username
+              {{ 'Username' | t }}
             </label>
             <input
               type="text"
@@ -109,7 +112,7 @@ function defaultBrowserName(): string {
               [(ngModel)]="username"
               name="username"
               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500 transition-colors"
-              placeholder="Enter username..."
+              [placeholder]="'Enter username...' | t"
               [disabled]="isLoading"
               autofocus
             >
@@ -117,7 +120,7 @@ function defaultBrowserName(): string {
 
           <div class="mb-4">
             <label class="block text-gray-400 text-sm font-bold mb-2" for="password">
-              Password
+              {{ 'Password' | t }}
             </label>
             <input
               type="password"
@@ -135,7 +138,7 @@ function defaultBrowserName(): string {
             [disabled]="isLoading || !password || !username"
             class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {{ isLoading ? 'Logging in...' : 'Login' }}
+            {{ (isLoading ? 'Logging in...' : 'Login') | t }}
           </button>
         </form>
         

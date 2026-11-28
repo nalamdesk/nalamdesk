@@ -16,24 +16,25 @@ import { deriveAge } from '../../../../shared/patient-age';
 import { normalizeAbhaNumber, validateAbhaNumber } from '../../../../shared/patient-identifiers';
 import { ReasonDialogComponent } from '../../shared/components/reason-dialog/reason-dialog.component';
 import { localDateISO } from '../../../../shared/local-date';
+import { TranslatePipe } from '../../i18n/t.pipe';
 
 @Component({
   selector: 'app-patient-list',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, ViewToggleComponent, ReasonDialogComponent],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, DatePickerComponent, SharedTableComponent, ViewToggleComponent, ReasonDialogComponent, TranslatePipe],
   template: `
     <div class="h-full bg-gray-100 p-4 md:p-6 flex flex-col overflow-hidden">
       <div class="w-full">
         <div class="flex justify-between items-center mb-6">
-          <h1 class="text-2xl font-bold text-gray-800">Patients</h1>
+          <h1 class="text-2xl font-bold text-gray-800">{{ 'Patients' | t }}</h1>
           <div class="flex items-center gap-2">
             <app-view-toggle class="md:hidden" [value]="mobileView" (valueChange)="setMobileView($event)" label="Patients view"></app-view-toggle>
             <label class="flex items-center gap-1.5 text-xs text-gray-600 border border-gray-200 bg-white rounded px-2.5 py-2 cursor-pointer hover:bg-gray-50">
               <input type="checkbox" [checked]="showArchived" (change)="toggleArchived()" class="checkbox checkbox-xs" />
-              Show archived
+              {{ 'Show archived' | t }}
             </label>
             <button (click)="openAddModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition shadow-sm">
-              + Add Patient
+              {{ '+ Add Patient' | t }}
             </button>
           </div>
         </div>
@@ -44,7 +45,7 @@ import { localDateISO } from '../../../../shared/local-date';
             type="text" 
             [(ngModel)]="searchQuery" 
             (ngModelChange)="onSearch()"
-            placeholder="Search name, mobile, MRN, ABHA, or any ID..." 
+            [placeholder]="'Search name, mobile, MRN, ABHA, or any ID...' | t" 
             class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
           <span class="absolute left-3 top-2.5 text-gray-400">
@@ -81,7 +82,7 @@ import { localDateISO } from '../../../../shared/local-date';
             </button>
             <span *ngIf="cardSelectMode" class="text-xs text-gray-500">{{ selectedPatients.length }} selected</span>
           </div>
-          <div *ngIf="gridData.length === 0" class="text-center text-sm text-gray-500 py-8">No patients found</div>
+          <div *ngIf="gridData.length === 0" class="text-center text-sm text-gray-500 py-8">{{ 'No patients found' | t }}</div>
           <div *ngFor="let p of gridData" (click)="onCardTap(p)"
                class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm"
                [ngClass]="isCardSelected(p) ? 'ring-2 ring-blue-500 border-blue-500' : ''">
@@ -97,7 +98,7 @@ import { localDateISO } from '../../../../shared/local-date';
                 <div class="font-bold text-gray-800 truncate">{{ p.name }}</div>
                 <div class="text-xs text-gray-500">{{ p.mobile }} · {{ p.age }} / {{ p.gender }}</div>
               </div>
-              <span *ngIf="p.inQueue" class="badge badge-sm badge-primary shrink-0">In Queue</span>
+              <span *ngIf="p.inQueue" class="badge badge-sm badge-primary shrink-0">{{ 'In Queue' | t }}</span>
             </div>
             <div *ngIf="!cardSelectMode" class="mt-2.5 flex items-center gap-1.5">
               <button (click)="$event.stopPropagation(); addToQueue(p)" [disabled]="p.inQueue"
@@ -105,9 +106,9 @@ import { localDateISO } from '../../../../shared/local-date';
                       [ngClass]="p.inQueue ? 'btn-ghost text-gray-400' : 'btn-primary'">
                 {{ p.inQueue ? 'In Queue' : 'Add to Queue' }}
               </button>
-              <button (click)="$event.stopPropagation(); editPatient(p)" class="btn btn-sm btn-ghost border border-gray-200">Edit</button>
-              <button *ngIf="p?.active !== 0" (click)="$event.stopPropagation(); askArchive(p)" class="btn btn-sm btn-ghost border border-amber-200 text-amber-600">Archive</button>
-              <button *ngIf="p?.active === 0" (click)="$event.stopPropagation(); unarchivePatient(p)" class="btn btn-sm btn-ghost border border-emerald-200 text-emerald-600">Restore</button>
+              <button (click)="$event.stopPropagation(); editPatient(p)" class="btn btn-sm btn-ghost border border-gray-200">{{ 'Edit' | t }}</button>
+              <button *ngIf="p?.active !== 0" (click)="$event.stopPropagation(); askArchive(p)" class="btn btn-sm btn-ghost border border-amber-200 text-amber-600">{{ 'Archive' | t }}</button>
+              <button *ngIf="p?.active === 0" (click)="$event.stopPropagation(); unarchivePatient(p)" class="btn btn-sm btn-ghost border border-emerald-200 text-emerald-600">{{ 'Restore' | t }}</button>
             </div>
             <div *ngIf="p?.active === 0" class="mt-1.5 text-[11px] text-gray-500">Archived<span *ngIf="p?.archive_reason"> · {{ p.archive_reason }}</span></div>
           </div>
@@ -125,7 +126,7 @@ import { localDateISO } from '../../../../shared/local-date';
             
             <!-- Fixed Header -->
             <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
-                <h2 class="text-xl font-bold text-gray-800">{{ isEditMode ? 'Edit Patient Details' : 'New Patient Registration' }}</h2>
+                <h2 class="text-xl font-bold text-gray-800">{{ (isEditMode ? 'Edit Patient Details' : 'New Patient Registration') | t }}</h2>
                 <button (click)="showModal = false" class="text-gray-500 hover:text-gray-600" aria-label="Close"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg></button>
             </div>
 
@@ -152,12 +153,12 @@ import { localDateISO } from '../../../../shared/local-date';
                     </div>
                     <!-- Essential details: everything a walk-in needs, always visible -->
                     <div class="mb-6">
-                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">Essential details</h3>
+                        <h3 class="font-bold text-gray-700 border-b pb-1 mb-3">{{ 'Essential details' | t }}</h3>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             
                             <!-- Name -->
                             <div class="col-span-1">
-                                <label class="block text-sm font-medium text-gray-700">Full Name <span class="text-red-500">*</span></label>
+                                <label class="block text-sm font-medium text-gray-700">{{ 'Full Name' | t }} <span class="text-red-500">*</span></label>
                                 <input formControlName="name" placeholder="John Doe" 
                                     class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" 
                                     [class.border-red-500]="isFieldInvalid('name')" [class.bg-red-50]="isFieldInvalid('name')">
@@ -166,34 +167,34 @@ import { localDateISO } from '../../../../shared/local-date';
 
                             <!-- Mobile -->
                             <div class="col-span-1">
-                                <label class="block text-sm font-medium text-gray-700">Mobile Number <span class="text-red-500">*</span></label>
+                                <label class="block text-sm font-medium text-gray-700">{{ 'Mobile Number' | t }} <span class="text-red-500">*</span></label>
                                 <input formControlName="mobile" type="tel" inputmode="numeric" maxlength="10" placeholder="9876543210"
                                     class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                                     [class.border-red-500]="isFieldInvalid('mobile')" [class.bg-red-50]="isFieldInvalid('mobile')">
-                                <p *ngIf="isFieldInvalid('mobile')" class="text-xs text-red-500 mt-1">Valid 10-digit mobile number required.</p>
+                                <p *ngIf="isFieldInvalid('mobile')" class="text-xs text-red-500 mt-1">{{ 'Valid 10-digit mobile number required.' | t }}</p>
                             </div>
 
                             <!-- DOB & Age Row (Stacked on Mobile) -->
                             <div class="flex flex-col md:flex-row gap-4 col-span-1 md:col-span-2 items-start">
                                 <!-- DOB (First) -->
                                 <div class="w-full md:w-1/3 relative">
-                                    <label class="block text-sm font-medium text-gray-700">Date of Birth</label>
+                                    <label class="block text-sm font-medium text-gray-700">{{ 'Date of Birth' | t }}</label>
                                     <app-date-picker 
                                         formControlName="dob" 
                                         [maxDate]="today"
                                         [minDate]="minDate"
-                                        placeholder="Select DOB"
-                                        helperText="Auto-calculates Age">
+                                        [placeholder]="'Select DOB' | t"
+                                        [helperText]="'Auto-calculates Age' | t">
                                     </app-date-picker>
                                     <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
                                         <input type="checkbox" formControlName="dob_estimated" class="checkbox checkbox-xs" />
-                                        Approximate date
+                                        {{ 'Approximate date' | t }}
                                     </label>
                                 </div>
 
                                 <!-- Age -->
                                 <div class="w-full md:w-1/4">
-                                    <label class="block text-sm font-medium text-gray-700">Age <span class="text-red-500">*</span></label>
+                                    <label class="block text-sm font-medium text-gray-700">{{ 'Age' | t }} <span class="text-red-500">*</span></label>
                                     <input type="number" formControlName="age" min="0" max="110" placeholder="30"
                                         class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-gray-50"
                                         [class.border-red-500]="isFieldInvalid('age')">
@@ -202,14 +203,14 @@ import { localDateISO } from '../../../../shared/local-date';
 
                                 <!-- Gender -->
                                 <div class="w-full md:w-1/4">
-                                    <label class="block text-sm font-medium text-gray-700">Gender <span class="text-red-500">*</span></label>
+                                    <label class="block text-sm font-medium text-gray-700">{{ 'Gender' | t }} <span class="text-red-500">*</span></label>
                                     <select formControlName="gender" class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                                             [class.border-red-500]="isFieldInvalid('gender')">
-                                        <option value="" disabled>Select</option>
-                                        <option value="Male">Male</option>
-                                        <option value="Female">Female</option>
-                                        <option value="Other">Other</option>
-                                        <option value="Unknown">Unknown / not stated</option>
+                                        <option value="" disabled>{{ 'Select' | t }}</option>
+                                        <option value="Male">{{ 'Male' | t }}</option>
+                                        <option value="Female">{{ 'Female' | t }}</option>
+                                        <option value="Other">{{ 'Other' | t }}</option>
+                                        <option value="Unknown">{{ 'Unknown / not stated' | t }}</option>
                                     </select>
                                     <p *ngIf="isFieldInvalid('gender')" class="text-xs text-red-500 mt-1">Required</p>
                                 </div>
@@ -223,7 +224,7 @@ import { localDateISO } from '../../../../shared/local-date';
                         <button type="button" (click)="showAdditional = !showAdditional"
                                 class="w-full flex items-center justify-between py-2 text-sm font-bold text-gray-700 border-b mb-3"
                                 [attr.aria-expanded]="showAdditional">
-                            <span>Additional details <span class="font-normal text-gray-400">(contact, address, blood group)</span></span>
+                            <span>{{ 'Additional details' | t }} <span class="font-normal text-gray-400">{{ '(contact, address, blood group)' | t }}</span></span>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"
                                  class="w-4 h-4 text-gray-500 transition-transform" [class.rotate-180]="showAdditional">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
@@ -312,21 +313,21 @@ import { localDateISO } from '../../../../shared/local-date';
             
             <!-- Fixed Footer -->
             <div class="px-6 py-4 border-t bg-gray-50 flex justify-between items-center">
-                <p class="text-xs text-gray-500"><span class="text-red-500">*</span> Required Fields</p>
+                <p class="text-xs text-gray-500"><span class="text-red-500">*</span> {{ 'Required Fields' | t }}</p>
                 <div class="flex gap-2">
                     <button type="button" (click)="showModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded border bg-white transition-colors">
-                        Cancel
+                        {{ 'Cancel' | t }}
                     </button>
                     <button *ngIf="!isEditMode" type="button" (click)="savePatient(false)"
                             [disabled]="patientForm.invalid"
                             class="px-4 py-2 text-blue-700 border border-blue-200 hover:bg-blue-50 rounded font-medium transition-colors disabled:opacity-50">
-                        Save only
+                        {{ 'Save only' | t }}
                     </button>
                     <!-- form attribute links this button to the form above; Enter submits here -->
                     <button type="submit" form="patientForm"
                             [disabled]="patientForm.invalid"
                             class="px-6 py-2 bg-blue-600 text-white font-medium rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed shadow transition-colors">
-                        {{ isEditMode ? 'Update Patient' : 'Save & Add to Queue' }}
+                        {{ (isEditMode ? 'Update Patient' : 'Save & Add to Queue') | t }}
                     </button>
                 </div>
             </div>
